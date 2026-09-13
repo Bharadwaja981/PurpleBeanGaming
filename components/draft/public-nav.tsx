@@ -1,0 +1,2 @@
+import Link from "next/link";
+export function PublicDraftNav({slug}:{slug:string}){return <nav aria-label="Public tournament navigation" className="flex flex-wrap gap-2 text-sm">{[["live","Live"],["teams","Teams"],["schedule","Schedule"],["standings","Standings"],["bracket","Bracket"],["history","History"],["draft-summary","Summary"]].map(([path,label])=><Link className="rounded-md border border-[var(--line)] px-3 py-2 hover:border-[var(--accent)] focus-visible:outline-2" href={`/tournaments/${slug}/${path}`} key={path}>{label}</Link>)}</nav>}

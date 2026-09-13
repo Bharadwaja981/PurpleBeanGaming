@@ -1,0 +1,2 @@
+import { brand } from "@/lib/config"; import { SignInForm } from "./sign-in-form";import {BrandLockup}from"@/components/layout/brand-lockup";
+export default function SignIn(){return <main className="auth-page"><div className="card auth-card"><BrandLockup compact/><h1 className="mt-5 text-3xl font-bold">Welcome back</h1><p className="muted mt-2">Sign in to your {brand.shortName} account.</p><SignInForm/></div></main>}

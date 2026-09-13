@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import { createClient } from "@supabase/supabase-js";
+const { SUPABASE_URL: url, SUPABASE_SECRET_KEY: key } = process.env;
+assert(url && key);const db=createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false}});
+const tid="10000000-0000-4000-8000-000000000001",stage=crypto.randomUUID(),match=crypto.randomUUID(),a=crypto.randomUUID(),b=crypto.randomUUID();
+assert.ifError((await db.from("competition_settings").insert({tournament_id:tid,format:"round_robin",configured_by:"00000000-0000-4000-8000-000000000001"})).error);
+assert.ifError((await db.from("competition_stages").insert({id:stage,tournament_id:tid,name:"Rating race",stage_type:"league",sequence_number:1})).error);
+assert.ifError((await db.from("matches").insert({id:match,tournament_id:tid,stage_id:stage,round_number:1,match_number:1,team_a_id:"40000000-0000-4000-8000-000000000001",team_b_id:"40000000-0000-4000-8000-000000000002",best_of:3,status:"completed",team_a_score:2,team_b_score:0,winner_team_id:"40000000-0000-4000-8000-000000000001",loser_team_id:"40000000-0000-4000-8000-000000000002",completed_at:new Date().toISOString()})).error);
+assert.ifError((await db.from("match_lineups").insert([{id:a,match_id:match,team_id:"40000000-0000-4000-8000-000000000001",confirmed_by:"00000000-0000-4000-8000-000000000001",locked_at:new Date().toISOString()},{id:b,match_id:match,team_id:"40000000-0000-4000-8000-000000000002",confirmed_by:"00000000-0000-4000-8000-000000000002",locked_at:new Date().toISOString()}])).error);
+assert.ifError((await db.from("match_lineup_players").insert([{lineup_id:a,player_id:"30000000-0000-4000-8000-000000000001",player_ign:"Player 1"},{lineup_id:b,player_id:"30000000-0000-4000-8000-000000000002",player_ign:"Player 2"}])).error);
+const rating=await Promise.all(Array.from({length:20},()=>db.rpc("process_match_rating",{p_match_id:match})));rating.forEach(x=>assert.ifError(x.error));assert.equal(rating.filter(x=>x.data===true).length,1);assert.equal((await db.from("competitive_rating_events").select("*",{count:"exact",head:true}).eq("match_id",match)).count,2);
+const achievementPlayer="00000000-0000-4000-8000-000000000030";
+const achievementQuery=()=>db.from("player_achievements").select("*",{count:"exact",head:true}).eq("player_id",achievementPlayer).eq("achievement_code","FIRST_MATCH");
+const achievementBefore=(await achievementQuery()).count??0;
+const awards=await Promise.all(Array.from({length:20},()=>db.rpc("process_achievement",{p_player:achievementPlayer,p_code:"FIRST_MATCH",p_tournament:null,p_match:null})));awards.forEach(x=>assert.ifError(x.error));assert.equal(awards.filter(x=>x.data===true).length,1);assert.equal((await achievementQuery()).count,achievementBefore+1);
+console.log(JSON.stringify({result:"PASS",ratingWorkers:20,ratingApplications:1,ratingEvents:2,achievementWorkers:20,achievementApplications:1,achievementRows:1}));

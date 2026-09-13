@@ -1,0 +1,4 @@
+import Link from "next/link";
+import { BrandLockup } from "./brand-lockup";
+const nav=[["status","Overview"],["register","Registration"],["teams","Teams"],["players","Players"],["captains","Captains"],["auction-room","Auction"],["matches","Matches"],["schedule","Schedule"],["standings","Standings"],["bracket","Bracket"],["draft-summary","Draft Summary"]] as const;
+export function AppShell({children,slug="draftgg-test-cup"}:{children:React.ReactNode;slug?:string}){return <div className="app-frame"><div className="workspace"><aside className="sidebar"><BrandLockup compact/><div><strong className="sidebar-title">Tournament</strong><span className="sidebar-subtitle">Competition workspace</span></div><nav aria-label="Tournament navigation">{nav.map(([path,label])=><Link href={`/tournaments/${slug}/${path}`} key={path}>{label}</Link>)}</nav></aside><main className="workspace-main">{children}</main></div></div>}

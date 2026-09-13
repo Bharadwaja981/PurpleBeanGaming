@@ -1,0 +1,45 @@
+{
+  "name": "draftgg",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "node": ">=22.13.0 <23" },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "db:lint": "supabase db lint",
+    "validate:env": "node scripts/validate-env.mjs",
+    "scan:secrets": "node scripts/scan-secrets.mjs",
+    "load:public": "node scripts/load/public.mjs",
+    "load:mixed": "node scripts/load/mixed.mjs",
+    "load:realtime": "node scripts/load/realtime.mjs",
+    "benchmark:routes": "node scripts/load/performance.mjs"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.7.0",
+    "@supabase/supabase-js": "^2.57.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
+    "next": "16.3.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tailwind-merge": "^2.5.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "eslint": "^9.16.0",
+    "eslint-config-next": "16.3.4",
+    "jsdom": "^25.0.1",
+    "playwright": "^1.63.0",
+    "supabase": "^2.39.2",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2",
+    "vitest": "4.1.11"
+  }
+}

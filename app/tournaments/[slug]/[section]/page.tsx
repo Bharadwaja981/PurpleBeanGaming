@@ -1,0 +1,2 @@
+import { AppShell } from "@/components/layout/app-shell";
+export default async function Section({params}:{params:Promise<{slug:string;section:string}>}){const {slug,section}=await params;const title=section.split("-").map(x=>x[0]?.toUpperCase()+x.slice(1)).join(" ");return <AppShell slug={slug}><p className="page-kicker">Purple Bean Test Cup</p><h1 className="page-title">{title}</h1><div className="card mt-6 p-8"><p className="muted">This secure tournament workspace is ready for competition operations.</p></div></AppShell>}

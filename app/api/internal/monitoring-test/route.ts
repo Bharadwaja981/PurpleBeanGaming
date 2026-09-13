@@ -1,0 +1,3 @@
+import { timingSafeEqual } from "node:crypto";
+import { captureException } from "@/lib/monitoring";
+export async function POST(request:Request){const expected=process.env.READINESS_SECRET??"",provided=request.headers.get("authorization")?.replace(/^Bearer /,"")??"";if(process.env.VERCEL_ENV==="production"||!expected||expected.length!==provided.length||!timingSafeEqual(Buffer.from(expected),Buffer.from(provided)))return Response.json({error:"NOT_AVAILABLE"},{status:404});await captureException(new Error("SYNTHETIC_MONITORING_TEST"),{level:"error",requestId:request.headers.get("x-request-id")??undefined,tags:{synthetic:"true"}});return Response.json({captured:true});}

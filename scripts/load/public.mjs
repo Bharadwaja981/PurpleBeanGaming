@@ -1,0 +1,1 @@
+import{runHttp,target}from"./common.mjs";const base=target(),paths=(process.env.PUBLIC_PATHS??"/,/leaderboards").split(","),concurrency=Number(process.env.CONCURRENCY??100),requests=Number(process.env.REQUESTS??1000);console.log(JSON.stringify({result:"COMPLETE",virtualUsers:concurrency,...await runHttp({base,paths,concurrency,requests})}));

@@ -1,0 +1,10 @@
+"use server";
+import{requireUser}from"@/lib/platform/auth";import{enforceRateLimit,requestIdentity,RateLimitError}from"@/lib/rate-limit";
+import{captureException,isExpectedDomainError}from"@/lib/monitoring";
+const safe=(error:unknown)=>({error:error instanceof RateLimitError?"RATE_LIMITED":"REQUEST_FAILED"});
+async function failed(error:unknown,action:string){if(!isExpectedDomainError(error))await captureException(error,{level:"error",tags:{action}});return safe(error);}
+async function context(policy:"supportReply"|"accountDeactivation"){const result=await requireUser();await enforceRateLimit(policy,await requestIdentity(result.user.id));return result.supabase;}
+export async function replyTicketAction(id:string,message:string){try{const db=await context("supportReply"),{error}=await db.rpc("reply_support_ticket",{p_id:id,p_message:message,p_internal:false});if(error)throw new Error(error.message);return{ok:true as const};}catch(error){return failed(error,"reply_support_ticket");}}
+export async function ticketStatusAction(id:string,action:"close"|"reopen"){try{const db=await context("supportReply"),{error}=await db.rpc(action==="close"?"close_support_ticket":"reopen_support_ticket",{p_id:id});if(error)throw new Error(error.message);return{ok:true as const};}catch(error){return failed(error,`${action}_support_ticket`);}}
+export async function deactivateAccountAction(confirmation:string,reason:string){try{const db=await context("accountDeactivation"),{error}=await db.rpc("confirm_account_deactivation",{p_confirmation:confirmation,p_reason:reason});if(error)throw new Error(error.message);return{ok:true as const};}catch(error){return failed(error,"deactivate_account");}}
+export async function appealSanctionAction(id:string,reason:string){try{const db=await context("supportReply"),{error}=await db.rpc("submit_moderation_appeal",{p_sanction:id,p_reason:reason,p_evidence_path:undefined});if(error)throw new Error(error.message);return{ok:true as const};}catch(error){return failed(error,"submit_moderation_appeal");}}
