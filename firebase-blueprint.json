@@ -1,0 +1,309 @@
+{
+  "entities": {
+    "tournament": {
+      "title": "Tournament",
+      "description": "Esports tournament record with state machine lifecycle",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 120 },
+        "game": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["draft", "registration", "verification", "rating_review", "player_pool_locked", "auction_ready", "auction_live", "auction_paused", "rosters_locked", "competition", "completed", "cancelled"] },
+        "prizePoolINR": { "type": "string", "maxLength": 64 },
+        "prizePoolNumber": { "type": "number" },
+        "region": { "type": "string", "maxLength": 64 },
+        "city": { "type": "string", "maxLength": 64 },
+        "format": { "type": "string", "maxLength": 64 },
+        "dates": { "type": "string", "maxLength": 64 },
+        "startDate": { "type": "string", "maxLength": 32 },
+        "endDate": { "type": "string", "maxLength": 32 },
+        "teamsCount": { "type": "number" },
+        "maxTeams": { "type": "number" },
+        "playersCount": { "type": "number" },
+        "registeredCount": { "type": "number" },
+        "organizer": { "type": "string", "maxLength": 100 },
+        "organizerId": { "type": "string", "maxLength": 128 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "banner": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "game", "status", "prizePoolINR", "organizerId"]
+    },
+    "tournamentMembership": {
+      "title": "TournamentMembership",
+      "description": "Scoped user role inside a specific tournament",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "tournamentId": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "enum": ["organizer", "captain", "player", "referee"] },
+        "teamId": { "type": "string", "maxLength": 128 },
+        "assignedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "tournamentId", "role"]
+    },
+    "publicPlayer": {
+      "title": "PublicPlayer",
+      "description": "Publicly readable esports player stats and profile (zero PII)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "username": { "type": "string", "maxLength": 64 },
+        "realName": { "type": "string", "maxLength": 100 },
+        "avatar": { "type": "string", "maxLength": 500 },
+        "country": { "type": "string", "maxLength": 32 },
+        "flag": { "type": "string", "maxLength": 16 },
+        "city": { "type": "string", "maxLength": 64 },
+        "region": { "type": "string", "maxLength": 64 },
+        "primaryGame": { "type": "string", "maxLength": 64 },
+        "mmr": { "type": "number" },
+        "tournamentMmr": { "type": "number" },
+        "platformRating": { "type": "number" },
+        "primaryRole": { "type": "string", "maxLength": 64 },
+        "secondaryRole": { "type": "string", "maxLength": 64 },
+        "teamId": { "type": "string", "maxLength": 128 },
+        "teamName": { "type": "string", "maxLength": 100 },
+        "matches": { "type": "number" },
+        "wins": { "type": "number" },
+        "losses": { "type": "number" },
+        "winRate": { "type": "number" },
+        "bio": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "username"]
+    },
+    "privatePlayerAccount": {
+      "title": "PrivatePlayerAccount",
+      "description": "Confidential account data, PII, steam IDs, and integrity flags",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 128 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "steamId64": { "type": "string", "maxLength": 64 },
+        "verificationStatus": { "type": "string", "enum": ["Verified", "Pending Review", "Flagged"] },
+        "moderationNotes": { "type": "string", "maxLength": 1000 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "email"]
+    },
+    "team": {
+      "title": "Team",
+      "description": "Tournament team entity",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 100 },
+        "tag": { "type": "string", "maxLength": 16 },
+        "logo": { "type": "string", "maxLength": 500 },
+        "color": { "type": "string", "maxLength": 32 },
+        "captainId": { "type": "string", "maxLength": 128 },
+        "captainName": { "type": "string", "maxLength": 100 },
+        "rating": { "type": "number" },
+        "tournamentWins": { "type": "number" },
+        "city": { "type": "string", "maxLength": 64 },
+        "region": { "type": "string", "maxLength": 64 },
+        "primaryGame": { "type": "string", "maxLength": 64 },
+        "groupPoints": { "type": "number" },
+        "credits": { "type": "number" }
+      },
+      "required": ["id", "name", "tag", "captainId"]
+    },
+    "match": {
+      "title": "Match",
+      "description": "Competitive tournament match",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "tournamentId": { "type": "string", "maxLength": 128 },
+        "game": { "type": "string", "maxLength": 64 },
+        "round": { "type": "string", "maxLength": 64 },
+        "stage": { "type": "string", "maxLength": 64 },
+        "team1Id": { "type": "string", "maxLength": 128 },
+        "team2Id": { "type": "string", "maxLength": 128 },
+        "score1": { "type": "number" },
+        "score2": { "type": "number" },
+        "status": { "type": "string", "enum": ["Upcoming", "Live", "Completed", "Disputed", "Forfeited"] },
+        "winnerTeamId": { "type": "string", "maxLength": 128 },
+        "bestOf": { "type": "number" },
+        "time": { "type": "string", "maxLength": 64 },
+        "scheduledAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "tournamentId", "team1Id", "team2Id", "status"]
+    },
+    "auctionState": {
+      "title": "AuctionState",
+      "description": "Authoritative live auction draft state with revision locking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "tournamentId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["open", "paused", "sold", "unsold", "completed"] },
+        "currentPlayerId": { "type": "string", "maxLength": 128 },
+        "currentBid": { "type": "number" },
+        "leadingTeamId": { "type": "string", "maxLength": 128 },
+        "leadingTeamName": { "type": "string", "maxLength": 100 },
+        "revision": { "type": "number" },
+        "secondsLeft": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tournamentId", "status", "currentBid", "revision"]
+    },
+    "bid": {
+      "title": "Bid",
+      "description": "Immutable audit record of placed auction bid",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "tournamentId": { "type": "string", "maxLength": 128 },
+        "teamId": { "type": "string", "maxLength": 128 },
+        "playerId": { "type": "string", "maxLength": 128 },
+        "amount": { "type": "number" },
+        "bidderUserId": { "type": "string", "maxLength": 128 },
+        "idempotencyKey": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tournamentId", "teamId", "playerId", "amount", "bidderUserId"]
+    },
+    "registration": {
+      "title": "Registration",
+      "description": "Player tournament registration submission",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "tournamentId": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "playerName": { "type": "string", "maxLength": 100 },
+        "ign": { "type": "string", "maxLength": 64 },
+        "game": { "type": "string", "maxLength": 64 },
+        "primaryRole": { "type": "string", "maxLength": 64 },
+        "secondaryRole": { "type": "string", "maxLength": 64 },
+        "mmr": { "type": "number" },
+        "status": { "type": "string", "enum": ["registered", "approved", "rejected", "withdrawn"] },
+        "registeredAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "tournamentId", "userId", "playerName", "status"]
+    },
+    "dispute": {
+      "title": "Dispute",
+      "description": "Referee match result dispute record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "matchId": { "type": "string", "maxLength": 128 },
+        "reportingTeamId": { "type": "string", "maxLength": 128 },
+        "reportingUserId": { "type": "string", "maxLength": 128 },
+        "reason": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string", "enum": ["open", "investigating", "resolved", "dismissed"] },
+        "resolution": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "matchId", "reportingTeamId", "reportingUserId", "reason", "status"]
+    },
+    "auditLog": {
+      "title": "AuditLog",
+      "description": "Immutable append-only system audit log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "action": { "type": "string", "maxLength": 64 },
+        "actorId": { "type": "string", "maxLength": 128 },
+        "actorRole": { "type": "string", "maxLength": 32 },
+        "tournamentId": { "type": "string", "maxLength": 128 },
+        "entityId": { "type": "string", "maxLength": 128 },
+        "entityType": { "type": "string", "maxLength": 64 },
+        "details": { "type": "string", "maxLength": 1000 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "action", "actorId", "timestamp"]
+    },
+    "admin": {
+      "title": "Admin",
+      "description": "Trusted platform administrator entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "enum": ["superadmin", "moderator"] },
+        "assignedBy": { "type": "string", "maxLength": 128 },
+        "assignedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "role"]
+    },
+    "game": {
+      "title": "Game",
+      "description": "Managed competitive esports game definition",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "maxLength": 120 },
+        "slug": { "type": "string", "maxLength": 64 },
+        "shortName": { "type": "string", "maxLength": 32 },
+        "logo": { "type": "string", "maxLength": 500 },
+        "active": { "type": "boolean" },
+        "teamSize": { "type": "number" },
+        "substituteLimit": { "type": "number" },
+        "roles": { "type": "string", "maxLength": 1000 },
+        "competitionType": { "type": "string", "maxLength": 64 },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "slug", "active", "teamSize"]
+    }
+  },
+  "firestore": {
+    "/games/{gameId}": {
+      "schema": "game",
+      "description": "Server-backed competitive games configuration"
+    },
+    "/tournaments/{tournamentId}": {
+      "schema": "tournament",
+      "description": "Tournament records with full lifecycle"
+    },
+    "/tournaments/{tournamentId}/memberships/{userId}": {
+      "schema": "tournamentMembership",
+      "description": "Scoped user roles for a specific tournament"
+    },
+    "/publicPlayers/{playerId}": {
+      "schema": "publicPlayer",
+      "description": "Publicly readable player profiles"
+    },
+    "/privatePlayerAccounts/{userId}": {
+      "schema": "privatePlayerAccount",
+      "description": "Confidential player PII and accounts (owner/admin read only)"
+    },
+    "/teams/{teamId}": {
+      "schema": "team",
+      "description": "Esports teams registered for tournaments"
+    },
+    "/matches/{matchId}": {
+      "schema": "match",
+      "description": "Tournament bracket matches"
+    },
+    "/auctions/{tournamentId}": {
+      "schema": "auctionState",
+      "description": "Live auction draft state with optimistic concurrency"
+    },
+    "/auctions/{tournamentId}/bids/{bidId}": {
+      "schema": "bid",
+      "description": "Immutable bid history log"
+    },
+    "/registrations/{registrationId}": {
+      "schema": "registration",
+      "description": "Player tournament registration entries"
+    },
+    "/disputes/{disputeId}": {
+      "schema": "dispute",
+      "description": "Confidential match disputes"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "auditLog",
+      "description": "Immutable platform audit trail"
+    },
+    "/admins/{adminId}": {
+      "schema": "admin",
+      "description": "Platform administrator access directory"
+    }
+  }
+}

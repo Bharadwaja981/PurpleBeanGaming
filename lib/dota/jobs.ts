@@ -1,0 +1,18 @@
+import "server-only";
+import { createClient } from "@supabase/supabase-js";
+import type { Database } from "@/types/database";
+import { openDotaProvider } from "./providers/server";
+import { ProviderError } from "./providers/errors";
+import { ResilientDotaProvider } from "./providers/resilience";
+import { SupabaseResilienceStore } from "./providers/supabase-store";
+import { captureJobFailure } from "@/lib/monitoring";
+function admin(){const url=process.env.NEXT_PUBLIC_SUPABASE_URL,key=process.env.SUPABASE_SERVICE_ROLE_KEY;if(!url||!key)throw new Error("SYNC_NOT_CONFIGURED");return createClient<Database>(url,key,{auth:{persistSession:false,autoRefreshToken:false}});}
+export async function processOneDotaJob(worker="draftgg-worker"){
+ const db=admin(),{data:rows,error}=await db.rpc("claim_external_sync_job",{p_worker:worker});if(error)throw error;const job=rows?.[0];if(!job)return{processed:false};const provider=new ResilientDotaProvider(openDotaProvider(),new SupabaseResilienceStore(db));
+ try{
+  if(job.job_type==="profile_sync"&&job.player_game_account_id){const{data:account}=await db.from("player_game_accounts").select("dota_account_id").eq("id",job.player_game_account_id).single();if(!account)throw new ProviderError("PLAYER_NOT_FOUND");const profile=await provider.getPlayerProfile(String(account.dota_account_id)),sourceHash=await sha256(JSON.stringify(profile));await db.from("dota_profile_snapshots").upsert({player_game_account_id:job.player_game_account_id,provider:"opendota",persona_name:profile.personaName,avatar_url:profile.avatarUrl,profile_visibility:profile.profileVisibility,rank_tier:profile.rankTier,leaderboard_rank:profile.leaderboardRank,source_hash:sourceHash},{onConflict:"player_game_account_id,provider,source_hash",ignoreDuplicates:true});}
+  else if(job.job_type==="match_import"&&job.external_match_id){const match=await provider.getMatch(String(job.external_match_id)),sourceHash=await sha256(JSON.stringify(match));await db.from("dota_matches").upsert({match_id:Number(match.matchId),provider:"opendota",radiant_win:match.radiantWin,start_time:match.startTime,duration_seconds:match.durationSeconds,game_mode:match.gameMode,lobby_type:match.lobbyType,patch:match.patch,parse_state:match.parseState,replay_url:match.replayUrl,source_hash:sourceHash,updated_at:new Date().toISOString()});await db.from("dota_match_players").upsert(match.players.map(p=>({match_id:Number(match.matchId),slot:p.slot,account_id:p.accountId?Number(p.accountId):null,hero_id:p.heroId,is_radiant:p.isRadiant,kills:p.kills,deaths:p.deaths,assists:p.assists,gpm:p.gpm,xpm:p.xpm})),{onConflict:"match_id,slot"});const{data:link}=await db.from("match_external_links").select("id").eq("dota_match_id",Number(match.matchId)).maybeSingle();if(link)await db.rpc("reconcile_external_dota_match",{p_link_id:link.id});}
+  await db.rpc("finish_external_sync_job",{p_id:job.id,p_success:true});return{processed:true,jobId:job.id,status:"succeeded"};
+ }catch(error){const e=error instanceof ProviderError?error:new ProviderError("PROVIDER_UNAVAILABLE",true);await captureJobFailure(job.job_type,e,{jobId:job.id,attempt:job.attempts});await db.rpc("finish_external_sync_job",{p_id:job.id,p_success:false,p_error_code:e.code,p_retry_seconds:e.retryable?Math.max(30,Math.ceil((e.retryAfterMs??60000)/1000)):undefined});return{processed:true,jobId:job.id,status:"retry_or_failed",error:e.code};}
+}
+async function sha256(value:string){const bytes=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value));return Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,"0")).join("");}

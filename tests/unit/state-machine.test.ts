@@ -1,0 +1,2 @@
+import {describe,expect,it} from "vitest"; import {canTransitionTournament} from "@/lib/tournament/state-machine";
+describe("tournament state machine",()=>{it("allows the documented progression",()=>expect(canTransitionTournament("rating_review","player_pool_locked")).toBe(true));it("blocks arbitrary backwards transitions",()=>expect(canTransitionTournament("competition","registration")).toBe(false));it("allows cancellation from active phases",()=>expect(canTransitionTournament("auction_live","cancelled")).toBe(true));});

@@ -1,0 +1,12 @@
+export type TournamentRole="player"|"captain"|"organizer"|"moderator"|"referee";
+export type TournamentStatus="draft"|"registration"|"verification"|"rating_review"|"player_pool_locked"|"auction_ready"|"auction_live"|"auction_paused"|"rosters_locked"|"competition"|"completed"|"cancelled";
+export interface Profile{id:string;display_name:string|null;username:string|null;avatar_url:string|null}
+export interface Tournament{id:string;name:string;slug:string;season:string|null;status:TournamentStatus;created_by:string}
+export interface TournamentPlayer{id:string;tournament_id:string;user_id:string;ign:string;declared_mmr:number|null;verified_mmr:number|null;tournament_mmr:number|null;is_eligible:boolean;is_drafted:boolean}
+export interface TournamentTeam{id:string;tournament_id:string;name:string;short_tag:string;captain_user_id:string;starting_credits:number;credits_remaining:number;current_team_mmr:number;roster_size:number}
+export interface TournamentRules{tournament_id:string;team_size:number;starting_credits:number;minimum_bid:number;bid_increment:number;mmr_min:number|null;mmr_max:number|null;rules_version:number}
+export interface Auction{id:string;tournament_id:string;player_id:string;status:"pending"|"open"|"paused"|"sold"|"unsold"|"cancelled"|"reversed";revision:number;current_bid:number|null}
+export interface Bid{id:string;auction_id:string;team_id:string;amount:number;request_id:string;accepted:boolean}
+export interface RosterEntry{id:string;tournament_id:string;team_id:string;player_id:string;tournament_mmr_at_draft:number;is_active:boolean}
+export interface ScoutingEntry{id:string;tournament_id:string;captain_user_id:string;player_id:string;category:"priority"|"backup"|"avoid"|"watch";notes:string|null}
+export interface Appeal{id:string;tournament_id:string;player_id:string;appeal_type:string;reason:string;evidence_url:string|null;status:"submitted"|"under_review"|"approved"|"rejected"|"withdrawn"}

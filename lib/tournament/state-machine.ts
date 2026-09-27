@@ -1,0 +1,3 @@
+import type { TournamentStatus } from "@/types/domain";
+export const normalTransitions:Readonly<Record<TournamentStatus,readonly TournamentStatus[]>>={draft:["registration","cancelled"],registration:["verification","cancelled"],verification:["rating_review","cancelled"],rating_review:["player_pool_locked","cancelled"],player_pool_locked:["auction_ready","cancelled"],auction_ready:["auction_live","cancelled"],auction_live:["auction_paused","rosters_locked","cancelled"],auction_paused:["auction_live","cancelled"],rosters_locked:["competition","cancelled"],competition:["completed","cancelled"],completed:[],cancelled:[]};
+export function canTransitionTournament(from:TournamentStatus,to:TournamentStatus){return normalTransitions[from].includes(to)}

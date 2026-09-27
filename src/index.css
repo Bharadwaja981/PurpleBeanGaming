@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@layer base {
+  html, body {
+    overflow-x: hidden;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-text-size-adjust: 100%;
+    touch-action: manipulation;
+  }
+
+  /* Support mobile notch and dynamic island safe areas */
+  body {
+    padding-left: env(safe-area-inset-left, 0);
+    padding-right: env(safe-area-inset-right, 0);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+}
+
+/* Custom Neo-Brutalist Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-left: 2px solid #000;
+  border-top: 2px solid #000;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #000;
+  border: 1px solid #ffe600;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #7c3aed;
+}
+
+/* Responsive Table & Bracket Scroller Helpers */
+.table-scroll-container,
+.bracket-scroll-container {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+}
+
+/* Responsive Breakpoint helper for ultra-narrow phones */
+@media (max-width: 360px) {
+  .neo-shadow-mobile {
+    box-shadow: 2px 2px 0px 0px #000 !important;
+  }
+}

@@ -1,0 +1,3 @@
+# Achievements
+
+Achievements are objective, idempotent ledger awards. The implemented deterministic rebuild derives first draft from draft snapshots, first match/win from eligible canonical lineups, tournament/captain champion from result and team snapshots, five tournaments from completed draft history, and ten wins from canonical match wins. Awarding and rebuild are restricted to privileged processing; retrying the same scoped award creates no duplicate. Awards are Realtime-published and reload from the canonical ledger. Cancelled, superseded, disputed, and forfeit matches cannot provide rating/win evidence.

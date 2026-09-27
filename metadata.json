@@ -1,0 +1,6 @@
+{
+  "name": "Purple Bean Gaming",
+  "description": "India's premier multi-game esports tournament platform featuring live captain credit auctions, double-elimination bracket routing, and referee integrity auditing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

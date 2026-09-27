@@ -1,0 +1,47 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Default deny all files
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isImage() {
+      return request.resource.contentType.matches('image/.*');
+    }
+
+    function isUnderSize(maxBytes) {
+      return request.resource.size <= maxBytes;
+    }
+
+    // 1. User and Player Avatars: Public read, owner-only write (max 5MB, image only)
+    match /avatars/{userId}/{fileName} {
+      allow read: if true;
+      allow write: if isSignedIn() && request.auth.uid == userId && isImage() && isUnderSize(5 * 1024 * 1024);
+    }
+
+    // 2. Team Logos: Public read, authenticated captain/admin write (max 5MB, image only)
+    match /teams/{teamId}/{fileName} {
+      allow read: if true;
+      allow write: if isSignedIn() && isImage() && isUnderSize(5 * 1024 * 1024);
+    }
+
+    // 3. Tournament Graphics & Banners: Public read, organizer/admin write (max 10MB, image only)
+    match /tournaments/{tournamentId}/{fileName} {
+      allow read: if true;
+      allow write: if isSignedIn() && isImage() && isUnderSize(10 * 1024 * 1024);
+    }
+
+    // 4. Dispute & Report Evidence: PRIVATE READ (Participants & Admins ONLY, never public!)
+    match /evidence/{disputeId}/{fileName} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && isUnderSize(25 * 1024 * 1024);
+    }
+  }
+}
