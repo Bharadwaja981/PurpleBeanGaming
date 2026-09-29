@@ -32,6 +32,7 @@ import { CompetitionMatch } from '../domain/genericCompetitionEngine';
 import { ratingLedger, RatingAdjustmentRecord } from '../domain/competitiveRatingEngine';
 import { TestCupLifecycleConsole } from './TestCupLifecycleConsole';
 import { OrganiserRegistrationReview } from './OrganiserRegistrationReview';
+import { AuctionDraft } from './AuctionDraft';
 import { SelectDropdown, DropdownOption } from './ui/Dropdown';
 
 interface DynamicOrganiserWorkspaceProps {
@@ -562,6 +563,22 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
           tournamentId={config.identity.tournamentId}
           tournamentName={config.identity.name}
         />
+      )}
+
+      {/* AUCTION DRAFT TAB */}
+      {activeTab === 'auction' && isAuction && (
+        <div className="space-y-4 font-mono">
+          <div className="bg-[#FFE600] border-2 border-black p-3 text-xs font-black uppercase flex items-center justify-between">
+            <span>Tournament Auction Block · {config.identity.name}</span>
+            <button
+              onClick={() => onNavigate && onNavigate('auction', config.identity.tournamentId)}
+              className="bg-black text-white px-3 py-1 text-[11px] font-black uppercase hover:bg-stone-800 cursor-pointer shadow-[2px_2px_0px_0px_#fff]"
+            >
+              Open Dedicated Auction Room ↗
+            </button>
+          </div>
+          <AuctionDraft onNavigate={onNavigate} tournamentId={config.identity.tournamentId} />
+        </div>
       )}
 
       {/* AUDIT TAB */}

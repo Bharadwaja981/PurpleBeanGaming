@@ -4,10 +4,18 @@ import { tournamentService } from '../services/firebaseService';
 import { Tournament, ViewType } from '../types/tournament';
 import { gameManagementEngine } from '../domain/gameManagementEngine';
 import { SelectDropdown } from '../components/ui/Dropdown';
+import {
+  isPubliclyDiscoverable,
+  matchesStatusCategory,
+  matchesGameFilter,
+  matchesRegionFilter,
+  normalizeTournamentRecord,
+  normalizeStatus
+} from '../domain/tournamentDiscovery';
 
 interface TournamentsViewProps {
   onNavigate: (view: ViewType, entityId?: string) => void;
-  onOpenRegister: () => void;
+  onOpenRegister: (tournamentId?: string) => void;
 }
 
 export function TournamentsView({ onNavigate, onOpenRegister }: TournamentsViewProps) {
@@ -35,18 +43,45 @@ export function TournamentsView({ onNavigate, onOpenRegister }: TournamentsViewP
   const hasMultipleGames = activeGames.length > 1;
 
   const filteredTournaments = useMemo(() => {
-    return tournaments.filter((t) => {
-      const matchesStatus = statusFilter === 'All' || t.status === statusFilter;
-      const matchesGame = !hasMultipleGames || gameFilter === 'All' || t.game === gameFilter;
-      const matchesRegion = regionFilter === 'All' || t.region === regionFilter;
-      const matchesSearch = !searchQuery.trim() || 
-        t.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        t.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (t.city && t.city.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        t.region.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchesStatus && matchesGame && matchesRegion && matchesSearch;
-    });
-  }, [tournaments, statusFilter, gameFilter, regionFilter, searchQuery, hasMultipleGames]);
+    return tournaments
+      .map(normalizeTournamentRecord)
+      .filter((t) => {
+        // 1. Authoritative public discovery rule:
+        // Tournament must be visibility == PUBLIC and lifecycle is discoverable
+        if (!isPubliclyDiscoverable(t)) {
+          return false;
+        }
+
+        // 2. Status Category Filter
+        if (!matchesStatusCategory(t.status || t.lifecycle, statusFilter)) {
+          return false;
+        }
+
+        // 3. Game Filter (supports Dota 2 vs dota2 and all titles)
+        if (!matchesGameFilter(t.game, t.gameId, gameFilter)) {
+          return false;
+        }
+
+        // 4. Region Filter (All India Regions includes Pan India)
+        if (!matchesRegionFilter(t.region, regionFilter)) {
+          return false;
+        }
+
+        // 5. Search query matching
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase();
+          const matchName = t.name.toLowerCase().includes(q);
+          const matchDesc = (t.description || '').toLowerCase().includes(q);
+          const matchCity = (t.city || '').toLowerCase().includes(q);
+          const matchRegion = (t.region || '').toLowerCase().includes(q);
+          if (!matchName && !matchDesc && !matchCity && !matchRegion) {
+            return false;
+          }
+        }
+
+        return true;
+      });
+  }, [tournaments, statusFilter, gameFilter, regionFilter, searchQuery]);
 
   const statuses = ['All', 'Live', 'Upcoming', 'Registration Open', 'Drafting', 'Completed'];
   const statusOptions = statuses.map((s) => ({ value: s, label: s === 'All' ? 'All Statuses' : s }));
@@ -113,7 +148,7 @@ export function TournamentsView({ onNavigate, onOpenRegister }: TournamentsViewP
 
           <div className="md:col-span-2">
             <button
-              onClick={onOpenRegister}
+              onClick={() => onOpenRegister('auction-basic-test-1')}
               className="w-full bg-[#7C3AED] hover:bg-[#6D28D9] text-white border-2 border-black py-2 px-3 font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
             >
               + Register
@@ -143,9 +178,25 @@ export function TournamentsView({ onNavigate, onOpenRegister }: TournamentsViewP
       {/* Tournament Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredTournaments.map((tourney) => {
-          const isLive = tourney.status === 'Live';
-          const isOpen = tourney.status === 'Registration Open';
-          const isDrafting = tourney.status === 'Drafting';
+          const normSt = normalizeStatus(tourney.status || tourney.lifecycle);
+          const isLive = normSt === 'ACTIVE' || normSt === 'LIVE' || normSt === 'AUCTION_ACTIVE';
+          const isOpen = normSt === 'REGISTRATION_OPEN';
+          const isDrafting = normSt === 'CAPTAIN_SELECTION' || normSt === 'AUCTION_READY' || normSt === 'AUCTION_COMPLETED';
+          const isCompleted = normSt === 'COMPLETED';
+
+          const displayStatusLabel = 
+            normSt === 'REGISTRATION_OPEN' ? 'Registration Open' :
+            normSt === 'ACTIVE' ? 'Live' :
+            normSt === 'AUCTION_ACTIVE' ? 'Live Auction' :
+            normSt === 'CAPTAIN_SELECTION' ? 'Captain Draft' :
+            normSt === 'AUCTION_READY' ? 'Auction Ready' :
+            normSt === 'AUCTION_COMPLETED' ? 'Draft Completed' :
+            normSt === 'REGISTRATION_CLOSED' ? 'Registration Closed' :
+            normSt === 'SEEDING' ? 'Seeding Brackets' :
+            normSt === 'STRUCTURE_GENERATED' ? 'Brackets Drawn' :
+            normSt === 'COMPLETED' ? 'Completed' :
+            normSt === 'CANCELLED' ? 'Cancelled' :
+            tourney.status;
 
           return (
             <div
@@ -154,10 +205,17 @@ export function TournamentsView({ onNavigate, onOpenRegister }: TournamentsViewP
             >
               <div className="space-y-3">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-mono text-xs font-black uppercase bg-[#FFE600] px-2.5 py-0.5 border border-black shadow-[1px_1px_0px_0px_#000] flex items-center gap-1">
-                    <Gamepad2 className="w-3 h-3" />
-                    {tourney.game}
-                  </span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="font-mono text-xs font-black uppercase bg-[#FFE600] px-2.5 py-0.5 border border-black shadow-[1px_1px_0px_0px_#000] flex items-center gap-1">
+                      <Gamepad2 className="w-3 h-3" />
+                      {tourney.game}
+                    </span>
+                    {Boolean(tourney.isDevelopment || tourney.visibility === 'DEVELOPMENT' || tourney.id === 'auction-test') && (
+                      <span className="font-mono text-[10px] font-black uppercase bg-[#F3E8FF] text-[#7C3AED] px-2 py-0.5 border border-black shadow-[1px_1px_0px_0px_#000]">
+                        DEVELOPMENT / TEST
+                      </span>
+                    )}
+                  </div>
 
                   <span className={`font-mono text-xs font-black uppercase px-2.5 py-0.5 border border-black shadow-[1px_1px_0px_0px_#000] ${
                     isLive 
@@ -166,9 +224,11 @@ export function TournamentsView({ onNavigate, onOpenRegister }: TournamentsViewP
                       ? 'bg-[#70FFAF] text-black' 
                       : isDrafting
                       ? 'bg-[#FF70A6] text-black'
+                      : isCompleted
+                      ? 'bg-stone-200 text-stone-800'
                       : 'bg-stone-100 text-stone-700'
                   }`}>
-                    {tourney.status}
+                    {displayStatusLabel}
                   </span>
                 </div>
 
@@ -211,7 +271,7 @@ export function TournamentsView({ onNavigate, onOpenRegister }: TournamentsViewP
                 <div className="flex items-center gap-2">
                   {isOpen && (
                     <button
-                      onClick={onOpenRegister}
+                      onClick={() => onOpenRegister(tourney.id)}
                       className="bg-[#70FFAF] hover:bg-emerald-300 text-black border-2 border-black px-2.5 py-1 font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
                     >
                       Join

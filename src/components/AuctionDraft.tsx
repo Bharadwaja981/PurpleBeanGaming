@@ -22,105 +22,304 @@ import {
   Trophy,
   History,
   Info,
-  Lock
+  Lock,
+  Settings,
+  Send,
+  ArrowRight,
+  SlidersHorizontal
 } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
-import { SelectDropdown, DropdownOption } from './ui/Dropdown';
+import { SelectDropdown } from './ui/Dropdown';
 import { 
   dotaAuctionEngine, 
+  getAuctionEngine,
+  DotaAuctionEngine,
   DotaAuctionPlayer, 
   DotaAuctionTeam, 
   DotaAuctionState, 
   DotaBidRecord, 
   DotaNominationAudit 
 } from '../domain/dotaAuctionEngine';
+import { 
+  CreditAllocationMode, 
+  AuctionPurseAllocationAudit, 
+  EXPLANATION_TEXT 
+} from '../domain/dotaAuctionMmrBalancer';
+import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
+import { auctionPresenceManager, PresenceMember } from '../services/presenceService';
 
-export function AuctionDraft() {
+export interface AuctionDraftProps {
+  onNavigate?: (view: any, entityId?: string) => void;
+  tournamentId?: string;
+}
+
+export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {}) {
   const currentUser = tournamentService.getCurrentUser();
-  const isOrganiser = currentUser.role === 'organizer';
-  const isCaptain = currentUser.role === 'captain';
-  const isSpectator = currentUser.role === 'spectator' || (!isOrganiser && !isCaptain);
+  const isOrganiserUser = currentUser.role === 'organizer' || currentUser.isAdmin;
+  const isActualCaptain = currentUser.role === 'captain';
+
+  const tournaments = tournamentService.getTournaments();
+  const selectedTournamentId = tournamentId || '';
+
+  const currentTournament = selectedTournamentId ? tournaments.find(t => t.id === selectedTournamentId) : undefined;
+  const isAuctionSupported = selectedTournamentId ? tournamentConfigRegistry.isAuctionSupported(selectedTournamentId) : false;
+
+  // Tournament-scoped domain engine instance
+  const activeEngine = getAuctionEngine(selectedTournamentId || 'purple-bean-test-cup');
 
   // Synchronized auction state
-  const [auctionState, setAuctionState] = useState<DotaAuctionState>(() => dotaAuctionEngine.getState());
-  const [teams, setTeams] = useState<DotaAuctionTeam[]>(() => dotaAuctionEngine.getTeams());
-  const [availablePlayers, setAvailablePlayers] = useState<DotaAuctionPlayer[]>(() => dotaAuctionEngine.getAvailablePlayers());
-  const [soldPlayers, setSoldPlayers] = useState<DotaAuctionPlayer[]>(() => dotaAuctionEngine.getSoldPlayers());
-  const [unsoldPlayers, setUnsoldPlayers] = useState<DotaAuctionPlayer[]>(() => dotaAuctionEngine.getUnsoldPlayers());
-  const [unselectedPlayers, setUnselectedPlayers] = useState<DotaAuctionPlayer[]>(() => dotaAuctionEngine.getUnselectedPlayers());
-  const [bidHistory, setBidHistory] = useState<DotaBidRecord[]>(() => dotaAuctionEngine.getBidHistory());
-  const [nominationAudits, setNominationAudits] = useState<DotaNominationAudit[]>(() => dotaAuctionEngine.getNominationAudits());
+  const [auctionState, setAuctionState] = useState<DotaAuctionState>(() => activeEngine.getState());
+  const [teams, setTeams] = useState<DotaAuctionTeam[]>(() => activeEngine.getTeams());
+  const [availablePlayers, setAvailablePlayers] = useState<DotaAuctionPlayer[]>(() => activeEngine.getAvailablePlayers());
+  const [soldPlayers, setSoldPlayers] = useState<DotaAuctionPlayer[]>(() => activeEngine.getSoldPlayers());
+  const [unsoldPlayers, setUnsoldPlayers] = useState<DotaAuctionPlayer[]>(() => activeEngine.getUnsoldPlayers());
+  const [unselectedPlayers, setUnselectedPlayers] = useState<DotaAuctionPlayer[]>(() => activeEngine.getUnselectedPlayers());
+  const [bidHistory, setBidHistory] = useState<DotaBidRecord[]>(() => activeEngine.getBidHistory());
+  const [nominationAudits, setNominationAudits] = useState<DotaNominationAudit[]>(() => activeEngine.getNominationAudits());
 
-  // UI state
-  const [activeTab, setActiveTab] = useState<'live' | 'sold' | 'unsold' | 'unselected' | 'teams' | 'audit'>('live');
+  // UI state & perspective simulation for testing
+  const [activeTab, setActiveTab] = useState<'live' | 'teams' | 'sold' | 'unsold' | 'unselected' | 'audit'>('live');
   const [bidError, setBidError] = useState<string | null>(null);
   const [bidSuccess, setBidSuccess] = useState<string | null>(null);
   const [selectedNomineeId, setSelectedNomineeId] = useState<string>('');
-  const [selectedBidTeamId, setSelectedBidTeamId] = useState<string>(() => {
-    if (currentUser.teamId) return currentUser.teamId;
-    const firstTeam = dotaAuctionEngine.getTeams()[0];
-    return firstTeam ? firstTeam.id : '';
-  });
+  const [customBidAmount, setCustomBidAmount] = useState<string>('');
+
+  // Organiser simulated perspective: allows organisers/testers to switch to captain live bidding device
+  const [simulatedCaptainTeamId, setSimulatedCaptainTeamId] = useState<string>('');
 
   // Stand-in assignment modal state
   const [standInModalOpen, setStandInModalOpen] = useState(false);
   const [standInTeamId, setStandInTeamId] = useState<string>('');
   const [standInPlayerId, setStandInPlayerId] = useState<string>('');
 
-  // Subscribe to domain engine events
+  // MMR-balanced purse allocation state
+  const [purseAudit, setPurseAudit] = useState<AuctionPurseAllocationAudit | null>(() => activeEngine.getPurseAllocationAudit());
+
+  // Subscribe to domain engine events for this specific tournament
   useEffect(() => {
+    if (!selectedTournamentId) return;
+    const engine = getAuctionEngine(selectedTournamentId);
     const handleSync = () => {
-      setAuctionState(dotaAuctionEngine.getState());
-      setTeams(dotaAuctionEngine.getTeams());
-      setAvailablePlayers(dotaAuctionEngine.getAvailablePlayers());
-      setSoldPlayers(dotaAuctionEngine.getSoldPlayers());
-      setUnsoldPlayers(dotaAuctionEngine.getUnsoldPlayers());
-      setUnselectedPlayers(dotaAuctionEngine.getUnselectedPlayers());
-      setBidHistory(dotaAuctionEngine.getBidHistory());
-      setNominationAudits(dotaAuctionEngine.getNominationAudits());
+      setAuctionState(engine.getState());
+      setTeams(engine.getTeams());
+      setAvailablePlayers(engine.getAvailablePlayers());
+      setSoldPlayers(engine.getSoldPlayers());
+      setUnsoldPlayers(engine.getUnsoldPlayers());
+      setUnselectedPlayers(engine.getUnselectedPlayers());
+      setBidHistory(engine.getBidHistory());
+      setNominationAudits(engine.getNominationAudits());
+      setPurseAudit(engine.getPurseAllocationAudit());
     };
 
     handleSync();
-    return dotaAuctionEngine.subscribe(handleSync);
-  }, []);
+    return engine.subscribe(handleSync);
+  }, [selectedTournamentId]);
 
-  // Update selected bid team if current user changes or teams load
-  useEffect(() => {
-    if (currentUser.teamId) {
-      setSelectedBidTeamId(currentUser.teamId);
-    } else if (!selectedBidTeamId && teams.length > 0) {
-      setSelectedBidTeamId(teams[0].id);
+  // Direct URL Security Check 0: Tournament ID not provided (global access attempt)
+  if (!selectedTournamentId) {
+    return (
+      <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-8 text-center space-y-4 my-8 font-mono">
+        <AlertCircle className="w-12 h-12 text-[#FF5757] mx-auto" />
+        <h2 className="font-sans font-black text-2xl uppercase text-black">Tournament Context Required</h2>
+        <p className="text-sm text-stone-600 max-w-md mx-auto">
+          Auction rooms are tournament-specific and cannot be accessed as a global feature. Please enter the auction through an active tournament page.
+        </p>
+        <button
+          onClick={() => onNavigate && onNavigate('tournaments')}
+          className="bg-[#FFE600] border-2 border-black px-4 py-2 text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] cursor-pointer"
+        >
+          Browse Tournaments
+        </button>
+      </div>
+    );
+  }
+
+  // Direct URL Security Check 1: Tournament does not exist
+  if (!currentTournament && tournaments.length > 0 && !tournamentConfigRegistry.getConfig(selectedTournamentId)) {
+    return (
+      <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-8 text-center space-y-4 my-8 font-mono">
+        <AlertCircle className="w-12 h-12 text-[#FF5757] mx-auto" />
+        <h2 className="font-sans font-black text-2xl uppercase text-black">Tournament Not Found</h2>
+        <p className="text-sm text-stone-600 max-w-md mx-auto">
+          The requested tournament '{selectedTournamentId}' does not exist or has not been published yet.
+        </p>
+        <button
+          onClick={() => onNavigate && onNavigate('tournaments')}
+          className="bg-[#FFE600] border-2 border-black px-4 py-2 text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] cursor-pointer"
+        >
+          Browse Tournaments
+        </button>
+      </div>
+    );
+  }
+
+  // Direct URL Security Check 2: Tournament does NOT support auction (e.g. Premade Team Squads)
+  if (!isAuctionSupported) {
+    return (
+      <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-8 text-center space-y-4 my-8 font-mono">
+        <AlertCircle className="w-12 h-12 text-[#FF5757] mx-auto" />
+        <div className="bg-[#FFE600] text-black border border-black px-3 py-1 text-xs font-black uppercase inline-block">
+          Team Formation: {currentTournament?.format?.toLowerCase().includes('premade') ? 'PREMADE SQUAD' : 'NON-AUCTION'}
+        </div>
+        <h2 className="font-sans font-black text-2xl uppercase text-black">Auction Not Available</h2>
+        <p className="text-sm text-stone-600 max-w-md mx-auto">
+          {currentTournament?.name || 'This tournament'} does not feature a live captain auction. It is configured for premade squads or direct team registrations.
+        </p>
+        <div className="flex justify-center gap-3 pt-2">
+          <button
+            onClick={() => onNavigate && onNavigate('tournament_detail', selectedTournamentId)}
+            className="bg-[#7C3AED] text-white border-2 border-black px-4 py-2 text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] cursor-pointer"
+          >
+            ← Return to Tournament Overview
+          </button>
+          <button
+            onClick={() => onNavigate && onNavigate('tournaments')}
+            className="bg-white hover:bg-stone-100 text-black border-2 border-black px-4 py-2 text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] cursor-pointer"
+          >
+            All Tournaments
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Environment check: Perspective switcher is development/testing functionality ONLY
+  const isDevMode = Boolean(import.meta.env?.DEV);
+
+  // In production, perspective switching is completely disabled and excluded
+  const effectiveSimulatedCaptainTeamId = isDevMode ? simulatedCaptainTeamId : '';
+
+  // Determine active captain team strictly based on authenticated Firebase identity in THIS tournament
+  const effectiveCaptainTeam = (() => {
+    if (effectiveSimulatedCaptainTeamId) {
+      return teams.find(t => t.id === effectiveSimulatedCaptainTeamId);
     }
-  }, [currentUser.teamId, teams]);
+    if (isActualCaptain) {
+      // Must be an appointed captain of a team in THIS tournament!
+      return teams.find(t => t.captainId === currentUser.id);
+    }
+    return undefined;
+  })();
 
-  // Current active nominee
+  // Role authority checks
+  const canOperateThisAuction = tournamentConfigRegistry.canUserManageTournamentAuction(currentUser, selectedTournamentId);
+  const isCaptainViewActive = Boolean(effectiveCaptainTeam && (!isOrganiserUser || effectiveSimulatedCaptainTeamId));
+  const isOrganiserDeskActive = isOrganiserUser && canOperateThisAuction && !effectiveSimulatedCaptainTeamId;
+
+  // Active nominee & configuration from tournament engine
   const currentNominee = auctionState.nominee;
-  const config = dotaAuctionEngine.getConfig();
+  const config = activeEngine.getConfig();
 
-  // Find user's active team
-  const myTeam = teams.find(t => t.id === selectedBidTeamId) || teams[0];
+  // Reserve rule details for active captain team
+  const captainPrimaryCount = effectiveCaptainTeam ? effectiveCaptainTeam.primaryRoster.length : 0;
+  const captainRemainingMandatorySlots = effectiveCaptainTeam ? Math.max(0, config.primaryRosterSize - captainPrimaryCount - 1) : 0;
+  const captainMandatoryReserveNeeded = captainRemainingMandatorySlots * config.reservePerSlot;
+  const captainMaxAllowableBid = effectiveCaptainTeam ? Math.max(0, effectiveCaptainTeam.remainingCredits - captainMandatoryReserveNeeded) : 0;
 
-  // Calculate reserve rule details for selected team
-  const currentPrimaryCount = myTeam ? myTeam.primaryRoster.length : 1;
-  const remainingMandatorySlots = Math.max(0, config.primaryRosterSize - currentPrimaryCount - 1);
-  const mandatoryReserveNeeded = remainingMandatorySlots * config.reservePerSlot;
-  const maxAllowableBid = myTeam ? Math.max(0, myTeam.remainingCredits - mandatoryReserveNeeded) : 0;
+  // Leading team check
+  const isLeading = Boolean(effectiveCaptainTeam && auctionState.leadingTeamId === effectiveCaptainTeam.id);
+  const isOutbid = Boolean(effectiveCaptainTeam && auctionState.leadingTeamId && auctionState.leadingTeamId !== effectiveCaptainTeam.id);
 
-  // Actions
-  const handlePlaceBid = (increment: number) => {
+  // -------------------------------------------------------------
+  // Actions (Tournament-Scoped)
+  // -------------------------------------------------------------
+  const handleStartAuction = () => {
+    setBidError(null);
+    const res = activeEngine.startAuction(currentUser.id);
+    if (res.success) {
+      setBidSuccess('Live Auction Floor opened! Contenders can now be nominated.');
+      setTimeout(() => setBidSuccess(null), 3000);
+    } else {
+      setBidError(res.error || 'Failed to start auction.');
+    }
+  };
+
+  const handleRecalculatePurses = () => {
+    setBidError(null);
+    const res = activeEngine.recalculatePurses(currentUser.id);
+    if (res.success) {
+      setPurseAudit(res.audit || null);
+      setBidSuccess('Starting auction credits recalculated and balanced successfully!');
+      setTimeout(() => setBidSuccess(null), 3000);
+    } else {
+      setBidError(res.error || 'Failed to recalculate purses.');
+    }
+  };
+
+  const handleToggleAllocationMode = (newMode: CreditAllocationMode) => {
+    setBidError(null);
+    const res = activeEngine.setAllocationMode(newMode, currentUser.id);
+    if (res.success) {
+      setPurseAudit(res.audit || null);
+      setBidSuccess(`Allocation mode switched to ${newMode}`);
+      setTimeout(() => setBidSuccess(null), 3000);
+    } else {
+      setBidError(res.error || 'Failed to switch allocation mode.');
+    }
+  };
+
+  const handlePauseAuction = () => {
+    setBidError(null);
+    const res = tournamentService.pauseDotaAuction(selectedTournamentId);
+    if (res.success) {
+      setBidSuccess('Auction floor PAUSED by organiser.');
+      setTimeout(() => setBidSuccess(null), 3000);
+    } else {
+      setBidError(res.error || 'Failed to pause auction.');
+    }
+  };
+
+  const handleResumeAuction = () => {
+    setBidError(null);
+    const res = tournamentService.resumeDotaAuction(selectedTournamentId);
+    if (res.success) {
+      setBidSuccess('Auction floor RESUMED.');
+      setTimeout(() => setBidSuccess(null), 3000);
+    } else {
+      setBidError(res.error || 'Failed to resume auction.');
+    }
+  };
+
+  const handleToggleAntiSnipe = () => {
+    const currentConfig = activeEngine.getConfig();
+    const updated = activeEngine.updateConfig({
+      bidExtensionEnabled: !currentConfig.bidExtensionEnabled
+    });
+    setBidSuccess(`Anti-sniping Bid Extension ${updated.bidExtensionEnabled ? 'ENABLED (+5s on bids within 5s window)' : 'DISABLED'}.`);
+    setTimeout(() => setBidSuccess(null), 3000);
+  };
+
+  const handleNominatePlayer = (playerId: string) => {
+    setBidError(null);
+    setBidSuccess(null);
+    const res = tournamentService.nominateDotaPlayer(playerId, selectedTournamentId);
+    if (!res.success) {
+      setBidError(res.error || 'Failed to nominate player.');
+      setTimeout(() => setBidError(null), 4000);
+    } else {
+      setSelectedNomineeId('');
+      setBidSuccess(`✓ ${res.nominee?.username} is now LIVE on the auction floor! 30s countdown started.`);
+      setTimeout(() => setBidSuccess(null), 3500);
+    }
+  };
+
+  const handlePlaceQuickBid = (increment: number) => {
     setBidError(null);
     setBidSuccess(null);
 
-    if (!myTeam) {
+    if (!effectiveCaptainTeam) {
       setBidError('No team selected to bid.');
       return;
     }
 
     const proposedAmount = auctionState.currentBid + increment;
     const res = tournamentService.placeDotaAuctionBid({
-      teamId: myTeam.id,
+      tournamentId: selectedTournamentId,
+      teamId: effectiveCaptainTeam.id,
       bidAmount: proposedAmount,
-      expectedRevision: auctionState.revision
+      increment,
+      expectedRevision: auctionState.revision,
+      simulatedCaptainId: isDevMode && effectiveSimulatedCaptainTeamId ? effectiveCaptainTeam.captainId : undefined
     });
 
     if (res.success) {
@@ -132,17 +331,37 @@ export function AuctionDraft() {
     }
   };
 
-  const handleNominatePlayer = (playerId: string) => {
+  const handlePlaceCustomBid = (e: React.FormEvent) => {
+    e.preventDefault();
     setBidError(null);
     setBidSuccess(null);
-    const res = tournamentService.nominateDotaPlayer(playerId);
-    if (!res.success) {
-      setBidError(res.error || 'Failed to nominate player.');
-      setTimeout(() => setBidError(null), 4000);
-    } else {
-      setSelectedNomineeId('');
-      setBidSuccess(`✓ ${res.nominee?.username} nominated at opening bid of ${config.minimumBid} credits.`);
+
+    const amount = Number(customBidAmount);
+    if (!amount || isNaN(amount) || amount <= 0) {
+      setBidError('Please enter a valid bid amount.');
+      return;
+    }
+
+    if (!effectiveCaptainTeam) {
+      setBidError('No team selected to bid.');
+      return;
+    }
+
+    const res = tournamentService.placeDotaAuctionBid({
+      tournamentId: selectedTournamentId,
+      teamId: effectiveCaptainTeam.id,
+      bidAmount: amount,
+      expectedRevision: auctionState.revision,
+      simulatedCaptainId: isDevMode && effectiveSimulatedCaptainTeamId ? effectiveCaptainTeam.captainId : undefined
+    });
+
+    if (res.success) {
+      setBidSuccess(`✓ Custom bid accepted! ${res.leadingTeamName} leads at ${res.currentBid} credits.`);
+      setCustomBidAmount('');
       setTimeout(() => setBidSuccess(null), 3000);
+    } else {
+      setBidError(res.error || 'Custom bid rejected.');
+      setTimeout(() => setBidError(null), 4000);
     }
   };
 
@@ -150,7 +369,7 @@ export function AuctionDraft() {
     setBidError(null);
     setBidSuccess(null);
     try {
-      const res = tournamentService.concludeDotaAuctionItem(true);
+      const res = tournamentService.concludeDotaAuctionItem(true, selectedTournamentId);
       if (res.outcome === 'SOLD') {
         setBidSuccess(`✓ SOLD! ${res.player.username} awarded to ${res.teamName} for ${res.winningBid} credits!`);
       } else if (res.outcome === 'AUCTION_COMPLETED') {
@@ -168,7 +387,7 @@ export function AuctionDraft() {
     setBidError(null);
     setBidSuccess(null);
     try {
-      const res = tournamentService.concludeDotaAuctionItem(false);
+      const res = tournamentService.concludeDotaAuctionItem(false, selectedTournamentId);
       setBidError(`Contender ${res.player.username} passed as UNSOLD.`);
       setTimeout(() => setBidError(null), 4000);
     } catch (err: any) {
@@ -177,17 +396,25 @@ export function AuctionDraft() {
   };
 
   const handleFinalizeAuction = () => {
+    const teamsBelowCapacity = teams.filter(t => t.primaryRoster.length < config.primaryRosterSize);
+    if (teamsBelowCapacity.length > 0) {
+      setBidError(`Cannot finalize auction: All teams must reach full ${config.primaryRosterSize}/${config.primaryRosterSize} roster before finalizing. Current: ${teamsBelowCapacity.map(t => `${t.name} (${t.primaryRoster.length}/${config.primaryRosterSize})`).join(', ')}`);
+      setTimeout(() => setBidError(null), 5000);
+      return;
+    }
     if (!confirm('Are you sure you want to finalize the auction and lock all rosters?')) return;
-    const res = tournamentService.finalizeDotaAuction();
+    const res = tournamentService.finalizeDotaAuction(selectedTournamentId);
     if (res.success) {
-      setBidSuccess(`✓ Auction finalized! ${res.unselectedCount} untouched contenders marked UNSELECTED.`);
+      setBidSuccess(`✓ Auction finalized! All teams reached full ${config.primaryRosterSize}/${config.primaryRosterSize} rosters.`);
+    } else {
+      setBidError((res as any).error || 'Failed to finalize auction.');
     }
   };
 
   const handleAssignStandInSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!standInTeamId || !standInPlayerId) return;
-    const res = tournamentService.assignDotaStandIn(standInTeamId, standInPlayerId);
+    const res = tournamentService.assignDotaStandIn(standInTeamId, standInPlayerId, selectedTournamentId);
     if (res.success) {
       setBidSuccess(`✓ Optional stand-in assigned to ${res.team?.name}!`);
       setStandInModalOpen(false);
@@ -199,7 +426,7 @@ export function AuctionDraft() {
   };
 
   return (
-    <div className="w-full space-y-6 font-mono">
+    <div className="w-full space-y-6 font-mono pb-16">
       {/* Top Banner & State Ticker */}
       <div className="bg-white border-[3.5px] border-black shadow-[4px_4px_0px_0px_#000] p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -209,27 +436,42 @@ export function AuctionDraft() {
           <div>
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-black uppercase bg-[#FFE600] px-1.5 py-0.5 border border-black">
-                DOTA 2 PHASE 2 · LIVE PLAYER AUCTION
+                DOTA 2 PHASE 2 · LIVE CAPTAIN AUCTION
               </span>
               <span className={`px-1.5 py-0.5 border border-black text-[10px] font-black uppercase ${
                 auctionState.isCompleted ? 'bg-[#70FFAF] text-black' :
                 auctionState.status === 'LIVE' ? 'bg-[#FFDE59] text-black animate-pulse' :
+                auctionState.status === 'PAUSED' ? 'bg-amber-300 text-black' :
                 'bg-stone-200 text-stone-700'
               }`}>
                 {auctionState.status}
               </span>
+              {config.bidExtensionEnabled && (
+                <span className="text-[9px] font-black uppercase bg-[#E0F2FE] border border-black px-1.5 py-0.5 text-blue-900">
+                  Anti-Snipe +5s
+                </span>
+              )}
             </div>
-            <h1 className="text-xl sm:text-2xl font-black uppercase text-black font-sans leading-tight">
+            <h1 className="text-xl sm:text-2xl font-black uppercase text-black font-sans leading-tight mt-0.5">
               {config.tournamentName} · FRANCHISE DRAFT
             </h1>
             <p className="text-xs text-stone-600">
-              Starting Purse: {config.startingCredits} Credits • Minimum Increment: +{config.bidIncrement} • Reserve per unfilled slot: {config.reservePerSlot} Credits
+              Purse: {config.startingCredits} Credits • Min Increment: +{config.bidIncrement} • Reserve: {config.reservePerSlot} Cr/slot
             </p>
           </div>
         </div>
 
-        {/* Status Indicators */}
+        {/* Status Indicators & Navigation */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
+          {onNavigate && (
+            <button
+              onClick={() => onNavigate('tournament_detail', selectedTournamentId)}
+              className="bg-white hover:bg-stone-100 text-black border-2 border-black px-3 py-1.5 font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1 cursor-pointer mr-2"
+              title="Return to tournament details and overview"
+            >
+              ← Tournament Hub
+            </button>
+          )}
           <div className="bg-stone-50 border-2 border-black px-3 py-1.5">
             <span className="text-[9px] uppercase text-stone-500 block">Available</span>
             <span className="font-black text-black">{availablePlayers.length}</span>
@@ -249,14 +491,34 @@ export function AuctionDraft() {
         </div>
       </div>
 
-      {/* Role Alert / Banner */}
-      {isSpectator && (
-        <div className="p-3 bg-[#E0F2FE] border-2 border-black text-xs text-stone-700 flex items-center justify-between">
+      {/* PERSPECTIVE / TESTING SWITCHER (DEV mode only - strictly excluded from production build) */}
+      {isDevMode && isOrganiserUser && (
+        <div className="bg-[#FFF9E6] border-2 border-black p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4 text-blue-600" />
-            <span><strong>Spectator Mode Active:</strong> Viewing real-time bids and lots. Captain bidding controls are hidden.</span>
+            <SlidersHorizontal className="w-4 h-4 text-[#7C3AED]" />
+            <span className="font-black uppercase text-black">Dev Perspective Simulator:</span>
+            <span className="text-stone-600">
+              {effectiveSimulatedCaptainTeamId 
+                ? `Viewing as Captain: ${effectiveCaptainTeam?.name} (${effectiveCaptainTeam?.captainIgn})` 
+                : 'Viewing as Tournament Organiser (Referee Controls)'}
+            </span>
           </div>
-          <span className="text-[10px] font-bold text-stone-500">Live Telemetry Delay: 0s</span>
+
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase font-bold text-stone-500">Perspective:</span>
+            <select
+              value={effectiveSimulatedCaptainTeamId}
+              onChange={(e) => setSimulatedCaptainTeamId(e.target.value)}
+              className="bg-white border-2 border-black px-2 py-1 text-xs font-mono font-bold cursor-pointer"
+            >
+              <option value="">Organiser Desk (Controls & Telemetry)</option>
+              {teams.map(t => (
+                <option key={t.id} value={t.id}>
+                  Captain: {t.name} [{t.tag}] — {t.captainIgn} ({t.remainingCredits} Cr)
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
 
@@ -268,7 +530,7 @@ export function AuctionDraft() {
             activeTab === 'live' ? 'bg-[#FFE600] text-black shadow-[2px_2px_0px_0px_#000]' : 'bg-white hover:bg-stone-100'
           }`}
         >
-          Live Floor
+          {isCaptainViewActive ? 'Captain Live Bidding Floor' : 'Organiser Auction Desk'}
         </button>
         <button
           onClick={() => setActiveTab('teams')}
@@ -326,25 +588,118 @@ export function AuctionDraft() {
         </div>
       )}
 
+      {/* WINNER / OUTCOME ANNOUNCEMENT NOTIFICATION */}
+      {auctionState.lastLotResult && !currentNominee && (
+        <div className={`p-4 border-[3px] border-black shadow-[4px_4px_0px_0px_#000] flex flex-wrap items-center justify-between gap-4 ${
+          auctionState.lastLotResult.outcome === 'SOLD' ? 'bg-[#70FFAF]/30' : 'bg-[#FFDE59]/40'
+        }`}>
+          <div className="flex items-center gap-3">
+            <span className="text-3xl">
+              {auctionState.lastLotResult.outcome === 'SOLD' ? '🎉' : '⏳'}
+            </span>
+            <div>
+              <span className="text-[10px] font-black uppercase text-stone-600 block">
+                LOT CONCLUDED: {auctionState.lastLotResult.outcome}
+              </span>
+              <strong className="text-black text-sm block">
+                {auctionState.lastLotResult.outcome === 'SOLD'
+                  ? `${auctionState.lastLotResult.player.username} SOLD to ${auctionState.lastLotResult.winningTeamName} for ${auctionState.lastLotResult.winningBid} Credits!`
+                  : `${auctionState.lastLotResult.player.username} concluded without valid bids and passed as UNSOLD.`}
+              </strong>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {isOrganiserDeskActive && (
+              <button
+                onClick={() => dotaAuctionEngine.dismissLastLotResult()}
+                className="px-3 py-1.5 bg-black hover:bg-stone-800 text-white border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+              >
+                Move to Next Contender →
+              </button>
+            )}
+            {!isOrganiserDeskActive && (
+              <button
+                onClick={() => dotaAuctionEngine.dismissLastLotResult()}
+                className="px-3 py-1.5 bg-white border border-black text-xs font-bold uppercase cursor-pointer"
+              >
+                Dismiss
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* TAB 1: LIVE FLOOR */}
       {activeTab === 'live' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Main Stage: Current Nominee Block */}
+          {/* Main Stage: Current Nominee Block & Live Controls */}
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-6 sm:p-8 space-y-6">
+              
+              {/* Header Clock & Status */}
               <div className="flex items-center justify-between border-b-2 border-black pb-3">
                 <div className="flex items-center gap-2">
                   <Flame className="w-5 h-5 text-[#FF5757]" />
-                  <span className="font-black text-xs uppercase tracking-tight">CURRENT AUCTION LOT</span>
+                  <span className="font-black text-xs uppercase tracking-tight">
+                    {isCaptainViewActive ? 'CAPTAIN LIVE BIDDING FLOOR' : 'ORGANISER AUCTION DESK'}
+                  </span>
                 </div>
-                <div className="flex items-center gap-1.5 text-xs font-black">
-                  <Clock className="w-4 h-4 text-[#7C3AED]" />
-                  <span>Clock: {auctionState.secondsRemaining}s</span>
+                <div className="flex items-center gap-3">
+                  <div className={`flex items-center gap-1.5 text-xs font-black px-2 py-0.5 border border-black ${
+                    auctionState.secondsRemaining <= 5 && auctionState.status === 'LIVE'
+                      ? 'bg-[#FF5757] text-white animate-pulse'
+                      : 'bg-[#F3E8FF] text-[#7C3AED]'
+                  }`}>
+                    <Clock className="w-4 h-4" />
+                    <span>Time Remaining: {auctionState.secondsRemaining}s</span>
+                  </div>
                 </div>
               </div>
 
+              {/* ------------------------------------------------------------- */}
+              {/* SECTION: CURRENT PLAYER ACTIVE ON FLOOR                       */}
+              {/* ------------------------------------------------------------- */}
               {currentNominee ? (
                 <div className="space-y-6">
+                  {/* CAPTAIN LEADING / OUTBID REAL-TIME STATUS BANNER */}
+                  {isCaptainViewActive && effectiveCaptainTeam && (
+                    <div className={`p-4 border-[2.5px] border-black shadow-[3px_3px_0px_0px_#000] flex items-center justify-between gap-3 ${
+                      isLeading 
+                        ? 'bg-[#70FFAF] text-black' 
+                        : isOutbid 
+                        ? 'bg-[#FF5757] text-white animate-pulse' 
+                        : 'bg-[#FFE600] text-black'
+                    }`}>
+                      <div className="flex items-center gap-3">
+                        {isLeading ? (
+                          <Crown className="w-6 h-6 text-black shrink-0" />
+                        ) : isOutbid ? (
+                          <AlertCircle className="w-6 h-6 text-white shrink-0" />
+                        ) : (
+                          <Gavel className="w-6 h-6 text-black shrink-0" />
+                        )}
+                        <div>
+                          <span className="text-[10px] font-black uppercase tracking-wider block">
+                            {isLeading ? 'CURRENT LEADER' : isOutbid ? 'ATTENTION REQUIRED' : 'FLOOR OPEN'}
+                          </span>
+                          <strong className="text-base sm:text-lg font-black uppercase font-sans leading-none block">
+                            {isLeading ? 'YOU ARE LEADING!' : isOutbid ? `OUTBID BY ${auctionState.leadingTeamName}!` : 'READY TO BID'}
+                          </strong>
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <span className="text-[10px] font-bold block uppercase opacity-80">
+                          {isLeading ? 'Your High Bid' : isOutbid ? 'Leading Bid' : 'Opening Bid'}
+                        </span>
+                        <span className="text-xl sm:text-2xl font-black">
+                          {auctionState.currentBid.toLocaleString()} Cr
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Player Hero Section */}
                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-stone-50 border-2 border-black p-5 shadow-[3px_3px_0px_0px_#000]">
                     <div className="flex items-center gap-4">
@@ -360,11 +715,19 @@ export function AuctionDraft() {
                             NOMINATED
                           </span>
                         </div>
-                        <div className="text-xs text-stone-600 flex items-center gap-1 mt-0.5">
-                          <MapPin className="w-3.5 h-3.5 text-[#7C3AED]" />
-                          <span>{currentNominee.city || 'India'}</span>
+                        <div className="text-xs text-stone-600 flex items-center gap-2 mt-1">
+                          <span className="flex items-center gap-0.5">
+                            <MapPin className="w-3.5 h-3.5 text-[#7C3AED]" />
+                            <span>{currentNominee.city || 'India'}</span>
+                          </span>
                           <span>•</span>
                           <span className="font-bold text-purple-700">{currentNominee.primaryRole}</span>
+                          {currentNominee.secondaryRole && (
+                            <>
+                              <span>/</span>
+                              <span className="text-stone-500">{currentNominee.secondaryRole}</span>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -378,7 +741,9 @@ export function AuctionDraft() {
                       <span className="text-2xl font-black text-[#7C3AED]">
                         {currentNominee.tournamentMmr.toLocaleString()}
                       </span>
-                      <span className="text-[10px] text-stone-500 block">Rating: {currentNominee.rating}</span>
+                      <span className="text-[10px] text-stone-500 block">
+                        Purple Bean Rating: <strong>{currentNominee.rating}</strong>
+                      </span>
                     </div>
                   </div>
 
@@ -389,7 +754,7 @@ export function AuctionDraft() {
                       <div className="text-3xl font-black text-black">
                         {auctionState.currentBid.toLocaleString()} <span className="text-sm font-bold text-stone-600">Credits</span>
                       </div>
-                      <span className="text-[10px] text-stone-500 block">State Revision #{auctionState.revision}</span>
+                      <span className="text-[10px] text-stone-500 block">Revision #{auctionState.revision}</span>
                     </div>
 
                     <div className="bg-[#F3E8FF] border-2 border-black p-4 space-y-1">
@@ -398,129 +763,442 @@ export function AuctionDraft() {
                         {auctionState.leadingTeamName || 'No Bids Yet'}
                       </div>
                       <span className="text-[10px] text-stone-500 block">
-                        {auctionState.leadingTeamId ? `Team ID: ${auctionState.leadingTeamId}` : 'Opening floor bid'}
+                        {auctionState.leadingTeamId ? `Team ID: ${auctionState.leadingTeamId}` : 'Opening floor minimum'}
                       </span>
                     </div>
                   </div>
 
-                  {/* CAPTAIN BID CONTROLS */}
-                  {!isSpectator && (
+                  {/* --------------------------------------------------------- */}
+                  {/* CAPTAIN BID CONTROLS (Only for Captains)                  */}
+                  {/* --------------------------------------------------------- */}
+                  {isCaptainViewActive && effectiveCaptainTeam && (
                     <div className="bg-stone-50 border-2 border-black p-5 space-y-4">
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-black/10 pb-2">
                         <div>
-                          <span className="text-[10px] uppercase font-black text-stone-500 block">Bidding as Team:</span>
-                          <span className="font-black text-black text-sm">{myTeam?.name || 'Unassigned'}</span>
+                          <span className="text-[10px] uppercase font-black text-stone-500 block">My Team:</span>
+                          <span className="font-black text-black text-base">{effectiveCaptainTeam.name} [{effectiveCaptainTeam.tag}]</span>
                         </div>
                         <div className="text-right">
-                          <span className="text-[10px] uppercase font-black text-stone-500 block">Purse Available / Reserve Needed:</span>
-                          <span className="font-black text-emerald-800 text-sm">
-                            {myTeam?.remainingCredits.toLocaleString()} Cr / {mandatoryReserveNeeded} Cr
+                          <span className="text-[10px] uppercase font-black text-stone-500 block">Credits Remaining:</span>
+                          <span className="font-black text-emerald-800 text-base">
+                            {effectiveCaptainTeam.remainingCredits.toLocaleString()} Credits
                           </span>
                         </div>
                       </div>
 
-                      <div className="text-[11px] text-stone-600 bg-white border border-black p-2 flex items-center justify-between">
-                        <span>
-                          <strong>Reserve Rule:</strong> Max allowable bid is <strong>{maxAllowableBid.toLocaleString()} Cr</strong> (retaining {config.reservePerSlot} Cr × {remainingMandatorySlots} unfilled slots).
-                        </span>
-                        <span className="font-bold text-[#7C3AED]">Primary: {myTeam?.primaryRoster.length}/5</span>
+                      {/* Roster & Reserve Summary */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] bg-white border border-black p-2.5">
+                        <div>
+                          <span className="text-[9px] uppercase text-stone-400 block">Primary Roster</span>
+                          <span className="font-bold text-[#7C3AED]">{captainPrimaryCount} / 5</span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] uppercase text-stone-400 block">Stand-in</span>
+                          <span className="font-bold text-stone-700">{effectiveCaptainTeam.standIns.length} / 1</span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] uppercase text-stone-400 block">Slots Remaining</span>
+                          <span className="font-bold text-stone-800">{Math.max(0, 5 - captainPrimaryCount)}</span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] uppercase text-stone-400 block">Max Allowable Bid</span>
+                          <span className="font-black text-emerald-700">{captainMaxAllowableBid.toLocaleString()} Cr</span>
+                        </div>
+                      </div>
+
+                      <div className="text-[11px] text-stone-600 bg-[#E0F2FE] border border-blue-300 p-2">
+                        <strong>Reserve Invariant:</strong> Must retain at least <strong>{captainMandatoryReserveNeeded} Cr</strong> ({config.reservePerSlot} Cr × {captainRemainingMandatorySlots} unfilled mandatory primary slots).
                       </div>
 
                       {/* Quick Bid Increment Buttons */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        {[10, 25, 50, 100].map(inc => {
-                          const proposed = auctionState.currentBid + inc;
-                          const disabled = proposed > maxAllowableBid || auctionState.isCompleted;
-                          return (
-                            <button
-                              key={inc}
-                              onClick={() => handlePlaceBid(inc)}
-                              disabled={disabled}
-                              className="py-2.5 px-3 bg-[#FFE600] hover:bg-yellow-400 disabled:opacity-40 disabled:hover:bg-[#FFE600] text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer disabled:cursor-not-allowed"
-                            >
-                              +{inc} Cr ({proposed})
-                            </button>
-                          );
-                        })}
+                      <div className="space-y-1.5">
+                        <span className="text-[10px] font-black uppercase text-stone-500 block">Quick Bid Increments:</span>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          {[10, 20, 50, 100].map(inc => {
+                            const proposed = auctionState.currentBid + inc;
+                            const disabled = proposed > captainMaxAllowableBid || auctionState.status !== 'LIVE' || isLeading;
+                            return (
+                              <button
+                                key={inc}
+                                onClick={() => handlePlaceQuickBid(inc)}
+                                disabled={disabled}
+                                className="py-3 px-3 bg-[#FFE600] hover:bg-yellow-400 disabled:opacity-40 disabled:hover:bg-[#FFE600] text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer disabled:cursor-not-allowed transition-all"
+                              >
+                                +{inc} Cr ({proposed})
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
+
+                      {/* Custom Bid Input Form */}
+                      <form onSubmit={handlePlaceCustomBid} className="pt-2 border-t border-black/10 flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
+                        <div className="flex-1 min-w-0">
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min={auctionState.currentBid + config.bidIncrement}
+                              max={captainMaxAllowableBid}
+                              step={config.bidIncrement}
+                              value={customBidAmount}
+                              onChange={(e) => setCustomBidAmount(e.target.value)}
+                              placeholder={`Min ${auctionState.currentBid + config.bidIncrement} Cr`}
+                              className="w-full bg-white border-2 border-black px-3 py-2 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
+                            />
+                            <span className="absolute right-3 top-2 text-xs font-bold text-stone-400">Credits</span>
+                          </div>
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={!customBidAmount || Number(customBidAmount) > captainMaxAllowableBid || auctionState.status !== 'LIVE' || isLeading}
+                          className="px-4 py-2.5 bg-[#7C3AED] hover:bg-purple-700 disabled:opacity-40 text-white border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer disabled:cursor-not-allowed text-center shrink-0 min-h-[44px]"
+                        >
+                          Submit Custom Bid
+                        </button>
+                      </form>
                     </div>
                   )}
 
-                  {/* ORGANISER LOT CONCLUSION CONTROLS */}
-                  {isOrganiser && (
-                    <div className="bg-[#FFFBEB] border-2 border-black p-4 space-y-3">
-                      <span className="text-[10px] font-black uppercase text-stone-600 block">
-                        Organiser Floor Certification
+                  {/* SPECTATOR READ-ONLY BROADCAST NOTICE */}
+                  {!isCaptainViewActive && !isOrganiserDeskActive && (
+                    <div className="bg-[#F8FAFC] border-2 border-black p-4 flex items-center justify-between gap-3 text-xs">
+                      <div className="flex items-center gap-2.5">
+                        <Users className="w-5 h-5 text-sky-700 shrink-0" />
+                        <div>
+                          <span className="font-black uppercase text-black block">Live Spectator Broadcast</span>
+                          <span className="text-stone-600 text-[11px] block">
+                            Real-time synchronized floor feed (read-only mode). Captain bidding is in progress.
+                          </span>
+                        </div>
+                      </div>
+                      <span className="px-2.5 py-1 bg-sky-100 border border-black text-[10px] font-black uppercase text-sky-800 shrink-0">
+                        Spectator View
                       </span>
-                      <div className="flex flex-wrap gap-3">
+                    </div>
+                  )}
+
+                  {/* --------------------------------------------------------- */}
+                  {/* ORGANISER AUCTION DESK (Organiser Bid Controls Removed)    */}
+                  {/* --------------------------------------------------------- */}
+                  {isOrganiserDeskActive && (
+                    <div className="bg-[#FFFBEB] border-2 border-black p-5 space-y-4">
+                      <div className="flex items-center justify-between border-b border-black/10 pb-2">
+                        <div className="flex items-center gap-2">
+                          <Shield className="w-4 h-4 text-amber-700" />
+                          <span className="text-xs font-black uppercase text-amber-900">
+                            Organiser Live Auction Desk
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-bold bg-[#FFE600] border border-black px-2 py-0.5">
+                          Organiser Bidding Strictly Prohibited
+                        </span>
+                      </div>
+
+                      <p className="text-xs text-stone-600 leading-relaxed">
+                        Captains bid simultaneously from their own devices. As the tournament organiser, you referee this lot and execute floor certification when the countdown expires.
+                      </p>
+
+                      {/* Organiser Floor Certification Buttons */}
+                      <div className="flex flex-wrap gap-3 pt-1">
                         <button
                           onClick={handleConcludeSale}
                           disabled={!auctionState.leadingTeamId}
-                          className="flex-1 py-2.5 px-4 bg-[#70FFAF] hover:bg-emerald-400 disabled:opacity-40 text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer disabled:cursor-not-allowed"
+                          className="flex-1 py-3 px-4 bg-[#70FFAF] hover:bg-emerald-400 disabled:opacity-40 text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer disabled:cursor-not-allowed"
                         >
-                          Conclude & Sell to {auctionState.leadingTeamName || 'Leading Bidder'}
+                          End Nomination & Sell to {auctionState.leadingTeamName || 'Leading Bidder'}
                         </button>
                         <button
                           onClick={handlePassUnsold}
-                          className="flex-1 py-2.5 px-4 bg-white hover:bg-stone-100 text-[#FF5757] border-2 border-[#FF5757] text-xs font-black uppercase shadow-[2px_2px_0px_0px_#FF5757] cursor-pointer"
+                          className="py-3 px-4 bg-white hover:bg-stone-100 text-[#FF5757] border-2 border-[#FF5757] text-xs font-black uppercase shadow-[2px_2px_0px_0px_#FF5757] cursor-pointer"
                         >
-                          Pass as UNSOLD
+                          Mark as UNSOLD
                         </button>
+                        {auctionState.status === 'LIVE' ? (
+                          <button
+                            onClick={handlePauseAuction}
+                            className="py-3 px-3 bg-amber-200 hover:bg-amber-300 text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                          >
+                            <Pause className="w-4 h-4 inline mr-1" />
+                            Pause
+                          </button>
+                        ) : (
+                          <button
+                            onClick={handleResumeAuction}
+                            className="py-3 px-3 bg-[#70FFAF] hover:bg-emerald-300 text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                          >
+                            <Play className="w-4 h-4 inline mr-1" />
+                            Resume
+                          </button>
+                        )}
                       </div>
                     </div>
                   )}
                 </div>
               ) : (
-                /* Floor Idle / Next Nomination */
-                <div className="p-8 text-center space-y-4">
-                  <div className="w-14 h-14 bg-stone-100 border-2 border-black flex items-center justify-center text-2xl mx-auto shadow-[3px_3px_0px_0px_#000]">
+                /* ------------------------------------------------------------- */
+                /* FLOOR IDLE / NEXT NOMINATION DESK                             */
+                /* ------------------------------------------------------------- */
+                <div className="p-8 text-center space-y-6">
+                  <div className="w-16 h-16 bg-[#FFF9E6] border-2 border-black flex items-center justify-center text-3xl mx-auto shadow-[3px_3px_0px_0px_#000]">
                     🏛️
                   </div>
                   <div>
-                    <h3 className="font-black text-lg text-black uppercase font-sans">Floor is currently empty</h3>
-                    <p className="text-xs text-stone-500 max-w-md mx-auto mt-1">
+                    <h3 className="font-black text-xl text-black uppercase font-sans">
+                      {auctionState.isCompleted ? 'Auction Complete' : 'Auction Floor is Idle'}
+                    </h3>
+                    <p className="text-xs text-stone-600 max-w-md mx-auto mt-1 leading-relaxed">
                       {auctionState.isCompleted 
                         ? 'All mandatory franchise team rosters (5/5) have been completely filled!' 
-                        : 'Select an available contender from the registry below to open the next bidding block.'}
+                        : availablePlayers.length > 0
+                        ? isOrganiserDeskActive 
+                          ? 'Select an available contender from the registry below to start the next live bidding lot.'
+                          : 'Waiting for the tournament organiser to nominate the next contender.'
+                        : 'No contenders are currently active on the auction floor.'}
                     </p>
                   </div>
 
-                  {isOrganiser && !auctionState.isCompleted && availablePlayers.length > 0 && (
-                    <div className="max-w-md mx-auto space-y-2 pt-2 text-left">
-                      <span className="text-[10px] font-black uppercase text-stone-500 block">Quick Nominate Contender:</span>
-                      <div className="flex gap-2">
-                        <SelectDropdown
-                          value={selectedNomineeId}
-                          onChange={(val) => setSelectedNomineeId(val)}
-                          options={[
-                            { value: '', label: `-- Choose contender (${availablePlayers.length}) --` },
-                            ...availablePlayers.map(p => ({
-                              value: p.id,
-                              label: `${p.username} · MMR ${p.tournamentMmr} · ${p.primaryRole}`
-                            }))
-                          ]}
-                          className="flex-1"
-                          placeholder="-- Choose contender --"
-                        />
-                        <button
-                          onClick={() => selectedNomineeId && handleNominatePlayer(selectedNomineeId)}
-                          disabled={!selectedNomineeId}
-                          className="px-4 py-2 bg-[#FFE600] text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer disabled:opacity-40 shrink-0"
-                        >
-                          Nominate
-                        </button>
+                  {/* Pre-requisite team check */}
+                  {teams.length < 2 && (
+                    <div className="bg-[#FFF9E6] border-2 border-black p-4 text-left max-w-md mx-auto space-y-2">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span className="font-sans font-black text-xs uppercase text-black">
+                          Franchise Formation Required ({teams.length}/2 Teams)
+                        </span>
                       </div>
+                      <p className="text-xs text-stone-600 leading-relaxed">
+                        At least 2 franchise teams with appointed captains are required to conduct an auction. Visit the Captain Selection desk to appoint verified contenders as captains.
+                      </p>
+                      {onNavigate && (
+                        <button
+                          onClick={() => onNavigate('captain_selection')}
+                          className="mt-1 px-3 py-1.5 bg-[#7C3AED] hover:bg-purple-700 text-white border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer inline-flex items-center gap-1.5"
+                        >
+                          <Crown className="w-3.5 h-3.5 text-[#FFE600]" />
+                          <span>Go to Captain Selection →</span>
+                        </button>
+                      )}
                     </div>
                   )}
 
-                  {isOrganiser && !auctionState.isCompleted && (
-                    <div className="pt-4 border-t border-black/10">
-                      <button
-                        onClick={handleFinalizeAuction}
-                        className="px-4 py-2 bg-black text-white hover:bg-stone-800 border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
-                      >
-                        Force Finalize Auction & Lock Rosters
-                      </button>
+                  {/* Organiser controls when floor is idle */}
+                  {isOrganiserDeskActive && !auctionState.isCompleted && (
+                    <div className="max-w-md mx-auto space-y-4 pt-2 text-left">
+                      {/* MMR-BALANCED AUCTION PURSE ORGANISER REVIEW */}
+                      {teams.length >= 2 && (
+                        <div className="bg-white border-[3px] border-black shadow-[4px_4px_0px_0px_#000] p-4 text-left space-y-3 font-mono">
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-black pb-2">
+                            <div className="flex items-center gap-2">
+                              <Coins className="w-4 h-4 text-[#FFE600] shrink-0" />
+                              <h3 className="font-sans font-black text-xs uppercase text-black">
+                                Starting Credit Allocation Review
+                              </h3>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className={`px-2 py-0.5 text-[10px] font-black uppercase border border-black ${
+                                purseAudit?.isFrozen ? 'bg-stone-100 text-stone-700' : 'bg-[#70FFAF] text-black'
+                              }`}>
+                                {purseAudit?.isFrozen ? 'LOCKED & FROZEN' : 'PRE-AUCTION REVIEW'}
+                              </span>
+                              <span className="px-2 py-0.5 text-[10px] font-black uppercase bg-[#FFE600] text-black border border-black">
+                                Mode: {purseAudit?.allocationMode || config.creditAllocationMode || 'CAPTAIN_MMR_BALANCED'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Explanation Banner */}
+                          <div className="p-2.5 bg-[#FFFBEB] border border-amber-300 text-[11px] text-stone-700 leading-relaxed font-mono">
+                            <p>
+                              "{EXPLANATION_TEXT}"
+                            </p>
+                          </div>
+
+                          {/* Missing Locked MMR Blocking Alert */}
+                          {activeEngine.getMissingLockedMmrCaptain() && (
+                            <div className="p-3 bg-[#FFEEEE] border-2 border-[#FF5757] text-xs font-mono space-y-1">
+                              <div className="flex items-center gap-2 font-black text-[#D32F2F] uppercase">
+                                <AlertCircle className="w-4 h-4" />
+                                <span>Auction Setup Blocked</span>
+                              </div>
+                              <p className="text-stone-700">
+                                Captain <strong>{activeEngine.getMissingLockedMmrCaptain()?.name}</strong> lacks locked Tournament MMR. Complete verification before auction lobby can open.
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Purse Review Table */}
+                          <div className="overflow-x-auto border-2 border-black">
+                            <table className="w-full text-xs font-mono">
+                              <thead className="bg-black text-white font-black uppercase text-[10px]">
+                                <tr>
+                                  <th className="p-2 text-left">CAPTAIN</th>
+                                  <th className="p-2 text-center">TOURNAMENT MMR</th>
+                                  <th className="p-2 text-center">MMR VS AVG</th>
+                                  <th className="p-2 text-right">STARTING CREDITS</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-black bg-white text-[11px]">
+                                {(purseAudit?.entries || teams.map(t => {
+                                  const p = activeEngine.getPlayers().find(x => x.id === t.captainId);
+                                  return {
+                                    captainId: t.captainId,
+                                    captainIgn: t.captainIgn,
+                                    tournamentMmr: p?.tournamentMmr || 8000,
+                                    mmrDiffFromAvg: 0,
+                                    finalStartingCredits: t.startingCredits
+                                  };
+                                })).map((entry, idx) => (
+                                  <tr key={entry.captainId || idx} className="hover:bg-yellow-50/50">
+                                    <td className="p-2 font-black text-black">
+                                      {entry.captainIgn}
+                                    </td>
+                                    <td className="p-2 text-center font-bold text-stone-800">
+                                      {entry.tournamentMmr}
+                                    </td>
+                                    <td className={`p-2 text-center font-black ${
+                                      entry.mmrDiffFromAvg > 0 ? 'text-[#FF5757]' : entry.mmrDiffFromAvg < 0 ? 'text-emerald-700' : 'text-stone-600'
+                                    }`}>
+                                      {entry.mmrDiffFromAvg > 0 ? `+${entry.mmrDiffFromAvg}` : entry.mmrDiffFromAvg}
+                                    </td>
+                                    <td className="p-2 text-right font-black text-[#7C3AED]">
+                                      {entry.finalStartingCredits} Cr
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                              <tfoot className="bg-stone-100 font-bold border-t-2 border-black text-[11px]">
+                                <tr>
+                                  <td className="p-2 uppercase text-stone-600">Total / Average</td>
+                                  <td className="p-2 text-center text-stone-800">
+                                    Avg: {purseAudit?.averageCaptainMmr || '—'}
+                                  </td>
+                                  <td className="p-2 text-center text-stone-500">—</td>
+                                  <td className="p-2 text-right font-black text-black">
+                                    {purseAudit?.totalCredits || teams.reduce((acc, t) => acc + t.startingCredits, 0)} Cr
+                                  </td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+
+                          {/* Recalculate & Allocation Controls (Organiser Only) */}
+                          {!purseAudit?.hasBidsStarted && (
+                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 font-mono text-xs">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] text-stone-500 uppercase font-black">Mode:</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleAllocationMode('CAPTAIN_MMR_BALANCED')}
+                                  className={`px-2 py-0.5 text-[10px] font-black uppercase border border-black cursor-pointer ${
+                                    purseAudit?.allocationMode === 'CAPTAIN_MMR_BALANCED' ? 'bg-[#FFE600] text-black shadow-[1px_1px_0px_0px_#000]' : 'bg-white text-stone-600'
+                                  }`}
+                                >
+                                  MMR Balanced
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleAllocationMode('EQUAL')}
+                                  className={`px-2 py-0.5 text-[10px] font-black uppercase border border-black cursor-pointer ${
+                                    purseAudit?.allocationMode === 'EQUAL' ? 'bg-[#FFE600] text-black shadow-[1px_1px_0px_0px_#000]' : 'bg-white text-stone-600'
+                                  }`}
+                                >
+                                  Equal (1000 Cr)
+                                </button>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={handleRecalculatePurses}
+                                disabled={purseAudit?.hasBidsStarted}
+                                className="px-2.5 py-1 bg-black hover:bg-stone-800 text-white border-2 border-black text-[11px] font-black uppercase shadow-[2px_2px_0px_0px_#FFE600] cursor-pointer disabled:opacity-40"
+                              >
+                                ↻ Recalculate Auction Purses
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Start Auction button if still pending */}
+                      {auctionState.status === 'PENDING' && (
+                        <div className="p-3 bg-[#E0F2FE] border-2 border-black space-y-2">
+                          <span className="text-xs font-black uppercase text-blue-950 block">Auction Pending:</span>
+                          <button
+                            onClick={handleStartAuction}
+                            disabled={Boolean(activeEngine.getMissingLockedMmrCaptain()) || teams.length < 2}
+                            className="w-full py-2.5 bg-[#70FFAF] hover:bg-emerald-400 text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer disabled:opacity-40"
+                          >
+                            {activeEngine.getMissingLockedMmrCaptain() 
+                              ? `⚠ Blocked: Missing ${activeEngine.getMissingLockedMmrCaptain()?.name} MMR` 
+                              : '▶ Start Auction Floor'}
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Nominate contender */}
+                      {(availablePlayers.length > 0 || unsoldPlayers.length > 0) && (
+                        <div className="space-y-2">
+                          <span className="text-[10px] font-black uppercase text-stone-500 block">Select Contender to Nominate:</span>
+                          <div className="flex gap-2">
+                            <SelectDropdown
+                              value={selectedNomineeId}
+                              onChange={(val) => setSelectedNomineeId(val)}
+                              options={[
+                                { value: '', label: `-- Choose Contender (${availablePlayers.length + unsoldPlayers.length} Available / Unsold) --` },
+                                ...availablePlayers.map(p => ({
+                                  value: p.id,
+                                  label: `${p.username} · MMR ${p.tournamentMmr} · ${p.primaryRole}`
+                                })),
+                                ...unsoldPlayers.map(p => ({
+                                  value: p.id,
+                                  label: `[UNSOLD] ${p.username} · MMR ${p.tournamentMmr} · ${p.primaryRole} (Re-nominate)`
+                                }))
+                              ]}
+                              className="flex-1"
+                              placeholder="-- Choose contender --"
+                            />
+                            <button
+                              onClick={() => selectedNomineeId && handleNominatePlayer(selectedNomineeId)}
+                              disabled={!selectedNomineeId}
+                              className="px-4 py-2 bg-[#FFE600] text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer disabled:opacity-40 shrink-0"
+                            >
+                              Nominate
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Anti-snipe toggle setting */}
+                      <div className="flex items-center justify-between p-3 bg-stone-50 border border-black text-xs">
+                        <div>
+                          <strong className="block text-black">Anti-Sniping Timer Extension</strong>
+                          <span className="text-[10px] text-stone-500">Resets to 5s if bid placed within final 5s</span>
+                        </div>
+                        <button
+                          onClick={handleToggleAntiSnipe}
+                          className={`px-3 py-1 border border-black text-[10px] font-black uppercase cursor-pointer ${
+                            config.bidExtensionEnabled ? 'bg-[#70FFAF] text-black' : 'bg-stone-200 text-stone-600'
+                          }`}
+                        >
+                          {config.bidExtensionEnabled ? 'ON' : 'OFF'}
+                        </button>
+                      </div>
+
+                      {/* Finalize Auction */}
+                      <div className="pt-2 text-center space-y-1">
+                        <button
+                          onClick={handleFinalizeAuction}
+                          disabled={teams.some(t => t.primaryRoster.length < config.primaryRosterSize)}
+                          className="px-4 py-2 bg-black text-white hover:bg-stone-800 disabled:opacity-40 disabled:cursor-not-allowed border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                        >
+                          Finalize Auction & Lock Rosters
+                        </button>
+                        {teams.some(t => t.primaryRoster.length < config.primaryRosterSize) && (
+                          <span className="block text-[10px] text-stone-500 font-mono">
+                            Both teams must reach mandatory 5/5 rosters before auction can be finalized.
+                          </span>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -561,7 +1239,7 @@ export function AuctionDraft() {
                           </span>
                           <span className="text-[10px] text-stone-400">Rating: {player.rating}</span>
                         </div>
-                        {isOrganiser && !auctionState.nominee && !auctionState.isCompleted && (
+                        {isOrganiserDeskActive && !auctionState.nominee && !auctionState.isCompleted && (
                           <button
                             onClick={() => handleNominatePlayer(player.id)}
                             className="bg-[#FFE600] hover:bg-yellow-400 text-black border border-black px-2.5 py-1 text-[10px] font-black uppercase shadow-[1px_1px_0px_0px_#000] cursor-pointer"
@@ -577,61 +1255,103 @@ export function AuctionDraft() {
             </div>
           </div>
 
-          {/* Right Rail: Live Bids Stream & Quick Team Standings */}
+          {/* Right Rail: Chronological Bid History & Team Purses */}
           <div className="space-y-6">
-            {/* Live Bids Activity Stream */}
+            {/* Live Chronological Bid History */}
             <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-5 space-y-4">
               <div className="flex items-center justify-between border-b-2 border-black pb-2">
                 <div className="flex items-center gap-2">
                   <History className="w-4 h-4 text-[#7C3AED]" />
                   <h3 className="text-sm font-black uppercase text-black font-sans">
-                    Bid Telemetry Stream
+                    Live Bid History
                   </h3>
                 </div>
-                <span className="text-[10px] text-stone-500 font-bold">{bidHistory.length} Total Bids</span>
+                <span className="text-[10px] text-stone-500 font-bold">{bidHistory.length} Bids</span>
               </div>
 
               {bidHistory.length === 0 ? (
                 <div className="p-6 text-center text-stone-400 text-xs">
-                  No bids recorded in this auction session.
+                  No bids placed yet in this session.
                 </div>
               ) : (
                 <div className="max-h-80 overflow-y-auto space-y-2">
-                  {bidHistory.slice(0, 15).map((bid) => (
-                    <div key={bid.id} className="p-2.5 bg-stone-50 border border-black text-xs space-y-0.5">
-                      <div className="flex justify-between items-center">
-                        <strong className="text-purple-700">{bid.teamName}</strong>
-                        <span className="font-black text-emerald-800">{bid.amount.toLocaleString()} Cr</span>
+                  {bidHistory.slice(0, 20).map((bid, idx) => {
+                    const isLatestLeading = idx === 0;
+                    return (
+                      <div 
+                        key={bid.id} 
+                        className={`p-2.5 border text-xs space-y-0.5 transition-all ${
+                          isLatestLeading 
+                            ? 'bg-[#FFF9E6] border-2 border-black shadow-[2px_2px_0px_0px_#000]' 
+                            : 'bg-stone-50 border-stone-300'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center">
+                          <span className="font-mono text-[10px] text-stone-500">{bid.timestamp}</span>
+                          <strong className={isLatestLeading ? 'text-[#7C3AED]' : 'text-stone-800'}>
+                            {bid.teamName}
+                          </strong>
+                          <span className="font-black text-emerald-800 font-mono">
+                            {bid.amount.toLocaleString()} Cr
+                          </span>
+                        </div>
+                        {isLatestLeading && (
+                          <div className="text-[9px] font-black text-amber-800 uppercase flex items-center gap-1">
+                            <Crown className="w-3 h-3 text-amber-600" />
+                            <span>Current Leader</span>
+                          </div>
+                        )}
                       </div>
-                      <div className="text-[10px] text-stone-400 flex justify-between">
-                        <span>Lot: {bid.nomineeId}</span>
-                        <span>{new Date(bid.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
 
-            {/* Quick Teams Purse & Roster Tracker */}
+            {/* Team Purses & Roster Progress */}
             <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-5 space-y-3">
               <div className="flex items-center justify-between border-b-2 border-black pb-2">
-                <span className="text-xs font-black uppercase text-black">Franchise Purse Trackers</span>
+                <span className="text-xs font-black uppercase text-black">Team Purses & Roster Progress</span>
                 <span className="text-[10px] text-stone-500 font-bold">{teams.length} Teams</span>
               </div>
-              <div className="space-y-2">
-                {teams.map(t => (
-                  <div key={t.id} className="p-2.5 bg-stone-50 border border-black text-xs space-y-1">
-                    <div className="flex justify-between items-center">
-                      <span className="font-black text-black truncate">{t.name}</span>
-                      <span className="font-bold text-emerald-700">{t.remainingCredits.toLocaleString()} Cr</span>
+              <div className="space-y-3">
+                {teams.map(t => {
+                  const pct = Math.min(100, Math.round((t.primaryRoster.length / 5) * 100));
+                  const isUserTeam = effectiveCaptainTeam?.id === t.id;
+                  return (
+                    <div 
+                      key={t.id} 
+                      className={`p-3 border text-xs space-y-1.5 ${
+                        isUserTeam ? 'bg-[#F3E8FF] border-2 border-[#7C3AED]' : 'bg-stone-50 border-black'
+                      }`}
+                    >
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <span className="font-black text-black block">{t.name}</span>
+                          <span className="text-[10px] text-stone-500">Captain: {t.captainIgn}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-bold text-emerald-800 text-sm block">{t.remainingCredits.toLocaleString()} Cr</span>
+                          <span className="text-[10px] text-stone-400">Used: {t.creditsUsed} Cr</span>
+                        </div>
+                      </div>
+
+                      {/* Visual Roster Progress Bar */}
+                      <div>
+                        <div className="flex justify-between text-[10px] font-bold text-stone-600 mb-0.5">
+                          <span>Primary: {t.primaryRoster.length}/5</span>
+                          <span>Stand-ins: {t.standIns.length}/1</span>
+                        </div>
+                        <div className="w-full bg-stone-200 border border-black h-2 overflow-hidden">
+                          <div 
+                            className="bg-[#7C3AED] h-full transition-all duration-300"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex justify-between items-center text-[10px] text-stone-500">
-                      <span>Primary Roster: <strong>{t.primaryRoster.length}/5</strong></span>
-                      <span>Stand-ins: <strong>{t.standIns.length}/1</strong></span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -648,7 +1368,7 @@ export function AuctionDraft() {
                 Primary roster requirement: 5/5 players (including captain). Optional stand-in limit: 0/1.
               </p>
             </div>
-            {isOrganiser && (
+            {isOrganiserUser && (
               <button
                 onClick={() => setStandInModalOpen(true)}
                 className="bg-[#7C3AED] hover:bg-purple-700 text-white border-2 border-black px-3.5 py-1.5 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
@@ -795,7 +1515,7 @@ export function AuctionDraft() {
                   </div>
                   <div className="flex items-center gap-4">
                     <span className="font-mono text-purple-700 font-bold">MMR: {p.tournamentMmr.toLocaleString()}</span>
-                    {isOrganiser && !auctionState.nominee && !auctionState.isCompleted && (
+                    {isOrganiserDeskActive && !auctionState.nominee && !auctionState.isCompleted && (
                       <button
                         onClick={() => handleNominatePlayer(p.id)}
                         className="bg-[#FFE600] hover:bg-yellow-400 text-black border border-black px-2.5 py-1 text-[10px] font-black uppercase shadow-[1px_1px_0px_0px_#000] cursor-pointer"
@@ -883,7 +1603,7 @@ export function AuctionDraft() {
                       {audit.outcome === 'SOLD' ? `${audit.winningTeamName} (${audit.winningBid} Cr)` : 'Passed as Unsold'}
                     </span>
                     <span className="text-[10px] text-stone-400">
-                      {new Date(audit.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      {audit.timestamp}
                     </span>
                   </div>
                 </div>

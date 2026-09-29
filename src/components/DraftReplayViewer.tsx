@@ -5,8 +5,9 @@
  * Nominations, live bids, winning team acquisitions, unsold decisions, and filters.
  */
 
-import React, { useState } from 'react';
-import { Play, Pause, RotateCcw, Filter, User, Shield, Coins, CheckCircle, XCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Play, Pause, RotateCcw, Filter, User, Shield, Coins, CheckCircle, XCircle, Gavel } from 'lucide-react';
+import { dotaAuctionEngine } from '../domain/dotaAuctionEngine';
 
 export interface AuctionReplayEvent {
   id: string;
@@ -22,6 +23,49 @@ export interface AuctionReplayEvent {
   teamLogo?: string;
   bidAmount?: number;
   details: string;
+}
+
+export function getRealEngineReplayEvents(): AuctionReplayEvent[] {
+  const audits = dotaAuctionEngine.getNominationAudits();
+  const bids = dotaAuctionEngine.getBidHistory();
+  const events: AuctionReplayEvent[] = [];
+  let step = 1;
+
+  for (const b of bids) {
+    events.push({
+      id: b.id,
+      stepNumber: step++,
+      type: 'BID',
+      timestamp: new Date(b.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      playerIgn: b.nomineeId,
+      playerRole: 'Contender',
+      playerMmr: 0,
+      playerAvatar: '🎮',
+      teamName: b.teamName,
+      bidAmount: b.amount,
+      details: `${b.teamName} placed bid of ${b.amount.toLocaleString()} credits.`
+    });
+  }
+
+  for (const a of audits) {
+    events.push({
+      id: `audit-${a.nomineeId}-${a.timestamp}`,
+      stepNumber: step++,
+      type: a.outcome === 'SOLD' ? 'SOLD' : 'UNSOLD',
+      timestamp: new Date(a.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      playerIgn: a.nomineeUsername,
+      playerRole: a.role,
+      playerMmr: a.tournamentMmr,
+      playerAvatar: '🎮',
+      teamName: a.winningTeamName,
+      bidAmount: a.winningBid,
+      details: a.outcome === 'SOLD'
+        ? `Lot SOLD to ${a.winningTeamName} for ${a.winningBid} credits after ${a.bidsCount} bids.`
+        : `Lot closed without qualifying bids. ${a.nomineeUsername} marked UNSOLD.`
+    });
+  }
+
+  return events;
 }
 
 export const SAMPLE_TEST_CUP_REPLAY_EVENTS: AuctionReplayEvent[] = [
@@ -161,13 +205,33 @@ export const SAMPLE_TEST_CUP_REPLAY_EVENTS: AuctionReplayEvent[] = [
   }
 ];
 
-export const DraftReplayViewer: React.FC<{ events?: AuctionReplayEvent[] }> = ({
-  events = SAMPLE_TEST_CUP_REPLAY_EVENTS
+export const DraftReplayViewer: React.FC<{ 
+  events?: AuctionReplayEvent[];
+  onNavigateToAuction?: () => void;
+}> = ({
+  events: propEvents,
+  onNavigateToAuction
 }) => {
+  const [liveEngineEvents, setLiveEngineEvents] = useState<AuctionReplayEvent[]>(() => {
+    if (propEvents !== undefined) return propEvents;
+    return getRealEngineReplayEvents();
+  });
+
+  useEffect(() => {
+    if (propEvents !== undefined) {
+      setLiveEngineEvents(propEvents);
+      return;
+    }
+    const update = () => setLiveEngineEvents(getRealEngineReplayEvents());
+    return dotaAuctionEngine.subscribe(update);
+  }, [propEvents]);
+
+  const activeEvents = propEvents !== undefined ? propEvents : liveEngineEvents;
+
   const [filterType, setFilterType] = useState<'ALL' | 'SOLD' | 'UNSOLD' | 'BID'>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
-  const filteredEvents = events.filter(evt => {
+  const filteredEvents = activeEvents.filter(evt => {
     if (filterType === 'SOLD' && evt.type !== 'SOLD') return false;
     if (filterType === 'UNSOLD' && evt.type !== 'UNSOLD') return false;
     if (filterType === 'BID' && evt.type !== 'BID') return false;
@@ -195,37 +259,58 @@ export const DraftReplayViewer: React.FC<{ events?: AuctionReplayEvent[] }> = ({
         </div>
 
         {/* Filter Bar */}
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            type="text"
-            placeholder="Search player or team..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="border-2 border-black p-1.5 text-xs font-mono"
-          />
-          <div className="flex border-2 border-black">
-            {(['ALL', 'SOLD', 'UNSOLD', 'BID'] as const).map(f => (
-              <button
-                key={f}
-                onClick={() => setFilterType(f)}
-                className={`px-2.5 py-1 text-[10px] font-black uppercase ${
-                  filterType === f ? 'bg-black text-white' : 'bg-white hover:bg-stone-100 text-black'
-                }`}
-              >
-                {f}
-              </button>
-            ))}
+        {activeEvents.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              placeholder="Search player or team..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="border-2 border-black p-1.5 text-xs font-mono"
+            />
+            <div className="flex border-2 border-black">
+              {(['ALL', 'SOLD', 'UNSOLD', 'BID'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setFilterType(f)}
+                  className={`px-2.5 py-1 text-[10px] font-black uppercase cursor-pointer ${
+                    filterType === f ? 'bg-black text-white' : 'bg-white hover:bg-stone-100 text-black'
+                  }`}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Events Timeline */}
-      <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
-        {filteredEvents.length === 0 ? (
-          <div className="p-8 text-center text-xs text-stone-400">
-            No auction replay events match your filter.
+      {activeEvents.length === 0 ? (
+        <div className="p-12 text-center border-2 border-dashed border-black/20 bg-stone-50 space-y-3">
+          <div className="w-12 h-12 bg-[#FFE600] border-2 border-black flex items-center justify-center text-xl mx-auto shadow-[2px_2px_0px_0px_#000]">
+            <Gavel className="w-6 h-6 text-black" />
           </div>
-        ) : (
+          <h4 className="font-sans font-black text-base uppercase text-black">No Auction Events Recorded</h4>
+          <p className="text-xs text-stone-500 max-w-md mx-auto">
+            Live player nominations, captain bids, and franchise acquisitions will be recorded here chronologically as the auction draft progresses.
+          </p>
+          {onNavigateToAuction && (
+            <button
+              onClick={onNavigateToAuction}
+              className="mt-2 px-4 py-2 bg-[#7C3AED] hover:bg-purple-700 text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+            >
+              Open Live Auction Stage →
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+          {filteredEvents.length === 0 ? (
+            <div className="p-8 text-center text-xs text-stone-400">
+              No auction replay events match your filter.
+            </div>
+          ) : (
           filteredEvents.map(evt => (
             <div
               key={evt.id}
@@ -287,6 +372,7 @@ export const DraftReplayViewer: React.FC<{ events?: AuctionReplayEvent[] }> = ({
           ))
         )}
       </div>
-    </div>
-  );
+    )}
+  </div>
+);
 };

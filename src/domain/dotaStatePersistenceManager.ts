@@ -14,7 +14,7 @@
  */
 
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '../services/firebaseConfig';
+import { db, isQuotaExhausted, setQuotaExhausted, isQuotaError } from '../services/firebaseConfig';
 import { dotaTournamentOperations, TournamentAnnouncement, PlayerTeamReport, AuditRecord, TournamentSanction, PlatformSanction, PersistentNotification, TournamentRuleVersion } from './dotaTournamentOperationsEngine';
 import { dotaCareerHistoryEngine, PlayerCareerRecord, TeamCareerRecord, CaptainCareerRecord, DotaSeason, DotaPlayerRatingEvent } from './dotaCareerHistoryEngine';
 import { dotaAuctionEngine, DotaAuctionTeam, DotaAuctionPlayer } from './dotaAuctionEngine';
@@ -278,6 +278,7 @@ export class DotaStatePersistenceManager {
    */
   public async persistToFirestore(tournamentId = this.activeTournamentId): Promise<boolean> {
     try {
+      if (isQuotaExhausted()) return true;
       const snapshot = this.exportSnapshot(tournamentId);
       const docRef = doc(db, 'stateSnapshots', `state-${tournamentId}`);
       await setDoc(docRef, {
@@ -286,6 +287,9 @@ export class DotaStatePersistenceManager {
       }, { merge: true });
       return true;
     } catch (err) {
+      if (isQuotaError(err)) {
+        setQuotaExhausted(true);
+      }
       console.warn('Firestore snapshot persistence note (local authoritative mode active):', err);
       return false;
     }

@@ -22,6 +22,12 @@ import { tournamentService } from '../services/firebaseService';
 import { Tournament, Match, Player, Team, ViewType, CompetitiveGame } from '../types/tournament';
 import { PurpleBeanLogo } from '../components/PurpleBeanLogo';
 import { gameManagementEngine } from '../domain/gameManagementEngine';
+import {
+  isPubliclyDiscoverable,
+  normalizeTournamentRecord,
+  normalizeStatus,
+  matchesGameFilter
+} from '../domain/tournamentDiscovery';
 
 interface HomeViewProps {
   onNavigate: (view: ViewType, entityId?: string) => void;
@@ -56,13 +62,27 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
 
   const hasMultipleGames = activeGames.length > 1;
 
-  const filteredTournaments = tournaments.filter((t) => 
-    !hasMultipleGames || selectedGame === 'All Games' ? true : t.game === selectedGame
-  );
+  const filteredTournaments = tournaments
+    .map(normalizeTournamentRecord)
+    .filter((t) => {
+      const idLower = (t.id || '').toLowerCase();
+      const LEGACY_MOCK_TOURNAMENT_IDS = new Set([
+        'purple-bean-test-cup',
+        'purple-bean-auction-test',
+        '2-team-auction-test',
+        'auction-test'
+      ]);
+      if (LEGACY_MOCK_TOURNAMENT_IDS.has(idLower)) return false;
+      if (!isPubliclyDiscoverable(t)) return false;
+      return matchesGameFilter(t.game, t.gameId, selectedGame);
+    });
 
   // Featured tournament: live tournament first, or registration open, or first available tournament
-  const featuredTournament = filteredTournaments.find((t) => t.status === 'Live')
-    || filteredTournaments.find((t) => t.status === 'Registration Open')
+  const featuredTournament = filteredTournaments.find((t) => {
+    const s = normalizeStatus(t.status || t.lifecycle);
+    return s === 'ACTIVE' || s === 'LIVE' || s === 'AUCTION_ACTIVE';
+  })
+    || filteredTournaments.find((t) => normalizeStatus(t.status || t.lifecycle) === 'REGISTRATION_OPEN')
     || filteredTournaments[0];
 
   const liveMatches = matches.filter((m) => 
@@ -182,37 +202,9 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
                   {featuredTournament.name}
                 </h1>
                 <p className="mt-3 font-mono text-sm sm:text-base font-bold text-stone-700 max-w-2xl">
-                  {featuredTournament.dates} · Verified ₹ INR Payouts · Single Elimination & Double Elimination Brackets.
+                  {featuredTournament.dates} · Verified ₹ INR Payouts · Single Elimination &amp; Double Elimination Brackets.
                 </p>
               </div>
-
-              {/* Official Mascot Mascot Spotlight Badge */}
-              {onOpenBrandKit && (
-                <div
-                  onClick={onOpenBrandKit}
-                  className="bg-[#F3E8FF] hover:bg-[#FFE600] border-[3px] border-black p-3.5 sm:p-4 shadow-[5px_5px_0px_0px_#000] rounded-2xl flex items-center gap-3.5 cursor-pointer group shrink-0 transition-all hover:-translate-x-0.5 hover:-translate-y-0.5 active:translate-x-0.5 active:translate-y-0.5"
-                  title="Official Purple Bean Gaming Mascot - Click to open Brand Kit & Vector SVG"
-                >
-                  <PurpleBeanLogo size="lg" variant="badge" animated={true} />
-                  <div className="text-left space-y-0.5">
-                    <div className="flex items-center gap-1.5">
-                      <span className="bg-black text-[#FFE600] text-[9px] font-mono font-black px-1.5 py-0.2 uppercase">
-                        OFFICIAL MASCOT
-                      </span>
-                      <Sparkles className="w-3.5 h-3.5 text-[#7C3AED] group-hover:text-black transition-colors" />
-                    </div>
-                    <div className="font-sans font-black text-base sm:text-lg text-black uppercase leading-none">
-                      PURPLE BEAN
-                    </div>
-                    <p className="font-mono text-[10px] text-stone-700 leading-tight">
-                      Headset &amp; Specular 3D Gloss
-                    </p>
-                    <span className="inline-flex items-center gap-1 font-mono text-[10px] font-black text-[#7C3AED] group-hover:text-black underline pt-0.5">
-                      Export Logo &amp; SVGs →
-                    </span>
-                  </div>
-                </div>
-              )}
             </div>
 
             {/* Key Metric Highlights Grid */}
@@ -279,16 +271,6 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
                 <Swords className="w-4 h-4 text-[#7C3AED]" />
                 <span>Interactive Bracket</span>
               </button>
-
-              {onOpenBrandKit && (
-                <button
-                  onClick={onOpenBrandKit}
-                  className="bg-[#F3E8FF] hover:bg-[#FFE600] text-black border-2 border-black px-3.5 sm:px-5 py-2.5 sm:py-3 font-mono text-xs sm:text-sm font-black uppercase tracking-tight shadow-[3px_3px_0px_0px_#000] sm:shadow-[4px_4px_0px_0px_#000] active:translate-x-1 active:translate-y-1 active:shadow-none transition-all flex items-center gap-2 cursor-pointer"
-                >
-                  <PurpleBeanLogo size="xs" variant="mascot" />
-                  <span>Mascot &amp; Logo Kit</span>
-                </button>
-              )}
             </div>
           </div>
         </section>
@@ -750,10 +732,10 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
               Register Team Now
             </button>
             <button
-              onClick={() => onNavigate('auction')}
+              onClick={() => onNavigate('tournaments')}
               className="bg-transparent hover:bg-white/10 text-white border-2 border-white px-5 py-2.5 font-mono text-xs font-black uppercase cursor-pointer"
             >
-              Watch Live Draft
+              Explore Tournaments
             </button>
           </div>
         </div>

@@ -69,6 +69,7 @@ describe('Dota 2 Phase 2 — Captain Selection + Complete Player Auction', () =>
       tournamentId: TOURNAMENT_ID,
       tournamentName: 'Phase 2 Dota Championship',
       startingCredits: 1000,
+      creditAllocationMode: 'EQUAL',
       minimumBid: 10,
       bidIncrement: 10,
       reservePerSlot: 10,

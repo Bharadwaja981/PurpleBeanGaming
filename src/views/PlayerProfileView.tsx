@@ -19,7 +19,8 @@ import {
   AlertCircle,
   X,
   Flame,
-  Info
+  Info,
+  RefreshCw
 } from 'lucide-react';
 import { ViewType, IndianCity } from '../types/tournament';
 import { tournamentService } from '../services/firebaseService';
@@ -30,7 +31,12 @@ import {
   DOTA_ROLES, 
   validateDotaRoles 
 } from '../domain/dotaPlayerEngine';
-import { fetchOpenDotaPlayer, OpenDotaPlayerSummary } from '../services/openDotaService';
+import { 
+  fetchOpenDotaPlayer, 
+  fetchOpenDotaPeers, 
+  fetchOpenDotaTotals, 
+  OpenDotaPlayerSummary 
+} from '../services/openDotaService';
 import { SelectDropdown, DropdownOption } from '../components/ui/Dropdown';
 
 interface PlayerProfileViewProps {
@@ -63,6 +69,13 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
   const [openDotaStats, setOpenDotaStats] = useState<OpenDotaPlayerSummary | null>(null);
   const [loadingOpenDota, setLoadingOpenDota] = useState(false);
   const [openDotaError, setOpenDotaError] = useState<string | null>(null);
+  const [refreshingOpenDota, setRefreshingOpenDota] = useState(false);
+  const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
+  const [dotaSubTab, setDotaSubTab] = useState<'overview' | 'matches' | 'heroes' | 'performance' | 'peers'>('overview');
+  const [peersData, setPeersData] = useState<Array<{ accountId: string; personaName: string; avatarUrl: string; games: number; wins: number; winRate: number; lastPlayed?: string | null }> | null>(null);
+  const [loadingPeers, setLoadingPeers] = useState(false);
+  const [totalsData, setTotalsData] = useState<OpenDotaPlayerSummary['totals'] | null>(null);
+  const [loadingTotals, setLoadingTotals] = useState(false);
 
   // Edit Profile Modal State
   const [isEditOpen, setIsEditOpen] = useState(false);
@@ -105,8 +118,67 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
         });
     } else {
       setOpenDotaStats(null);
+      setPeersData(null);
+      setTotalsData(null);
     }
   }, [player.steam?.steamId64, player.steam?.steamId32]);
+
+  // Progressive/lazy loading for secondary tabs (Peers & Career Totals)
+  useEffect(() => {
+    if (activeTab === 'dota_stats' && (player.steam?.steamId32 || player.steam?.steamId64)) {
+      const identifier = player.steam.steamId32 || player.steam.steamId64;
+      if (dotaSubTab === 'peers' && peersData === null && !loadingPeers) {
+        setLoadingPeers(true);
+        fetchOpenDotaPeers(identifier)
+          .then((p) => setPeersData(p))
+          .catch(() => setPeersData([]))
+          .finally(() => setLoadingPeers(false));
+      } else if (dotaSubTab === 'performance' && totalsData === null && !loadingTotals) {
+        setLoadingTotals(true);
+        fetchOpenDotaTotals(identifier)
+          .then((t) => setTotalsData(t))
+          .catch(() => setTotalsData(null))
+          .finally(() => setLoadingTotals(false));
+      }
+    }
+  }, [activeTab, dotaSubTab, player.steam?.steamId32, player.steam?.steamId64]);
+
+  const handleRefreshOpenDota = async () => {
+    if (!player.steam?.steamId32 && !player.steam?.steamId64) return;
+    const identifier = player.steam.steamId32 || player.steam.steamId64;
+    setRefreshingOpenDota(true);
+    setRefreshNotice(null);
+    try {
+      const summary = await fetchOpenDotaPlayer(identifier, { forceRefresh: true });
+      setOpenDotaStats(summary);
+      if (summary.status === 'PROVIDER_UNAVAILABLE') {
+        setRefreshNotice('OpenDota servers are currently unreachable. Retaining last successful real snapshot.');
+      } else if (summary.status === 'RATE_LIMITED') {
+        setRefreshNotice('OpenDota public rate limit reached (60 req/min). Retaining last cached snapshot.');
+      } else if (summary.errorMessage) {
+        setRefreshNotice(summary.errorMessage);
+      } else {
+        setRefreshNotice('✓ Live OpenDota player data successfully refreshed.');
+      }
+
+      // Also refresh secondary data if active
+      if (dotaSubTab === 'peers') {
+        setLoadingPeers(true);
+        const peers = await fetchOpenDotaPeers(identifier, { forceRefresh: true });
+        setPeersData(peers);
+        setLoadingPeers(false);
+      } else if (dotaSubTab === 'performance') {
+        setLoadingTotals(true);
+        const totals = await fetchOpenDotaTotals(identifier, { forceRefresh: true });
+        setTotalsData(totals);
+        setLoadingTotals(false);
+      }
+    } catch (err: any) {
+      setRefreshNotice('OpenDota refresh failed: ' + (err.message || 'API unreachable. Retaining cached telemetry.'));
+    } finally {
+      setRefreshingOpenDota(false);
+    }
+  };
 
   const handleOpenEdit = () => {
     setEditIgn(player.username);
@@ -481,25 +553,79 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
       {/* Tab 2: DOTA STATS (OpenDota Integration) */}
       {activeTab === 'dota_stats' && (
         <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-6 space-y-6 font-mono text-xs">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b-2 border-black pb-4">
+          {/* Header & Controls Bar */}
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 border-b-2 border-black pb-4">
             <div>
-              <span className="text-[10px] font-black uppercase text-[#7C3AED] block">PUBLIC TELEMETRY</span>
-              <h2 className="text-xl font-black uppercase text-black font-sans">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase text-[#7C3AED] block">PUBLIC TELEMETRY</span>
+                {openDotaStats?.status && (
+                  <span className={`px-2 py-0.2 border border-black text-[9px] font-black uppercase ${
+                    openDotaStats.status === 'SUCCESS' ? 'bg-[#70FFAF] text-black' :
+                    openDotaStats.status === 'CACHED' ? 'bg-[#FFE600] text-black' :
+                    openDotaStats.status === 'PRIVATE_PROFILE' ? 'bg-[#FF70A6] text-black' :
+                    openDotaStats.status === 'RATE_LIMITED' ? 'bg-[#FFDE59] text-black' :
+                    openDotaStats.status === 'PROVIDER_UNAVAILABLE' ? 'bg-stone-300 text-stone-700' :
+                    'bg-stone-100 text-stone-700'
+                  }`}>
+                    {openDotaStats.status.replace('_', ' ')}
+                  </span>
+                )}
+              </div>
+              <h2 className="text-xl sm:text-2xl font-black uppercase text-black font-sans mt-0.5">
                 OPENDOTA STATISTICAL PROFILE
               </h2>
+              {player.steam && (
+                <p className="text-[11px] text-stone-600 mt-0.5">
+                  Linked Steam64: <strong className="text-black font-bold">{player.steam.steamId64}</strong> · Canonical Dota ID: <strong className="text-black font-bold">{player.steam.steamId32 || '—'}</strong>
+                </p>
+              )}
             </div>
-            {player.steam?.openDotaUrl && (
-              <a
-                href={player.steam.openDotaUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 bg-[#FFF9E6] border-2 border-black px-3 py-1.5 font-mono text-xs font-black uppercase hover:bg-[#FFE600] shadow-[2px_2px_0px_0px_#000]"
-              >
-                <span>View on OpenDota.com</span>
-                <ExternalLink className="w-3.5 h-3.5" />
-              </a>
-            )}
+
+            {/* Action Bar */}
+            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+              {player.steam && (
+                <button
+                  onClick={handleRefreshOpenDota}
+                  disabled={refreshingOpenDota || loadingOpenDota}
+                  className={`inline-flex items-center gap-1.5 bg-[#FFE600] hover:bg-[#FFE600]/80 text-black border-2 border-black px-3 py-1.5 font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer ${
+                    refreshingOpenDota || loadingOpenDota ? 'opacity-60 cursor-not-allowed' : ''
+                  }`}
+                  title="Force refresh player data from OpenDota (respects 30s cooldown)"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${refreshingOpenDota ? 'animate-spin' : ''}`} />
+                  <span>{refreshingOpenDota ? 'Refreshing...' : 'REFRESH DOTA DATA'}</span>
+                </button>
+              )}
+
+              {player.steam?.openDotaUrl && (
+                <a
+                  href={player.steam.openDotaUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 bg-[#FFF9E6] border-2 border-black px-3 py-1.5 font-mono text-xs font-black uppercase hover:bg-[#FFE600] shadow-[2px_2px_0px_0px_#000]"
+                >
+                  <span>View on OpenDota</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              )}
+            </div>
           </div>
+
+          {/* Refresh Notice or Failure Banner */}
+          {refreshNotice && (
+            <div className="p-3 bg-[#FFF9E6] border-2 border-black flex items-center justify-between gap-2 shadow-[2px_2px_0px_0px_#000]">
+              <div className="flex items-center gap-2">
+                <Info className="w-4 h-4 text-[#7C3AED] shrink-0" />
+                <span className="text-xs font-bold text-stone-800">{refreshNotice}</span>
+              </div>
+              <button
+                onClick={() => setRefreshNotice(null)}
+                className="text-stone-500 hover:text-black font-black text-xs cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
           {!player.steam ? (
             <div className="p-12 text-center bg-stone-50 border-2 border-dashed border-stone-300 space-y-3">
@@ -523,103 +649,425 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
           ) : loadingOpenDota ? (
             <div className="p-12 text-center space-y-3">
               <div className="w-8 h-8 border-4 border-[#7C3AED] border-t-transparent rounded-full animate-spin mx-auto" />
-              <p className="text-xs text-stone-600 font-bold">Querying OpenDota servers & cache...</p>
+              <p className="text-xs text-stone-600 font-bold">Querying OpenDota servers &amp; cache...</p>
             </div>
           ) : openDotaStats ? (
             <div className="space-y-6">
-              {/* Metric Cards */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="p-3.5 bg-[#FFF9E6] border-2 border-black shadow-[2px_2px_0px_0px_#000]">
-                  <span className="text-[10px] text-stone-500 font-bold uppercase block">Rank Tier / Medal</span>
-                  <span className="text-lg sm:text-xl font-black text-black block mt-0.5">{openDotaStats.rankName}</span>
+              {/* Failure / Privacy State Banners */}
+              {openDotaStats.status === 'PRIVATE_PROFILE' && (
+                <div className="p-4 bg-[#FFE5EC] border-2 border-black shadow-[3px_3px_0px_0px_#000] space-y-2">
+                  <div className="flex items-center gap-2 text-[#D90429] font-black uppercase text-xs">
+                    <AlertCircle className="w-4 h-4 shrink-0" />
+                    <span>DOTA 2 MATCH TELEMETRY IS PRIVATE</span>
+                  </div>
+                  <p className="text-stone-700 text-xs leading-relaxed">
+                    OpenDota cannot access match history or statistics because this player's Dota 2 client has <strong>"Expose Public Match Data"</strong> disabled.
+                    To expose telemetry, launch Dota 2, navigate to <strong>Settings → Options → Advanced Options</strong>, and enable <strong>"Expose Public Match Data"</strong>.
+                  </p>
                 </div>
-                <div className="p-3.5 bg-[#FFF9E6] border-2 border-black shadow-[2px_2px_0px_0px_#000]">
-                  <span className="text-[10px] text-stone-500 font-bold uppercase block">OpenDota Est. MMR</span>
-                  <span className="text-lg sm:text-xl font-black text-[#7C3AED] block mt-0.5">
-                    {openDotaStats.estimatedMmr ? openDotaStats.estimatedMmr.toLocaleString() : '5,600+'}
-                  </span>
+              )}
+
+              {openDotaStats.status === 'PROVIDER_UNAVAILABLE' && (
+                <div className="p-3 bg-stone-100 border-2 border-black text-stone-700 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-stone-500 shrink-0" />
+                  <span>OpenDota API is currently unreachable. Displaying last cached real snapshot if available.</span>
                 </div>
-                <div className="p-3.5 bg-[#FFF9E6] border-2 border-black shadow-[2px_2px_0px_0px_#000]">
-                  <span className="text-[10px] text-stone-500 font-bold uppercase block">Win / Loss</span>
-                  <span className="text-lg sm:text-xl font-black text-black block mt-0.5">
-                    {openDotaStats.wins}W - {openDotaStats.losses}L
-                  </span>
+              )}
+
+              {openDotaStats.status === 'RATE_LIMITED' && (
+                <div className="p-3 bg-[#FFFBEB] border-2 border-black text-stone-800 flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>OpenDota public rate limit reached (60 requests/minute). Displaying last cached snapshot.</span>
                 </div>
-                <div className="p-3.5 bg-[#FFF9E6] border-2 border-black shadow-[2px_2px_0px_0px_#000]">
-                  <span className="text-[10px] text-stone-500 font-bold uppercase block">Win Rate</span>
-                  <span className="text-lg sm:text-xl font-black text-emerald-700 block mt-0.5">
-                    {openDotaStats.winRate}%
-                  </span>
+              )}
+
+              {openDotaStats.status === 'NO_MATCHES' && (
+                <div className="p-3 bg-stone-50 border border-black text-stone-600">
+                  <span>No recent competitive match records found on OpenDota for this account.</span>
                 </div>
+              )}
+
+              {/* Sub-Navigation Tabs */}
+              <div className="flex flex-wrap items-center gap-1.5 border-b-2 border-black pb-2">
+                {[
+                  { id: 'overview', label: 'OVERVIEW' },
+                  { id: 'matches', label: `RECENT MATCHES (${openDotaStats.recentMatches.length})` },
+                  { id: 'heroes', label: `HERO POOL (${openDotaStats.topHeroes.length})` },
+                  { id: 'performance', label: 'PERFORMANCE & TOTALS' },
+                  { id: 'peers', label: `PEERS ${peersData ? `(${peersData.length})` : ''}` }
+                ].map((st) => (
+                  <button
+                    key={st.id}
+                    onClick={() => setDotaSubTab(st.id as any)}
+                    className={`px-3 py-1.5 text-xs font-black uppercase border-2 border-black cursor-pointer transition-all ${
+                      dotaSubTab === st.id
+                        ? 'bg-[#FFE600] text-black shadow-[2px_2px_0px_0px_#000] -translate-y-0.5'
+                        : 'bg-white hover:bg-stone-100 text-stone-600'
+                    }`}
+                  >
+                    {st.label}
+                  </button>
+                ))}
               </div>
 
-              {/* Recent Matches */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-black uppercase text-black font-sans border-b border-black pb-1.5">
-                  RECENT COMPETITIVE MATCHES (OPENDOTA)
-                </h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-2 border-black">
-                    <thead className="bg-[#FFE600] text-black border-b-2 border-black text-[10px] uppercase font-black">
-                      <tr>
-                        <th className="p-2.5">Match ID</th>
-                        <th className="p-2.5">Hero</th>
-                        <th className="p-2.5">Outcome</th>
-                        <th className="p-2.5">K / D / A</th>
-                        <th className="p-2.5">Duration</th>
-                        <th className="p-2.5">Date</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-black/10">
-                      {openDotaStats.recentMatches.map((m) => (
-                        <tr key={m.matchId} className="hover:bg-stone-50">
-                          <td className="p-2.5 font-bold">#{m.matchId}</td>
-                          <td className="p-2.5 font-black text-black">{m.heroName}</td>
-                          <td className="p-2.5">
-                            <span className={`px-1.5 py-0.5 border text-[9px] font-black uppercase ${
-                              m.playerWon ? 'bg-[#70FFAF] text-black border-black' : 'bg-[#FF5757]/20 text-[#FF5757] border-[#FF5757]'
-                            }`}>
-                              {m.playerWon ? 'Victory' : 'Defeat'}
-                            </span>
-                          </td>
-                          <td className="p-2.5 font-bold text-stone-700">
-                            {m.kills} / {m.deaths} / {m.assists}
-                          </td>
-                          <td className="p-2.5 text-stone-600">{m.durationMinutes} mins</td>
-                          <td className="p-2.5 text-stone-500 text-[10px]">
-                            {new Date(m.startTime).toLocaleDateString()}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Top Heroes */}
-              <div className="space-y-3">
-                <h3 className="text-sm font-black uppercase text-black font-sans border-b border-black pb-1.5">
-                  MOST PLAYED HEROES
-                </h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {openDotaStats.topHeroes.map((h) => (
-                    <div key={h.heroId} className="p-3 bg-stone-50 border border-black space-y-1">
-                      <div className="flex justify-between font-black text-xs text-black">
-                        <span>{h.heroName}</span>
-                        <span className="text-emerald-700">{h.winRate}% WR</span>
-                      </div>
-                      <div className="w-full bg-stone-200 h-1.5 border border-black">
-                        <div className="bg-[#7C3AED] h-full" style={{ width: `${h.winRate}%` }} />
-                      </div>
-                      <span className="text-[10px] text-stone-500">{h.games} matches</span>
+              {/* 1. OVERVIEW SECTION */}
+              {dotaSubTab === 'overview' && (
+                <div className="space-y-6">
+                  {/* 5 Large Cards */}
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    <div className="p-3.5 bg-[#FFF9E6] border-2 border-black shadow-[3px_3px_0px_0px_#000]">
+                      <span className="text-[10px] text-stone-500 font-bold uppercase block">Rank</span>
+                      <span className="text-lg sm:text-xl font-black text-black block mt-0.5 truncate">
+                        {openDotaStats.rankName && openDotaStats.rankName !== 'Unranked' ? openDotaStats.rankName : 'Not Available'}
+                      </span>
+                      <span className="text-[9px] text-stone-500 block mt-1">
+                        Leaderboard: {openDotaStats.leaderboardRank ? `#${openDotaStats.leaderboardRank.toLocaleString()}` : '—'}
+                      </span>
                     </div>
-                  ))}
+
+                    <div className="p-3.5 bg-[#FFF9E6] border-2 border-black shadow-[3px_3px_0px_0px_#000]">
+                      <span className="text-[10px] text-stone-500 font-bold uppercase block">Wins</span>
+                      <span className="text-lg sm:text-xl font-black text-black block mt-0.5">
+                        {openDotaStats.wins !== null ? openDotaStats.wins.toLocaleString() : 'Not Available'}
+                      </span>
+                      <span className="text-[9px] text-stone-500 block mt-1">Recorded Wins</span>
+                    </div>
+
+                    <div className="p-3.5 bg-[#FFF9E6] border-2 border-black shadow-[3px_3px_0px_0px_#000]">
+                      <span className="text-[10px] text-stone-500 font-bold uppercase block">Losses</span>
+                      <span className="text-lg sm:text-xl font-black text-black block mt-0.5">
+                        {openDotaStats.losses !== null ? openDotaStats.losses.toLocaleString() : 'Not Available'}
+                      </span>
+                      <span className="text-[9px] text-stone-500 block mt-1">Recorded Losses</span>
+                    </div>
+
+                    <div className="p-3.5 bg-[#FFF9E6] border-2 border-black shadow-[3px_3px_0px_0px_#000]">
+                      <span className="text-[10px] text-stone-500 font-bold uppercase block">Win Rate</span>
+                      <span className="text-lg sm:text-xl font-black text-emerald-700 block mt-0.5">
+                        {openDotaStats.winRate !== null ? `${openDotaStats.winRate}%` : 'Not Available'}
+                      </span>
+                      <span className="text-[9px] text-stone-500 block mt-1">Overall Ratio</span>
+                    </div>
+
+                    <div className="p-3.5 bg-[#FFF9E6] border-2 border-black shadow-[3px_3px_0px_0px_#000] col-span-2 sm:col-span-1">
+                      <span className="text-[10px] text-stone-500 font-bold uppercase block">Matches</span>
+                      <span className="text-lg sm:text-xl font-black text-[#7C3AED] block mt-0.5">
+                        {openDotaStats.totalMatches !== null
+                          ? openDotaStats.totalMatches.toLocaleString()
+                          : openDotaStats.wins !== null && openDotaStats.losses !== null
+                          ? (openDotaStats.wins + openDotaStats.losses).toLocaleString()
+                          : 'Not Available'}
+                      </span>
+                      <span className="text-[9px] text-stone-500 block mt-1">Total Recorded</span>
+                    </div>
+                  </div>
+
+                  {/* Profile & Telemetry Metadata */}
+                  <div className="bg-stone-50 border-2 border-black p-4 space-y-3 shadow-[2px_2px_0px_0px_#000]">
+                    <div className="flex items-center justify-between border-b border-black/10 pb-2">
+                      <span className="text-xs font-black uppercase text-black">PROFILE &amp; ACCOUNT IDENTITY</span>
+                      <span className="text-[10px] text-stone-500">
+                        Snapshot: {openDotaStats.fetchedAt ? new Date(openDotaStats.fetchedAt).toLocaleString() : 'Not Available'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                      <div>
+                        <span className="text-stone-500 block text-[10px] uppercase font-bold">Estimated MMR:</span>
+                        <span className="font-black text-[#7C3AED]">
+                          {openDotaStats.estimatedMmr ? openDotaStats.estimatedMmr.toLocaleString() : 'Not Available'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-stone-500 block text-[10px] uppercase font-bold">Steam Persona:</span>
+                        <span className="font-black text-black truncate block">
+                          {openDotaStats.personaName || 'Not Available'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-stone-500 block text-[10px] uppercase font-bold">Country / Origin:</span>
+                        <span className="font-bold text-stone-800">
+                          {openDotaStats.locCountryCode ? openDotaStats.locCountryCode.toUpperCase() : 'Not Available'}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-stone-500 block text-[10px] uppercase font-bold">Last Activity:</span>
+                        <span className="font-bold text-stone-800">
+                          {openDotaStats.lastLogin ? new Date(openDotaStats.lastLogin).toLocaleDateString() : 'Not Available'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* 2. RECENT MATCHES SECTION */}
+              {dotaSubTab === 'matches' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-black uppercase text-black font-sans">
+                      RECENT COMPETITIVE MATCHES (OPENDOTA)
+                    </h3>
+                    <span className="text-[10px] text-stone-500">
+                      Showing {openDotaStats.recentMatches.length} recorded fixtures
+                    </span>
+                  </div>
+
+                  {openDotaStats.recentMatches.length === 0 ? (
+                    <div className="p-8 text-center bg-stone-50 border-2 border-dashed border-stone-300 text-stone-600">
+                      <p className="font-bold">Not Available</p>
+                      <p className="text-xs text-stone-500 mt-1">No recent competitive matches returned by OpenDota for this account.</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-2 border-black">
+                        <thead className="bg-[#FFE600] text-black border-b-2 border-black text-[10px] uppercase font-black">
+                          <tr>
+                            <th className="p-2.5">Hero</th>
+                            <th className="p-2.5">Result</th>
+                            <th className="p-2.5">K / D / A</th>
+                            <th className="p-2.5">GPM</th>
+                            <th className="p-2.5">XPM</th>
+                            <th className="p-2.5">Duration</th>
+                            <th className="p-2.5">Date</th>
+                            <th className="p-2.5">Match ID</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-black/10">
+                          {openDotaStats.recentMatches.map((m) => (
+                            <tr key={m.matchId} className="hover:bg-stone-50">
+                              <td className="p-2.5">
+                                <span className="font-black text-black block">{m.heroName}</span>
+                                {m.gameMode && (
+                                  <span className="text-[9px] text-stone-500 block">{m.gameMode}</span>
+                                )}
+                              </td>
+                              <td className="p-2.5">
+                                <span className={`px-2 py-0.5 border text-[9px] font-black uppercase ${
+                                  m.playerWon ? 'bg-[#70FFAF] text-black border-black' : 'bg-[#FF5757]/20 text-[#FF5757] border-[#FF5757]'
+                                }`}>
+                                  {m.playerWon ? 'Victory' : 'Defeat'}
+                                </span>
+                              </td>
+                              <td className="p-2.5 font-bold text-stone-800">
+                                {m.kills} / {m.deaths} / {m.assists}
+                              </td>
+                              <td className="p-2.5 font-bold text-stone-700">
+                                {m.gpm !== undefined ? m.gpm : '—'}
+                              </td>
+                              <td className="p-2.5 font-bold text-stone-700">
+                                {m.xpm !== undefined ? m.xpm : '—'}
+                              </td>
+                              <td className="p-2.5 text-stone-600">
+                                {m.durationMinutes} mins
+                              </td>
+                              <td className="p-2.5 text-stone-500 text-[10px]">
+                                {new Date(m.startTime).toLocaleDateString()}
+                              </td>
+                              <td className="p-2.5 font-mono text-[10px] text-purple-700">
+                                #{m.matchId}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 3. HERO POOL SECTION */}
+              {dotaSubTab === 'heroes' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-black uppercase text-black font-sans">
+                      MOST PLAYED HERO POOL
+                    </h3>
+                    <span className="text-[10px] text-stone-500">
+                      Ranked by competitive games recorded
+                    </span>
+                  </div>
+
+                  {openDotaStats.topHeroes.length === 0 ? (
+                    <div className="p-8 text-center bg-stone-50 border-2 border-dashed border-stone-300 text-stone-600">
+                      <p className="font-bold">Not Available</p>
+                      <p className="text-xs text-stone-500 mt-1">No hero match aggregates returned by OpenDota for this player.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {openDotaStats.topHeroes.map((h) => (
+                        <div key={h.heroId} className="p-3.5 bg-stone-50 border-2 border-black shadow-[2px_2px_0px_0px_#000] space-y-1.5">
+                          <div className="flex justify-between font-black text-xs text-black">
+                            <span className="text-sm">{h.heroName}</span>
+                            <span className="text-emerald-700 font-black">{h.winRate}% WR</span>
+                          </div>
+                          <div className="w-full bg-stone-200 h-2 border border-black">
+                            <div className="bg-[#7C3AED] h-full" style={{ width: `${Math.min(100, Math.max(0, h.winRate))}%` }} />
+                          </div>
+                          <div className="flex justify-between items-center text-[10px] text-stone-600 pt-1">
+                            <span>{h.games} matches ({h.wins}W - {h.losses}L)</span>
+                            {h.withWinRate !== undefined && (
+                              <span className="text-stone-500">With: {h.withWinRate}%</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 4. PERFORMANCE & TOTALS SECTION */}
+              {dotaSubTab === 'performance' && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-black uppercase text-black font-sans">
+                      CAREER PERFORMANCE &amp; TOTAL AGGREGATES
+                    </h3>
+                    <span className="text-[10px] text-stone-500">
+                      Aggregated averages from OpenDota telemetry
+                    </span>
+                  </div>
+
+                  {loadingTotals ? (
+                    <div className="p-8 text-center space-y-2">
+                      <div className="w-6 h-6 border-3 border-[#7C3AED] border-t-transparent rounded-full animate-spin mx-auto" />
+                      <p className="text-xs text-stone-600 font-bold">Loading career aggregate totals...</p>
+                    </div>
+                  ) : totalsData ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      <div className="p-3 bg-[#FFF9E6] border-2 border-black shadow-[2px_2px_0px_0px_#000]">
+                        <span className="text-[10px] text-stone-500 uppercase font-bold block">Avg. GPM</span>
+                        <span className="text-lg font-black text-black block mt-0.5">
+                          {totalsData.gpm ? Math.round(totalsData.gpm.avg) : 'Not Available'}
+                        </span>
+                      </div>
+                      <div className="p-3 bg-[#FFF9E6] border-2 border-black shadow-[2px_2px_0px_0px_#000]">
+                        <span className="text-[10px] text-stone-500 uppercase font-bold block">Avg. XPM</span>
+                        <span className="text-lg font-black text-black block mt-0.5">
+                          {totalsData.xpm ? Math.round(totalsData.xpm.avg) : 'Not Available'}
+                        </span>
+                      </div>
+                      <div className="p-3 bg-[#FFF9E6] border-2 border-black shadow-[2px_2px_0px_0px_#000]">
+                        <span className="text-[10px] text-stone-500 uppercase font-bold block">Avg. KDA</span>
+                        <span className="text-lg font-black text-[#7C3AED] block mt-0.5">
+                          {totalsData.kda
+                            ? totalsData.kda.toFixed(2)
+                            : totalsData.kills && totalsData.deaths
+                            ? ((totalsData.kills.avg + (totalsData.assists?.avg || 0)) / Math.max(1, totalsData.deaths.avg)).toFixed(2)
+                            : 'Not Available'}
+                        </span>
+                      </div>
+                      <div className="p-3 bg-[#FFF9E6] border-2 border-black shadow-[2px_2px_0px_0px_#000]">
+                        <span className="text-[10px] text-stone-500 uppercase font-bold block">Avg. Last Hits</span>
+                        <span className="text-lg font-black text-black block mt-0.5">
+                          {totalsData.lastHits ? Math.round(totalsData.lastHits.avg) : 'Not Available'}
+                        </span>
+                      </div>
+                      <div className="p-3 bg-stone-50 border-2 border-black shadow-[2px_2px_0px_0px_#000]">
+                        <span className="text-[10px] text-stone-500 uppercase font-bold block">Avg. Hero Damage</span>
+                        <span className="text-lg font-black text-stone-800 block mt-0.5">
+                          {totalsData.heroDamage ? Math.round(totalsData.heroDamage.avg).toLocaleString() : 'Not Available'}
+                        </span>
+                      </div>
+                      <div className="p-3 bg-stone-50 border-2 border-black shadow-[2px_2px_0px_0px_#000]">
+                        <span className="text-[10px] text-stone-500 uppercase font-bold block">Avg. Tower Damage</span>
+                        <span className="text-lg font-black text-stone-800 block mt-0.5">
+                          {totalsData.towerDamage ? Math.round(totalsData.towerDamage.avg).toLocaleString() : 'Not Available'}
+                        </span>
+                      </div>
+                      <div className="p-3 bg-stone-50 border-2 border-black shadow-[2px_2px_0px_0px_#000]">
+                        <span className="text-[10px] text-stone-500 uppercase font-bold block">Avg. Hero Healing</span>
+                        <span className="text-lg font-black text-emerald-700 block mt-0.5">
+                          {totalsData.heroHealing ? Math.round(totalsData.heroHealing.avg).toLocaleString() : 'Not Available'}
+                        </span>
+                      </div>
+                      <div className="p-3 bg-stone-50 border-2 border-black shadow-[2px_2px_0px_0px_#000]">
+                        <span className="text-[10px] text-stone-500 uppercase font-bold block">Avg. Kills / Deaths</span>
+                        <span className="text-lg font-black text-stone-800 block mt-0.5">
+                          {totalsData.kills && totalsData.deaths
+                            ? `${totalsData.kills.avg.toFixed(1)} / ${totalsData.deaths.avg.toFixed(1)}`
+                            : 'Not Available'}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-8 text-center bg-stone-50 border-2 border-dashed border-stone-300 text-stone-600">
+                      <p className="font-bold">Not Available</p>
+                      <p className="text-xs text-stone-500 mt-1">No career aggregate metrics returned by OpenDota for this player.</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 5. PEERS SECTION */}
+              {dotaSubTab === 'peers' && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-black uppercase text-black font-sans">
+                      FREQUENT TEAMMATES &amp; OPPONENTS
+                    </h3>
+                    <span className="text-[10px] text-stone-500">
+                      Co-players recorded by OpenDota
+                    </span>
+                  </div>
+
+                  {loadingPeers ? (
+                    <div className="p-8 text-center space-y-2">
+                      <div className="w-6 h-6 border-3 border-[#7C3AED] border-t-transparent rounded-full animate-spin mx-auto" />
+                      <p className="text-xs text-stone-600 font-bold">Querying frequent co-players...</p>
+                    </div>
+                  ) : peersData && peersData.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-2 border-black">
+                        <thead className="bg-[#FFE600] text-black border-b-2 border-black text-[10px] uppercase font-black">
+                          <tr>
+                            <th className="p-2.5">Player</th>
+                            <th className="p-2.5">Matches Together</th>
+                            <th className="p-2.5">Wins</th>
+                            <th className="p-2.5">Win Rate</th>
+                            <th className="p-2.5">Last Played</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-black/10">
+                          {peersData.map((p) => (
+                            <tr key={p.accountId} className="hover:bg-stone-50">
+                              <td className="p-2.5">
+                                <div className="flex items-center gap-2">
+                                  {p.avatarUrl && p.avatarUrl.startsWith('http') ? (
+                                    <img src={p.avatarUrl} alt={p.personaName} className="w-6 h-6 rounded-full border border-black" />
+                                  ) : (
+                                    <span className="text-sm">🎮</span>
+                                  )}
+                                  <div>
+                                    <span className="font-black text-black block">{p.personaName}</span>
+                                    <span className="text-[9px] text-stone-500">ID: {p.accountId}</span>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="p-2.5 font-bold text-stone-800">{p.games}</td>
+                              <td className="p-2.5 font-bold text-stone-800">{p.wins}</td>
+                              <td className="p-2.5 font-bold text-emerald-700">{p.winRate}%</td>
+                              <td className="p-2.5 text-stone-500 text-[10px]">
+                                {p.lastPlayed ? new Date(p.lastPlayed).toLocaleDateString() : '—'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="p-8 text-center bg-stone-50 border-2 border-dashed border-stone-300 text-stone-600">
+                      <p className="font-bold">Not Available</p>
+                      <p className="text-xs text-stone-500 mt-1">No frequent teammates or opponents recorded on OpenDota for this player.</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
-            <div className="p-8 text-center bg-stone-50 border border-black text-stone-600">
-              <p>No OpenDota telemetry available or profile is marked private in Dota 2 client.</p>
+            <div className="p-8 text-center bg-stone-50 border border-black text-stone-600 space-y-2">
+              <p className="font-bold">Not Available</p>
+              <p className="text-xs text-stone-500">No OpenDota telemetry available or profile is marked private in the Dota 2 client.</p>
             </div>
           )}
         </div>

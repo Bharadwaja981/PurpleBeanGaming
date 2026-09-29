@@ -307,8 +307,151 @@ export const PURPLE_BEAN_CHALLENGER_CONFIG: TournamentConfig = {
   }
 };
 
+export const INDIA_MASTERS_AUCTION_CONFIG: TournamentConfig = {
+  identity: {
+    tournamentId: 'purple-bean-india-masters-2026',
+    name: 'Purple Bean India Masters 2026',
+    gameId: 'dota2',
+    gameName: 'Dota 2',
+    description: 'Flagship Pan-India championship tournament with live captain auction team formation.',
+    region: 'Pan India',
+    locationType: 'ONLINE',
+    city: 'Bengaluru',
+    bannerUrl: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80'
+  },
+  registration: {
+    registrationMode: 'INDIVIDUAL',
+    openDate: '2026-10-01',
+    closeDate: '2026-10-10',
+    maxParticipants: 40,
+    eligibilityRules: {
+      minMmrOrRank: 3500,
+      regionLocked: true,
+      requireKyc: false
+    }
+  },
+  teamFormation: {
+    mode: 'AUCTION',
+    numberOfTeams: 4
+  },
+  auction: {
+    enabled: true,
+    creditAllocationMode: 'CAPTAIN_MMR_BALANCED',
+    baseCredits: 1000,
+    adjustmentRate: 0.25,
+    minimumCredits: 800,
+    maximumCredits: 1200,
+    creditRounding: 10,
+    startingCredits: 1000,
+    bidTimerSeconds: 25,
+    nominationTimerSeconds: 30,
+    minimumBid: 10,
+    bidIncrement: 10,
+    reservePerRemainingSlot: 10
+  },
+  roster: {
+    primaryRosterSize: 5,
+    captainCountsTowardRoster: true,
+    substituteSlots: 1,
+    substituteRequired: false
+  },
+  competition: {
+    format: 'DOUBLE_ELIMINATION',
+    defaultSeriesFormat: 'BO3',
+    roundOverrides: {
+      'Grand Final': 'BO5'
+    },
+    seedingMethod: 'RATING_BASED'
+  },
+  prizes: {
+    totalPrizePoolINR: 250000,
+    placementDistribution: [
+      { placement: '1st Place (Champion)', percentage: 50, amountINR: 125000 },
+      { placement: '2nd Place (Runner-up)', percentage: 26, amountINR: 65000 },
+      { placement: '3rd Place', percentage: 14, amountINR: 35000 },
+      { placement: '4th Place', percentage: 10, amountINR: 25000 }
+    ]
+  },
+  integrity: {
+    verificationRequired: true,
+    organizerApprovalRequired: true
+  }
+};
+
+export const AUCTION_TEST_CONFIG: TournamentConfig = {
+  identity: {
+    tournamentId: 'auction-test',
+    name: 'Auction Test',
+    gameId: 'dota2',
+    gameName: 'Dota 2',
+    description: 'Development test tournament for manual 3-captain auction testing with MMR-balanced purses.',
+    region: 'Pan India',
+    locationType: 'ONLINE',
+    city: 'Bengaluru',
+    bannerUrl: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80',
+    isDevelopment: true,
+    visibility: 'DEVELOPMENT'
+  },
+  registration: {
+    registrationMode: 'INDIVIDUAL',
+    openDate: '2026-09-01',
+    closeDate: '2026-10-31',
+    maxParticipants: 30,
+    eligibilityRules: {
+      minMmrOrRank: 4000,
+      regionLocked: false,
+      requireKyc: false
+    }
+  },
+  teamFormation: {
+    mode: 'AUCTION',
+    numberOfTeams: 3
+  },
+  roster: {
+    primaryRosterSize: 5,
+    captainCountsTowardRoster: true,
+    substituteSlots: 1,
+    substituteRequired: false
+  },
+  auction: {
+    enabled: true,
+    creditAllocationMode: 'CAPTAIN_MMR_BALANCED',
+    baseCredits: 1000,
+    adjustmentRate: 0.25,
+    minimumCredits: 800,
+    maximumCredits: 1200,
+    creditRounding: 10,
+    startingCredits: 1000,
+    bidTimerSeconds: 25,
+    nominationTimerSeconds: 30,
+    minimumBid: 10,
+    bidIncrement: 10,
+    reservePerRemainingSlot: 10
+  },
+  competition: {
+    format: 'SINGLE_ELIMINATION',
+    defaultSeriesFormat: 'BO3',
+    roundOverrides: {
+      'Grand Final': 'BO5'
+    },
+    seedingMethod: 'RATING_BASED'
+  },
+  prizes: {
+    totalPrizePoolINR: 50000,
+    placementDistribution: [
+      { placement: '1st Place (Champion)', percentage: 60, amountINR: 30000 },
+      { placement: '2nd Place (Runner-up)', percentage: 40, amountINR: 20000 }
+    ]
+  },
+  integrity: {
+    verificationRequired: true,
+    organizerApprovalRequired: true
+  }
+};
+
 export const INITIAL_SEED_TOURNAMENTS: TournamentConfig[] = [
   TEST_CUP_GENERIC_CONFIG,
+  INDIA_MASTERS_AUCTION_CONFIG,
   INDIA_DOTA_OPEN_CONFIG,
   PURPLE_BEAN_CHALLENGER_CONFIG
 ];

@@ -8,7 +8,7 @@
  */
 
 import { ServerCallerContext } from '../server/trustedTournamentOperations';
-import { db } from '../services/firebaseConfig';
+import { db, isQuotaExhausted, setQuotaExhausted, isQuotaError } from '../services/firebaseConfig';
 import { doc, getDoc, getDocs, setDoc, deleteDoc, collection } from 'firebase/firestore';
 
 export interface ManagedGame {
@@ -214,10 +214,13 @@ export class GameManagementEngine {
 
   private async persistToFirestore(game: ManagedGame) {
     try {
-      if (db) {
+      if (db && !isQuotaExhausted()) {
         await setDoc(doc(db, 'games', game.id), { ...game }, { merge: true });
       }
-    } catch {
+    } catch (err) {
+      if (isQuotaError(err)) {
+        setQuotaExhausted(true);
+      }
       // Memory fallback during offline or headless test suites
     }
   }
@@ -237,11 +240,14 @@ export class GameManagementEngine {
           }
         });
         this.notify();
-      } else {
+      } else if (!isQuotaExhausted()) {
         // Seed initial Dota 2 game if Firestore is empty
         await setDoc(doc(db, 'games', INITIAL_DOTA_GAME.id), INITIAL_DOTA_GAME);
       }
-    } catch {
+    } catch (err) {
+      if (isQuotaError(err)) {
+        setQuotaExhausted(true);
+      }
       // Offline fallback
     }
   }

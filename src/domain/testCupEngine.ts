@@ -123,6 +123,12 @@ export const TEST_CUP_GENERIC_CONFIG: TournamentConfig = {
   },
   auction: {
     enabled: true,
+    creditAllocationMode: 'CAPTAIN_MMR_BALANCED',
+    baseCredits: 1000,
+    adjustmentRate: 0.25,
+    minimumCredits: 800,
+    maximumCredits: 1200,
+    creditRounding: 10,
     startingCredits: 1000,
     minimumBid: 10,
     bidIncrement: 10,
@@ -552,7 +558,12 @@ export class PurpleBeanTestCupEngine {
   };
 
   constructor() {
-    this.reset();
+    const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
+    if (isTest) {
+      this.reset();
+    } else {
+      this.purge();
+    }
   }
 
   public subscribe(listener: () => void) {
@@ -566,6 +577,257 @@ export class PurpleBeanTestCupEngine {
     this.listeners.forEach(l => {
       try { l(); } catch (err) { console.error('Listener err:', err); }
     });
+  }
+
+  public purge() {
+    this.status = 'Registration Open';
+    this.players = [];
+    this.teams = [];
+    this.matches = [];
+    this.auditTrail = [];
+    this.auctionState = {
+      revision: 1,
+      currentBid: 10,
+      leadingTeamId: '',
+      leadingTeamName: '',
+      nominee: null,
+      soldCount: 0,
+      unsoldCount: 0,
+      unselectedCount: 0,
+      isCompleted: false
+    };
+    this.logAudit('data_purged', 'Tournament test data and mockups completely purged.');
+    this.notify();
+  }
+
+  public generateDummyPlayersAndCaptains(
+    dummyPlayerCount: number = 16, 
+    captainCount: number = 3,
+    customSettings?: Partial<TestCupConfig>
+  ) {
+    if (customSettings) {
+      if (customSettings.name) TEST_CUP_CONFIG.name = customSettings.name;
+      if (customSettings.startingCredits) TEST_CUP_CONFIG.startingCredits = customSettings.startingCredits;
+      if (customSettings.minimumBid) TEST_CUP_CONFIG.minimumBid = customSettings.minimumBid;
+      if (customSettings.bidIncrement) TEST_CUP_CONFIG.bidIncrement = customSettings.bidIncrement;
+      if (customSettings.prizePoolINR) TEST_CUP_CONFIG.prizePoolINR = customSettings.prizePoolINR;
+    }
+
+    const indianTags = [
+      'ThunderStrike', 'PhantomX', 'Agni', 'Vortex', 'Karna', 'Chanakya', 'Garuda', 'Blaze', 
+      'Specter', 'Titan', 'ZeroGravity', 'ShadowBlade', 'ApexRider', 'HyperNova', 'Trishul', 
+      'Raptor', 'ViperX', 'Maratha', 'Rudra', 'Varuna', 'Zenith', 'FrostBite', 'AlphaWolf', 
+      'NeonPulse', 'Havoc', 'Eclipse', 'Bhavani', 'Indra', 'Vanguard', 'Matrix', 'Pulse', 'Cipher'
+    ];
+    const realNames = [
+      'Aditya Sharma', 'Rohan Verma', 'Karan Chopra', 'Sameer Sen', 'Bhavin Patel', 
+      'Vikram Joshi', 'Aniket Das', 'Nikhil Reddy', 'Karthik Rao', 'Arjun Nair', 
+      'Tarun Mehta', 'Varun Kapoor', 'Rajat Roy', 'Devendra Singh', 'Pranav Kulkarni', 
+      'Harshil Shah', 'Gaurav Bhatt', 'Manoj Menon', 'Deepak Ghosh', 'Siddharth Iyer'
+    ];
+    const cities = ['Mumbai', 'Bengaluru', 'Delhi', 'Hyderabad', 'Pune', 'Kolkata', 'Chennai', 'Ahmedabad'];
+    const roles = [
+      'Position 1 — Carry',
+      'Position 2 — Mid',
+      'Position 3 — Offlane',
+      'Position 4 — Soft Support',
+      'Position 5 — Hard Support'
+    ];
+    const avatars = ['⚡', '🦅', '🔥', '🗡️', '💥', '🐍', '🎯', '🛡️', '⚔️', '🌊', '🌪️', '🦾', '🏹', '🔮', '🧬'];
+
+    const newPlayers: TestCupPlayerRecord[] = [];
+    const newTeams: TestCupTeamRecord[] = [];
+
+    // 1. Create Captains & Teams
+    const teamColors = ['#FFE600', '#FF70A6', '#70FFAF', '#C084FC', '#38EF7D', '#F97316', '#06B6D4', '#EC4899'];
+    for (let c = 0; c < captainCount; c++) {
+      const capId = `p-cap-${c + 1}`;
+      const tag = indianTags[c % indianTags.length];
+      const rName = realNames[c % realNames.length];
+      const city = cities[c % cities.length];
+      const teamId = `test-team-${c + 1}`;
+      const teamName = `${city} ${['Titans', 'Raiders', 'Blaze', 'Strikers', 'Warriors', 'Knights', 'Eagles', 'Panthers'][c % 8]}`;
+
+      const captainRecord: TestCupPlayerRecord = {
+        id: capId,
+        username: tag,
+        realName: rName,
+        avatar: avatars[c % avatars.length],
+        city,
+        region: 'Pan India',
+        primaryRole: roles[c % roles.length],
+        secondaryRole: roles[(c + 1) % roles.length],
+        mmr: 8200 + (c * 150),
+        tournamentMmr: 8200 + (c * 150),
+        rating: 1800 + (c * 25),
+        isCaptain: true,
+        registrationStatus: 'Verified',
+        teamId,
+        teamName
+      };
+
+      newPlayers.push(captainRecord);
+
+      newTeams.push({
+        id: teamId,
+        name: teamName,
+        tag: teamName.split(' ').map(w => w[0]).join(''),
+        logo: captainRecord.avatar,
+        color: teamColors[c % teamColors.length],
+        captainId: capId,
+        captainName: tag,
+        credits: TEST_CUP_CONFIG.startingCredits,
+        creditsUsed: 0,
+        primaryRoster: [captainRecord as unknown as Player],
+        rating: captainRecord.rating
+      });
+    }
+
+    // 2. Create Dummy Draftable Players
+    for (let i = 0; i < dummyPlayerCount; i++) {
+      const pIdx = captainCount + i;
+      const tag = indianTags[pIdx % indianTags.length] + (pIdx >= indianTags.length ? `${Math.floor(pIdx / indianTags.length) + 1}` : '');
+      const rName = realNames[pIdx % realNames.length];
+      const city = cities[pIdx % cities.length];
+      const mmr = 6000 + Math.floor(Math.random() * 2500);
+
+      newPlayers.push({
+        id: `p-dummy-${i + 1}`,
+        username: tag,
+        realName: rName,
+        avatar: avatars[pIdx % avatars.length],
+        city,
+        region: 'Pan India',
+        primaryRole: roles[i % roles.length],
+        secondaryRole: roles[(i + 1) % roles.length],
+        mmr,
+        tournamentMmr: mmr,
+        rating: 1500 + Math.floor((mmr - 6000) * 0.1),
+        registrationStatus: 'Verified',
+        auctionStatus: 'AVAILABLE'
+      });
+    }
+
+    this.players = newPlayers;
+    this.teams = newTeams;
+    this.matches = [];
+    this.status = 'Registration Open';
+    this.auctionState = {
+      revision: 1,
+      currentBid: TEST_CUP_CONFIG.minimumBid,
+      leadingTeamId: '',
+      leadingTeamName: '',
+      nominee: null,
+      soldCount: 0,
+      unsoldCount: 0,
+      unselectedCount: 0,
+      isCompleted: false
+    };
+
+    this.logAudit('dummy_generated', `Generated ${dummyPlayerCount} test players and ${captainCount} captains with custom settings.`);
+    this.notify();
+    return { players: newPlayers, teams: newTeams };
+  }
+
+  public autoSimulateFullAuction(): { soldCount: number; unsoldCount: number; unselectedCount: number } {
+    if (this.teams.length === 0 || this.players.length === 0) {
+      this.generateDummyPlayersAndCaptains(16, 3);
+    }
+
+    // Ensure all players verified & advance to Drafting
+    for (const p of this.players) {
+      p.registrationStatus = 'Verified';
+      if (!p.isCaptain) p.auctionStatus = 'AVAILABLE';
+    }
+    this.confirmCaptainsAndTeams();
+
+    const draftablePlayers = this.players.filter(p => !p.isCaptain && p.auctionStatus === 'AVAILABLE');
+    const targetPerTeam = TEST_CUP_CONFIG.primaryRosterSize; // 5 total, including captain -> need 4 drafted per team
+    const neededPerTeam = targetPerTeam - 1;
+
+    let tIndex = 0;
+    for (const player of draftablePlayers) {
+      // Check if all teams are full
+      const allFull = this.teams.every(t => t.primaryRoster.length >= targetPerTeam);
+      if (allFull) {
+        player.auctionStatus = 'UNSELECTED';
+        continue;
+      }
+
+      // Find next team that still needs players
+      let team = this.teams[tIndex % this.teams.length];
+      let attempts = 0;
+      while (team.primaryRoster.length >= targetPerTeam && attempts < this.teams.length) {
+        tIndex++;
+        team = this.teams[tIndex % this.teams.length];
+        attempts++;
+      }
+
+      if (team.primaryRoster.length >= targetPerTeam) {
+        player.auctionStatus = 'UNSELECTED';
+        continue;
+      }
+
+      // Nominate and sell to this team
+      this.nominatePlayer(player.id);
+      const remainingSlots = targetPerTeam - team.primaryRoster.length;
+      const reserve = (remainingSlots - 1) * TEST_CUP_CONFIG.minReservePerSlot;
+      const maxBid = Math.max(TEST_CUP_CONFIG.minimumBid, team.credits - reserve);
+      const bidAmount = Math.min(maxBid, Math.max(TEST_CUP_CONFIG.minimumBid, Math.floor(100 + Math.random() * 150)));
+
+      this.placeAuctionBid({
+        teamId: team.id,
+        bidAmount,
+        captainUserId: team.captainId
+      });
+      this.concludeNomination(true);
+      tIndex++;
+    }
+
+    // Finalize auction state
+    this.finalizeAuction();
+    this.status = 'Rosters Locked';
+    this.logAudit('auction_simulated', `Auto-auction completed. All ${this.teams.length} teams filled rosters.`);
+    this.notify();
+
+    return {
+      soldCount: this.auctionState.soldCount,
+      unsoldCount: this.auctionState.unsoldCount,
+      unselectedCount: this.auctionState.unselectedCount
+    };
+  }
+
+  public fastForwardWholeTournament(): {
+    champion: string;
+    runnerUp: string;
+    thirdPlace: string;
+    summary: any;
+  } {
+    // If not drafted, simulate auction first
+    if (this.status !== 'Rosters Locked' && this.status !== 'Live' && this.status !== 'Completed') {
+      this.autoSimulateFullAuction();
+    }
+
+    // Generate bracket
+    this.generateSingleEliminationBracket();
+
+    // Play matches
+    this.executeSemifinalResult(2, 1);
+    this.executeGrandFinalResult(2, 0);
+
+    const completion = this.completeTournament();
+    this.notify();
+
+    return {
+      champion: completion.champion,
+      runnerUp: completion.runnerUp,
+      thirdPlace: completion.thirdPlace,
+      summary: {
+        status: 'Completed',
+        matchesCount: this.matches.length,
+        teamsCount: this.teams.length
+      }
+    };
   }
 
   public reset() {
@@ -673,6 +935,10 @@ export class PurpleBeanTestCupEngine {
     };
   }
 
+  public getState() {
+    return this.getAuctionState();
+  }
+
   // -------------------------------------------------------------
   // Phase 1: Player Registration & Verification
   // -------------------------------------------------------------
@@ -766,6 +1032,27 @@ export class PurpleBeanTestCupEngine {
 
     this.logAudit('player_nominated', `Nominated ${player.username} (${player.primaryRole}, MMR: ${player.tournamentMmr}) at opening bid of 10 credits.`);
     return { success: true, nominee: player };
+  }
+
+  public placeBid(captainUserId: string, bidAmount: number): { success: boolean; currentBid?: number; error?: string } {
+    try {
+      const team = this.teams.find(t => t.captainId === captainUserId);
+      if (!team) return { success: false, error: 'Team not found for captain' };
+      if (!this.auctionState.nominee && this.players.length > 0) {
+        const available = this.players.find(p => !p.isCaptain && (p.auctionStatus === 'AVAILABLE' || (p as any).status === 'AVAILABLE'));
+        if (available) {
+          this.nominatePlayer(available.id);
+        }
+      }
+      const res = this.placeAuctionBid({
+        teamId: team.id,
+        bidAmount,
+        captainUserId
+      });
+      return { success: true, currentBid: res.currentBid };
+    } catch (e: any) {
+      return { success: false, error: e?.message || String(e) };
+    }
   }
 
   public placeAuctionBid(params: {

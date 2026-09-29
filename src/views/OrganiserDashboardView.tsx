@@ -19,12 +19,17 @@ import {
   Flame,
   Radio,
   Gamepad2,
-  Sparkles
+  Sparkles,
+  Key,
+  Plus,
+  Trash2,
+  Lock,
+  Mail
 } from 'lucide-react';
 import { ReportDetailModal } from '../components/ReportDetailModal';
 import { TestCupLifecycleConsole } from '../components/TestCupLifecycleConsole';
-import { ReportItem, ViewType, Player, Team, Match } from '../types/tournament';
-import { tournamentService } from '../services/firebaseService';
+import { ReportItem, ViewType, Player, Team, Match, Tournament } from '../types/tournament';
+import { tournamentService, PRIMARY_PROJECT_ADMIN_EMAIL, tournamentToConfig } from '../services/firebaseService';
 import { TournamentConfig } from '../domain/tournamentConfig';
 import { GenericTournamentEngine } from '../domain/genericTournamentEngine';
 import { TournamentCreationWizard } from '../components/TournamentCreationWizard';
@@ -35,6 +40,7 @@ import {
   PURPLE_BEAN_CHALLENGER_CONFIG, 
   INITIAL_PREMADE_TEAMS 
 } from '../data/seedTournaments';
+import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
 import { RulesManager } from '../components/RulesManager';
 import { AnnouncementsManager } from '../components/AnnouncementsManager';
 import { ReportsAuditor } from '../components/ReportsAuditor';
@@ -76,12 +82,20 @@ interface OrganiserDashboardViewProps {
 }
 
 export function OrganiserDashboardView({ onNavigate, onOpenRegister }: OrganiserDashboardViewProps) {
-  const [tournaments, setTournaments] = useState<TournamentConfig[]>([
-    TEST_CUP_GENERIC_CONFIG,
-    INDIA_DOTA_OPEN_CONFIG,
-    PURPLE_BEAN_CHALLENGER_CONFIG
-  ]);
-  const [activeTournamentId, setActiveTournamentId] = useState<string>('purple-bean-test-cup');
+  const [currentUser, setCurrentUser] = useState(() => tournamentService.getCurrentUser());
+  const [tournaments, setTournaments] = useState<TournamentConfig[]>(() => {
+    const curUser = tournamentService.getCurrentUser();
+    const orgTourneys = tournamentService.getOrganiserTournaments(curUser.id);
+    orgTourneys.forEach(t => {
+      const cfg = (t as any).config || tournamentToConfig(t);
+      tournamentConfigRegistry.registerConfig(cfg);
+    });
+    return tournamentConfigRegistry.getAllConfigs();
+  });
+  const [activeTournamentId, setActiveTournamentId] = useState<string>(() => {
+    const configs = tournamentConfigRegistry.getAllConfigs();
+    return configs[0]?.identity.tournamentId || '';
+  });
   const [showWizard, setShowWizard] = useState(false);
   const [activeTab, setActiveTab] = useState<
     'overview' | 'registration' | 'captains' | 'draft' | 'matches' | 'reports' | 'rules' | 'announcements' | 'sanctions' | 'audit' | 'settings'
@@ -95,22 +109,85 @@ export function OrganiserDashboardView({ onNavigate, onOpenRegister }: Organiser
   const [matchesList, setMatchesList] = useState<Match[]>(() => tournamentService.getMatches());
 
   useEffect(() => {
-    const unsub = tournamentService.subscribe(() => {
+    const syncTournaments = () => {
+      const curUser = tournamentService.getCurrentUser();
+      setCurrentUser(curUser);
       setPlayersList(tournamentService.getPlayers());
       setTeamsList(tournamentService.getTeams());
       setMatchesList(tournamentService.getMatches());
       setReports(tournamentService.getReports());
-    });
-    return unsub;
+
+      const orgTourneys = tournamentService.getOrganiserTournaments(curUser.id);
+      orgTourneys.forEach(t => {
+        const cfg = (t as any).config || tournamentToConfig(t);
+        tournamentConfigRegistry.registerConfig(cfg);
+      });
+      const allConfigs = tournamentConfigRegistry.getAllConfigs();
+      setTournaments(allConfigs);
+      setActiveTournamentId((prev) => {
+        if (prev && allConfigs.some(c => c.identity.tournamentId === prev)) return prev;
+        return allConfigs[0]?.identity.tournamentId || '';
+      });
+    };
+
+    syncTournaments();
+    const unsubService = tournamentService.subscribe(syncTournaments);
+    const unsubRegistry = tournamentConfigRegistry.subscribe(syncTournaments);
+    return () => {
+      unsubService();
+      unsubRegistry();
+    };
   }, []);
+
+  const isAuthorized = currentUser.role === 'organizer' || currentUser.isAdmin || (currentUser.email?.toLowerCase().trim() === PRIMARY_PROJECT_ADMIN_EMAIL.toLowerCase());
+
+  if (!isAuthorized) {
+    return (
+      <div className="space-y-8 pb-16">
+        <div className="bg-[#FFF1F2] border-[3.5px] border-black p-8 sm:p-12 text-center space-y-4 shadow-[8px_8px_0px_0px_#000]">
+          <div className="w-16 h-16 mx-auto bg-white border-2 border-black flex items-center justify-center text-red-600 shadow-[3px_3px_0px_0px_#000]">
+            <Lock className="w-8 h-8" />
+          </div>
+          <div className="space-y-2 max-w-xl mx-auto">
+            <span className="bg-red-600 text-white px-3 py-1 font-mono text-xs font-black uppercase border border-black shadow-[1px_1px_0px_0px_#000]">
+              ACCESS RESTRICTED
+            </span>
+            <h1 className="text-2xl sm:text-4xl font-black uppercase text-black font-sans">
+              ORGANIZER ACCESS REQUIRED
+            </h1>
+            <p className="font-mono text-xs sm:text-sm text-stone-600">
+              The Tournament Operations Desk is reserved exclusively for authorized organizers and platform administrators. Access must be granted by the Primary Project Administrator ({PRIMARY_PROJECT_ADMIN_EMAIL}).
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-3">
+            <button
+              onClick={() => onNavigate('home')}
+              className="bg-black text-white hover:bg-stone-800 border-2 border-black px-5 py-2.5 font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#FFE600] cursor-pointer"
+            >
+              Back to Public Home
+            </button>
+            <button
+              onClick={() => onNavigate('tournaments')}
+              className="bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black px-5 py-2.5 font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] cursor-pointer"
+            >
+              Browse Tournaments
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const effectivePlayers = playersList;
   const effectiveTeams = teamsList;
   const effectiveMatches = matchesList;
 
-  const handleTournamentCreated = (newConfig: TournamentConfig) => {
-    setTournaments((prev) => [...prev, newConfig]);
+  const handleTournamentCreated = (newConfig: TournamentConfig, savedTournament?: Tournament) => {
+    tournamentConfigRegistry.registerConfig(newConfig);
     getOrCreateEngine(newConfig);
+    const allConfigs = tournamentConfigRegistry.getAllConfigs();
+    setTournaments(allConfigs);
     setActiveTournamentId(newConfig.identity.tournamentId);
     setShowWizard(false);
   };
@@ -175,24 +252,17 @@ export function OrganiserDashboardView({ onNavigate, onOpenRegister }: Organiser
                   <Trophy className="w-3.5 h-3.5 text-stone-700" />
                 )}
                 <span>{t.identity.name} ({t.identity.gameName})</span>
+                {(t.identity.visibility === 'DRAFT' || t.identity.visibility === 'UNLISTED') && (
+                  <span className="bg-amber-100 text-amber-900 border border-amber-500 px-1 py-0.5 text-[9px] font-mono font-black">
+                    DRAFT
+                  </span>
+                )}
               </button>
             ))}
 
             <button
-              onClick={() => setActiveTournamentId('purple-bean-india-masters-2026')}
-              className={`px-3 py-2 uppercase border-2 border-black transition-all cursor-pointer flex items-center gap-1.5 ${
-                activeTournamentId === 'purple-bean-india-masters-2026'
-                  ? 'bg-[#FFE600] text-black shadow-[2px_2px_0px_0px_#000]'
-                  : 'bg-white text-stone-700 hover:bg-stone-100'
-              }`}
-            >
-              <Gamepad2 className="w-3.5 h-3.5 text-stone-600" />
-              <span>India Masters (Legacy)</span>
-            </button>
-
-            <button
               onClick={() => setShowWizard(true)}
-              className="bg-[#7C3AED] hover:bg-purple-700 text-white px-3 py-2 uppercase border-2 border-black transition-all cursor-pointer flex items-center gap-1.5 shadow-[2px_2px_0px_0px_#000]"
+              className="bg-[#7C3AED] hover:bg-purple-700 text-white px-3.5 py-2 uppercase border-2 border-black transition-all cursor-pointer flex items-center gap-1.5 shadow-[2px_2px_0px_0px_#000]"
             >
               <Sparkles className="w-3.5 h-3.5 text-[#FFE600]" />
               <span>+ Create Tournament</span>
@@ -213,8 +283,24 @@ export function OrganiserDashboardView({ onNavigate, onOpenRegister }: Organiser
         </div>
       )}
 
-      {/* RENDER ACTIVE TOURNAMENT WORKSPACE */}
-      {activeTournamentId === 'purple-bean-test-cup' ? (
+      {/* RENDER ACTIVE TOURNAMENT WORKSPACE OR EMPTY STATE */}
+      {tournaments.length === 0 ? (
+        <div className="bg-white border-[3.5px] border-black p-10 text-center space-y-4 shadow-[6px_6px_0px_0px_#000]">
+          <Trophy className="w-12 h-12 text-[#7C3AED] mx-auto" />
+          <h2 className="font-sans font-black text-2xl uppercase">No Active Tournaments Configured</h2>
+          <p className="font-mono text-xs text-stone-600 max-w-md mx-auto">
+            You currently have zero tournament fixtures. Launch an official tournament using the Creation Wizard, or open the Admin Simulation Suite to test.
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+            <button
+              onClick={() => setShowWizard(true)}
+              className="bg-[#FFE600] text-black border-2 border-black px-5 py-2.5 font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] cursor-pointer"
+            >
+              + Launch Tournament Creation Wizard
+            </button>
+          </div>
+        </div>
+      ) : activeTournamentId === 'purple-bean-test-cup' ? (
         <TestCupLifecycleConsole onNavigate={onNavigate} />
       ) : activeCustomConfig ? (
         <DynamicOrganiserWorkspace
@@ -304,13 +390,23 @@ export function OrganiserDashboardView({ onNavigate, onOpenRegister }: Organiser
                 ADMIN QUICK ACTIONS
               </h2>
               <div className="grid grid-cols-2 gap-3 font-mono text-xs">
-                <button
-                  onClick={() => onNavigate('auction')}
-                  className="p-3 bg-[#FFE600] hover:bg-yellow-400 border-2 border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] text-left cursor-pointer"
-                >
-                  <span className="block font-sans text-sm">Launch Live Auction</span>
-                  <span className="text-[10px] text-stone-700 font-normal">₹10L Team Purse Engine</span>
-                </button>
+                {tournamentConfigRegistry.isAuctionSupported(activeTournamentId) ? (
+                  <button
+                    onClick={() => onNavigate('auction', activeTournamentId)}
+                    className="p-3 bg-[#FFE600] hover:bg-yellow-400 border-2 border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] text-left cursor-pointer"
+                  >
+                    <span className="block font-sans text-sm">Launch Live Auction</span>
+                    <span className="text-[10px] text-stone-700 font-normal">Active Tournament Room ↗</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => onNavigate('tournament_detail', activeTournamentId)}
+                    className="p-3 bg-stone-100 hover:bg-stone-200 border-2 border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] text-left cursor-pointer"
+                  >
+                    <span className="block font-sans text-sm">Squad Management</span>
+                    <span className="text-[10px] text-stone-700 font-normal">Premade Squad Rosters</span>
+                  </button>
+                )}
 
                 <button
                   onClick={() => onNavigate('bracket')}

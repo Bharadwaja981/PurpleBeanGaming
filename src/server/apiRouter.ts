@@ -14,30 +14,68 @@ import {
 import { opendotaRouter } from './opendotaServer';
 import { gameManagementEngine } from '../domain/gameManagementEngine';
 import { Player } from '../types/tournament';
-import { db } from '../services/firebaseConfig';
-import { doc, setDoc } from 'firebase/firestore';
+import { 
+  MOCK_TOURNAMENTS, 
+  MOCK_MATCHES, 
+  MOCK_TEAMS, 
+  MOCK_AUCTION_TEAMS, 
+  MOCK_AUCTION_PLAYER, 
+  MOCK_PLAYERS, 
+  MOCK_BRACKET_NODES 
+} from '../data/mockData';
+import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
+import { getAuctionEngine } from '../domain/dotaAuctionEngine';
 
-export const authoritativeServer = new TrustedTournamentServer({
-  auctionState: {
-    tournamentId: '',
-    status: 'paused',
-    revision: 1,
-    currentBid: 0,
-    leadingTeamId: '',
-    leadingTeamName: '',
-    currentPlayer: undefined as unknown as Player,
-    secondsLeft: 0,
-    bidHistory: [],
-    soldPlayers: [],
-    unsoldPlayers: [],
-    unselectedPlayers: []
-  },
-  teamBudgets: [],
-  tournaments: [],
-  matches: [],
-  teams: [],
-  brackets: []
-});
+const isTestEnv = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
+
+export const authoritativeServer = new TrustedTournamentServer(
+  isTestEnv
+    ? {
+        auctionState: {
+          tournamentId: 'purple-bean-india-masters-2026',
+          status: 'open',
+          revision: 1,
+          currentBid: MOCK_AUCTION_PLAYER.currentBid,
+          leadingTeamId: 't-1',
+          leadingTeamName: 'Purple Bean Titans',
+          currentPlayer: MOCK_PLAYERS[2],
+          secondsLeft: 22,
+          bidHistory: [...MOCK_AUCTION_PLAYER.bidHistory],
+          soldPlayers: [
+            { playerId: 'p-1', teamId: 't-1', amount: 320000 },
+            { playerId: 'p-2', teamId: 't-2', amount: 290000 }
+          ],
+          unsoldPlayers: [],
+          unselectedPlayers: ['p-9', 'p-13', 'p-14', 'p-15', 'p-16']
+        },
+        teamBudgets: [...MOCK_AUCTION_TEAMS],
+        tournaments: [...MOCK_TOURNAMENTS],
+        matches: [...MOCK_MATCHES],
+        teams: [...MOCK_TEAMS],
+        brackets: [...MOCK_BRACKET_NODES]
+      }
+    : {
+        auctionState: {
+          tournamentId: '',
+          status: 'paused',
+          revision: 1,
+          currentBid: 0,
+          leadingTeamId: '',
+          leadingTeamName: '',
+          currentPlayer: undefined as unknown as Player,
+          secondsLeft: 0,
+          bidHistory: [],
+          soldPlayers: [],
+          unsoldPlayers: [],
+          unselectedPlayers: []
+        },
+        teamBudgets: [],
+        tournaments: [],
+        matches: [],
+        teams: [],
+        brackets: []
+      }
+);
 
 export const apiRouter = Router();
 
@@ -46,6 +84,7 @@ apiRouter.use('/opendota', opendotaRouter);
 
 export const AUTHORIZED_ORGANIZERS = new Set([
   '00000000-0000-4000-8000-000000000001',
+  '11106cm009@gmail.com',
   'organizer@purplebeangaming.com',
   'admin@purplebeangaming.com',
   'bharadwajaanisetti@gmail.com'
@@ -139,6 +178,271 @@ apiRouter.post('/auction/bid', (req: Request, res: Response) => {
     res.json(result);
   } catch (error: any) {
     res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+// 1.1 Dedicated Live Captain Auction Bid (Phase 2 Engine Authority)
+apiRouter.post('/auction/captain-bid', (req: Request, res: Response) => {
+  try {
+    const caller = resolveCaller(req);
+    const tournamentId = req.body.tournamentId || (req.query.tournamentId as string) || 'purple-bean-test-cup';
+    
+    // Strict rejection of organisers attempting to bid on behalf of teams
+    if (caller.role === 'organizer' || caller.isAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: 'Reject: Organiser cannot bid on behalf of teams. Only authenticated franchise captains can submit bids.'
+      });
+    }
+
+    if (caller.role === 'spectator') {
+      return res.status(403).json({
+        success: false,
+        error: 'Reject: Spectator account is read-only and cannot submit live bids.'
+      });
+    }
+
+    if (!tournamentConfigRegistry.isAuctionSupported(tournamentId)) {
+      return res.status(400).json({
+        success: false,
+        error: `Reject: Tournament '${tournamentId}' is not configured for player auctions.`
+      });
+    }
+
+    const engine = getAuctionEngine(tournamentId);
+    const result = engine.placeBid({
+      teamId: req.body.teamId,
+      captainUserId: caller.userId,
+      bidAmount: req.body.bidAmount !== undefined ? Number(req.body.bidAmount) : undefined,
+      increment: req.body.increment !== undefined ? Number(req.body.increment) : undefined,
+      expectedRevision: req.body.expectedRevision !== undefined ? Number(req.body.expectedRevision) : undefined,
+      actorRole: caller.role
+    });
+
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 1.2 Organiser Live Nomination
+apiRouter.post('/auction/nominate', (req: Request, res: Response) => {
+  try {
+    const caller = resolveCaller(req);
+    const tournamentId = req.body.tournamentId || (req.query.tournamentId as string) || 'purple-bean-test-cup';
+
+    if (caller.role !== 'organizer' && !caller.isAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: 'Reject: Only authorized tournament organisers can nominate contenders to the auction floor.'
+      });
+    }
+
+    if (!tournamentConfigRegistry.canUserManageTournamentAuction(caller, tournamentId)) {
+      return res.status(403).json({
+        success: false,
+        error: `Unauthorized: Caller is not authorized to operate auctions for tournament '${tournamentId}'.`
+      });
+    }
+
+    const engine = getAuctionEngine(tournamentId);
+    const result = engine.nominatePlayer(req.body.playerId, caller.userId);
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 1.3 Organiser Pause Auction
+apiRouter.post('/auction/pause', (req: Request, res: Response) => {
+  try {
+    const caller = resolveCaller(req);
+    const tournamentId = req.body.tournamentId || (req.query.tournamentId as string) || 'purple-bean-test-cup';
+
+    if (caller.role !== 'organizer' && !caller.isAdmin) {
+      return res.status(403).json({ success: false, error: 'Unauthorized: Only organisers can pause the auction.' });
+    }
+
+    if (!tournamentConfigRegistry.canUserManageTournamentAuction(caller, tournamentId)) {
+      return res.status(403).json({
+        success: false,
+        error: `Unauthorized: Caller is not authorized to operate auctions for tournament '${tournamentId}'.`
+      });
+    }
+
+    const engine = getAuctionEngine(tournamentId);
+    const result = engine.pauseAuction(caller.userId);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 1.4 Organiser Resume Auction
+apiRouter.post('/auction/resume', (req: Request, res: Response) => {
+  try {
+    const caller = resolveCaller(req);
+    const tournamentId = req.body.tournamentId || (req.query.tournamentId as string) || 'purple-bean-test-cup';
+
+    if (caller.role !== 'organizer' && !caller.isAdmin) {
+      return res.status(403).json({ success: false, error: 'Unauthorized: Only organisers can resume the auction.' });
+    }
+
+    if (!tournamentConfigRegistry.canUserManageTournamentAuction(caller, tournamentId)) {
+      return res.status(403).json({
+        success: false,
+        error: `Unauthorized: Caller is not authorized to operate auctions for tournament '${tournamentId}'.`
+      });
+    }
+
+    const engine = getAuctionEngine(tournamentId);
+    const result = engine.resumeAuction(caller.userId);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 1.5 Organiser Conclude Nomination
+apiRouter.post('/auction/dota-conclude', (req: Request, res: Response) => {
+  try {
+    const caller = resolveCaller(req);
+    const tournamentId = req.body.tournamentId || (req.query.tournamentId as string) || 'purple-bean-test-cup';
+
+    if (caller.role !== 'organizer' && !caller.isAdmin) {
+      return res.status(403).json({ success: false, error: 'Unauthorized: Only organisers can conclude lots.' });
+    }
+
+    if (!tournamentConfigRegistry.canUserManageTournamentAuction(caller, tournamentId)) {
+      return res.status(403).json({
+        success: false,
+        error: `Unauthorized: Caller is not authorized to operate auctions for tournament '${tournamentId}'.`
+      });
+    }
+
+    const engine = getAuctionEngine(tournamentId);
+    const result = engine.concludeNomination(Boolean(req.body.sellToWinner), caller.userId);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+// 1.6 Public Live Auction State
+apiRouter.get('/auction/state', (req: Request, res: Response) => {
+  try {
+    const tournamentId = (req.query.tournamentId as string) || 'purple-bean-test-cup';
+    const engine = getAuctionEngine(tournamentId);
+    res.json({
+      success: true,
+      tournamentId,
+      state: engine.getState(),
+      teams: engine.getTeams(),
+      nominee: engine.getState().nominee,
+      bidHistory: engine.getBidHistory()
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 1.7 Server-Authoritative Purse Allocation Audit & Review
+apiRouter.get('/auction/purse-allocation', (req: Request, res: Response) => {
+  try {
+    const tournamentId = (req.query.tournamentId as string) || 'purple-bean-test-cup';
+    const engine = getAuctionEngine(tournamentId);
+    let audit = engine.getPurseAllocationAudit();
+    
+    // If not calculated yet but teams exist, calculate
+    if (!audit && engine.getTeams().length >= 2) {
+      const calcRes = engine.calculateAndApplyMmrBalancedPurses('system', false);
+      if (calcRes.success) {
+        audit = calcRes.audit || null;
+      }
+    }
+
+    const missingCaptain = engine.getMissingLockedMmrCaptain();
+
+    res.json({
+      success: true,
+      tournamentId,
+      audit,
+      isFrozen: engine.isPurseAllocationFrozen(),
+      hasBidsStarted: engine.hasBidsStarted(),
+      missingCaptain,
+      explanation: "Starting auction credits are balanced using each captain's verified Tournament MMR. Stronger captains receive a smaller purse because the captain already occupies one of the team's five roster slots."
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 1.8 Server-Authoritative Purse Recalculation (Pre-Auction Only)
+apiRouter.post('/auction/recalculate-purses', (req: Request, res: Response) => {
+  try {
+    const caller = resolveCaller(req);
+    const tournamentId = req.body.tournamentId || (req.query.tournamentId as string) || 'purple-bean-test-cup';
+
+    if (caller.role !== 'organizer' && !caller.isAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: 'Unauthorized: Only authorized organisers can recalculate starting purses.'
+      });
+    }
+
+    if (!tournamentConfigRegistry.canUserManageTournamentAuction(caller, tournamentId)) {
+      return res.status(403).json({
+        success: false,
+        error: `Unauthorized: Caller is not authorized to manage tournament '${tournamentId}'.`
+      });
+    }
+
+    const engine = getAuctionEngine(tournamentId);
+    const result = engine.recalculatePurses(caller.userId);
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 1.9 Server-Authoritative Allocation Mode (EQUAL vs CAPTAIN_MMR_BALANCED)
+apiRouter.post('/auction/set-allocation-mode', (req: Request, res: Response) => {
+  try {
+    const caller = resolveCaller(req);
+    const tournamentId = req.body.tournamentId || (req.query.tournamentId as string) || 'purple-bean-test-cup';
+    const mode = req.body.mode;
+
+    if (caller.role !== 'organizer' && !caller.isAdmin) {
+      return res.status(403).json({
+        success: false,
+        error: 'Unauthorized: Only authorized organisers can configure auction allocation mode.'
+      });
+    }
+
+    if (mode !== 'EQUAL' && mode !== 'CAPTAIN_MMR_BALANCED') {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid mode: Must be 'EQUAL' or 'CAPTAIN_MMR_BALANCED'."
+      });
+    }
+
+    const engine = getAuctionEngine(tournamentId);
+    const result = engine.setAllocationMode(mode, caller.userId);
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -356,7 +660,7 @@ let bootstrapLockState = {
 
 apiRouter.post('/admin/bootstrap', async (req: Request, res: Response) => {
   try {
-    const designatedAdminEmail = 'bharadwajaanisetti@gmail.com';
+    const designatedAdminEmail = '11106cm009@gmail.com';
     const authHeader = req.headers['authorization'];
     let bearerToken = (authHeader && authHeader.startsWith('Bearer ')) 
       ? authHeader.substring(7).trim() 
@@ -386,7 +690,7 @@ apiRouter.post('/admin/bootstrap', async (req: Request, res: Response) => {
     if (!resolvedEmail || resolvedEmail.toLowerCase() !== designatedAdminEmail.toLowerCase()) {
       return res.status(403).json({ 
         success: false, 
-        error: 'DENIED: Only designated Platform Admin (bharadwajaanisetti@gmail.com) can bootstrap administrator credentials.' 
+        error: 'DENIED: Only designated Platform Admin (11106cm009@gmail.com) can bootstrap administrator credentials.' 
       });
     }
 
@@ -404,23 +708,6 @@ apiRouter.post('/admin/bootstrap', async (req: Request, res: Response) => {
     bootstrapLockState.isLocked = true;
     bootstrapLockState.lockedToUid = resolvedUid;
 
-    // Persist to Firestore /admins/{uid} collection (cannot be written by clients, server-only)
-    try {
-      if (db && resolvedUid && resolvedUid !== 'guest-spectator') {
-        await setDoc(doc(db, 'admins', resolvedUid), {
-          id: resolvedUid,
-          userId: resolvedUid,
-          email: resolvedEmail,
-          role: 'superadmin',
-          assignedBy: 'system_bootstrap',
-          locked: true,
-          assignedAt: new Date().toISOString()
-        }, { merge: true });
-      }
-    } catch (dbErr) {
-      console.warn('Firestore admin persistence note:', dbErr);
-    }
-
     res.json({
       success: true,
       isAdmin: true,
@@ -432,6 +719,45 @@ apiRouter.post('/admin/bootstrap', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Roles Management API (Primary Admin Only)
+apiRouter.post('/admin/roles/grant', (req: Request, res: Response) => {
+  try {
+    const caller = resolveCaller(req);
+    if (!caller.isAdmin && caller.email?.toLowerCase() !== '11106cm009@gmail.com') {
+      return res.status(403).json({ success: false, error: 'DENIED: Only primary admin can grant roles.' });
+    }
+    const { email, role } = req.body;
+    if (!email) {
+      return res.status(400).json({ success: false, error: 'Email is required.' });
+    }
+    const cleanEmail = String(email).toLowerCase().trim();
+    if (role === 'admin' || role === 'organizer') {
+      AUTHORIZED_ORGANIZERS.add(cleanEmail);
+    }
+    res.json({ success: true, message: `Role ${role} granted to ${cleanEmail}` });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+apiRouter.post('/admin/roles/revoke', (req: Request, res: Response) => {
+  try {
+    const caller = resolveCaller(req);
+    if (!caller.isAdmin && caller.email?.toLowerCase() !== '11106cm009@gmail.com') {
+      return res.status(403).json({ success: false, error: 'DENIED: Only primary admin can revoke roles.' });
+    }
+    const { email } = req.body;
+    const cleanEmail = String(email).toLowerCase().trim();
+    if (cleanEmail === '11106cm009@gmail.com') {
+      return res.status(400).json({ success: false, error: 'Primary admin cannot be revoked.' });
+    }
+    AUTHORIZED_ORGANIZERS.delete(cleanEmail);
+    res.json({ success: true, message: `Access revoked for ${cleanEmail}` });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

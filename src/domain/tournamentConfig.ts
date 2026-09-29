@@ -6,6 +6,7 @@
  */
 
 import { getGameDefinition, GameDefinition } from './gameDefinitions';
+import { removeUndefinedDeep } from '../utils/sanitizeFirestore';
 
 export type RegistrationMode = 'INDIVIDUAL' | 'PREMADE_TEAM';
 export type TeamFormationMode = 'AUCTION' | 'DRAFT' | 'ORGANIZER_ASSIGNMENT' | 'PREMADE';
@@ -30,6 +31,8 @@ export interface TournamentConfig {
     locationType: 'ONLINE' | 'LAN';
     city?: string;
     bannerUrl?: string;
+    isDevelopment?: boolean;
+    visibility?: 'PUBLIC' | 'DEVELOPMENT' | 'UNLISTED' | 'DRAFT' | 'PRIVATE';
   };
   registration: {
     registrationMode: RegistrationMode;
@@ -54,6 +57,12 @@ export interface TournamentConfig {
   };
   auction?: {
     enabled: boolean;
+    creditAllocationMode?: 'EQUAL' | 'CAPTAIN_MMR_BALANCED';
+    baseCredits?: number;
+    adjustmentRate?: number;
+    minimumCredits?: number;
+    maximumCredits?: number;
+    creditRounding?: number;
     startingCredits: number;
     minimumBid: number;
     bidIncrement: number;
@@ -66,6 +75,7 @@ export interface TournamentConfig {
     defaultSeriesFormat: SeriesFormatType;
     roundOverrides?: Record<string, SeriesFormatType>;
     seedingMethod: SeedingMethod;
+    grandFinalResetEnabled?: boolean;
     groupsConfig?: {
       groupCount: number;
       advancePerGroup: number;
@@ -125,6 +135,12 @@ export function createDefaultTournamentConfig(gameIdentifier = 'dota2'): Tournam
     },
     auction: {
       enabled: true,
+      creditAllocationMode: 'CAPTAIN_MMR_BALANCED',
+      baseCredits: 1000,
+      adjustmentRate: 0.25,
+      minimumCredits: 800,
+      maximumCredits: 1200,
+      creditRounding: 10,
       startingCredits: 1000,
       minimumBid: 10,
       bidIncrement: 10,
@@ -164,6 +180,12 @@ export function validateTournamentConfig(config: TournamentConfig): { valid: boo
 
   if (!config.identity?.gameId) {
     errors.push('Game selection is required.');
+  }
+
+  if (config.identity?.locationType === 'LAN') {
+    if (!config.identity?.city || !config.identity.city.trim()) {
+      errors.push('City is required for LAN tournaments.');
+    }
   }
 
   if (config.teamFormation.numberOfTeams < 2) {
@@ -231,4 +253,24 @@ export function formatINR(amount: number): string {
     currency: 'INR',
     maximumFractionDigits: 0
   }).format(amount);
+}
+
+export function normalizeTournamentConfig(config: TournamentConfig): TournamentConfig {
+  const sanitized = removeUndefinedDeep(config);
+  if (sanitized.identity) {
+    if (sanitized.identity.locationType === 'ONLINE') {
+      if (!sanitized.identity.city || !sanitized.identity.city.trim()) {
+        delete sanitized.identity.city;
+      } else {
+        sanitized.identity.city = sanitized.identity.city.trim();
+      }
+    } else if (sanitized.identity.locationType === 'LAN') {
+      if (sanitized.identity.city && sanitized.identity.city.trim()) {
+        sanitized.identity.city = sanitized.identity.city.trim();
+      } else {
+        delete sanitized.identity.city;
+      }
+    }
+  }
+  return sanitized;
 }

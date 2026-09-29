@@ -283,6 +283,14 @@ export class GenericTournamentEngine {
     this.notify();
   }
 
+  public registerTeam(team: GenericTournamentTeam): void {
+    const existing = this.teams.find(t => t.id === team.id);
+    if (!existing) {
+      this.teams.push(team);
+    }
+    this.notify();
+  }
+
   public getTeams(): GenericTournamentTeam[] {
     return [...this.teams];
   }
@@ -375,6 +383,10 @@ export class GenericTournamentEngine {
     return structure;
   }
 
+  public generateTournamentStructure(manualOrder?: string[]): CompetitionStructure {
+    return this.generateCompetition(manualOrder);
+  }
+
   public getCompetition(): CompetitionStructure | null {
     return this.competition;
   }
@@ -436,6 +448,39 @@ export class GenericTournamentEngine {
       if (nextLoserMatch) {
         if (match.loserNextSlot === 'teamA') nextLoserMatch.teamA = loserCompTeam;
         else nextLoserMatch.teamB = loserCompTeam;
+      }
+    }
+
+    // Double Elimination Grand Final Reset Handling
+    if (match.round === 'Grand Final' && this.config.competition.format === 'DOUBLE_ELIMINATION') {
+      const isGrandFinalResetEnabled = this.config.competition.grandFinalResetEnabled !== false;
+      // If teamB (Lower bracket winner) defeats teamA (Upper bracket winner in Grand Final 1)
+      if (winnerCompTeam.id === match.teamB.id && isGrandFinalResetEnabled) {
+        const resetMatchId = `${match.id}-reset`;
+        if (!this.matches.some(m => m.id === resetMatchId)) {
+          const resetMatch: CompetitionMatch = {
+            id: resetMatchId,
+            tournamentId: this.config.identity.tournamentId,
+            round: 'Grand Final Reset',
+            bracketType: 'FINAL',
+            matchNumber: match.matchNumber + 1,
+            seriesFormat: match.seriesFormat,
+            teamA: match.teamA,
+            teamB: match.teamB,
+            scoreA: 0,
+            scoreB: 0,
+            status: 'UPCOMING'
+          };
+          this.matches.push(resetMatch);
+          if (this.competition) {
+            this.competition.allMatches.push(resetMatch);
+            const finalRound = this.competition.rounds.find((r: any) => r.name === 'Grand Final' || r.bracketType === 'FINAL');
+            if (finalRound) {
+              finalRound.matches.push(resetMatch);
+            }
+          }
+          this.logAudit('grand_final_reset_created', `Lower bracket winner ${winnerCompTeam.name} forced Grand Final Reset against ${loserCompTeam.name}!`);
+        }
       }
     }
 

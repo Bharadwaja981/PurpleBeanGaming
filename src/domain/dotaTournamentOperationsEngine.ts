@@ -603,7 +603,17 @@ export class DotaTournamentOperationsEngine {
     caller: ServerCallerContext
   ): DisqualificationImpactPreview {
     if (!caller.isAdmin && caller.role !== 'organizer') {
-      throw new Error('Unauthorized: Only tournament organizers and admins can preview disqualifications.');
+      return {
+        tournamentId,
+        targetId,
+        targetType,
+        activeRosterImpact: ['Unauthorized: Disqualification preview only accessible by organizers.'],
+        upcomingMatchesImpacted: [],
+        completedMatchesRetained: [],
+        bracketImpactDescription: 'None (Unauthorized)',
+        standingsImpactDescription: 'None (Unauthorized)',
+        consequencePolicyApplied: 'FORFEIT_FUTURE_RETAIN_PAST'
+      };
     }
 
     let activeRoster: string[] = [];
@@ -775,7 +785,7 @@ export class DotaTournamentOperationsEngine {
 
   public getPlatformSanctions(caller: ServerCallerContext): PlatformSanction[] {
     if (!caller.isAdmin) {
-      throw new Error('Unauthorized: Platform sanctions are restricted to Platform Administrators.');
+      throw new Error('Unauthorized: Platform sanctions are strictly restricted to administrators.');
     }
     return [...this.platformSanctions];
   }
@@ -813,7 +823,7 @@ export class DotaTournamentOperationsEngine {
     }
   ): AuditRecord[] {
     if (!caller.isAdmin && caller.role !== 'organizer') {
-      throw new Error('Unauthorized: Audit ledger is only accessible by tournament organizers and platform administrators.');
+      throw new Error('Unauthorized: Internal audit logs are strictly restricted to administrators and organizers.');
     }
 
     let records = [...this.auditLogs];

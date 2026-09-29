@@ -18,11 +18,14 @@ import {
   Radio,
   Gamepad2,
   MoreHorizontal,
-  ExternalLink
+  ExternalLink,
+  Key,
+  Loader2,
+  Zap
 } from 'lucide-react';
 import { ViewType, CompetitiveGame, Match, Tournament } from '../types/tournament';
 import { PurpleBeanLogo } from './PurpleBeanLogo';
-import { tournamentService, UserSession } from '../services/firebaseService';
+import { tournamentService, UserSession, PRIMARY_PROJECT_ADMIN_EMAIL } from '../services/firebaseService';
 import { gameManagementEngine } from '../domain/gameManagementEngine';
 import { 
   MenuDropdown, 
@@ -44,6 +47,8 @@ interface NavigationProps {
   selectedGame?: CompetitiveGame;
   onSelectGame?: (game: CompetitiveGame) => void;
   onOpenBrandKit?: () => void;
+  onOpenLoadingSystem?: () => void;
+  onOpenAdminCredentials?: () => void;
 }
 
 export function Navigation({
@@ -57,7 +62,9 @@ export function Navigation({
   onCycleTheme,
   selectedGame = 'All Games',
   onSelectGame,
-  onOpenBrandKit
+  onOpenBrandKit,
+  onOpenLoadingSystem,
+  onOpenAdminCredentials
 }: NavigationProps) {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserSession>(() => tournamentService.getCurrentUser());
@@ -100,6 +107,8 @@ export function Navigation({
     return opts;
   }, [activeGames]);
 
+  const [isSigningIn, setIsSigningIn] = useState(false);
+
   const handleGameSelect = (gName: string) => {
     if (onSelectGame) {
       onSelectGame(gName as CompetitiveGame);
@@ -107,11 +116,28 @@ export function Navigation({
   };
 
   const handleGoogleSignIn = async () => {
-    await tournamentService.signInWithGoogle();
+    if (isSigningIn) return;
+    setIsSigningIn(true);
+    try {
+      const res = await tournamentService.signInWithGoogle();
+      if (res && res.user && res.user.email) {
+        setMobileDrawerOpen(false);
+      }
+    } catch (e) {
+      console.warn('Sign in note:', e);
+    } finally {
+      setIsSigningIn(false);
+    }
   };
 
   const handleSignOut = async () => {
-    await tournamentService.signOut();
+    try {
+      await tournamentService.signOut();
+    } catch (e) {
+      console.warn('Sign out warning:', e);
+    }
+    setMobileDrawerOpen(false);
+    onNavigate('home');
   };
 
   const primaryNavItems: Array<{ view: ViewType; label: string; icon: typeof Trophy }> = [
@@ -124,10 +150,10 @@ export function Navigation({
 
   const secondaryNavItems: Array<{ view: ViewType; label: string; icon: typeof Trophy; badge?: string }> = [
     { view: 'rankings', label: 'Rankings', icon: Award },
-    { view: 'auction', label: 'Auction Desk', icon: Gavel, badge: 'Live Draft' },
   ];
 
   const isOrganiserUser = currentUser.role === 'organizer' || currentUser.isAdmin;
+  const isProjectAdmin = currentUser.isAdmin || (currentUser.email?.toLowerCase().trim() === PRIMARY_PROJECT_ADMIN_EMAIL.toLowerCase());
   const isAuthenticated = currentUser.id !== 'guest-spectator' && Boolean(currentUser.email);
 
   return (
@@ -316,13 +342,6 @@ export function Navigation({
                 onClick={() => onNavigate('rankings')}
               />
               <MenuItem
-                icon={Gavel}
-                label="Captain Auction Desk"
-                badge="Draft"
-                selected={currentView === 'auction'}
-                onClick={() => onNavigate('auction')}
-              />
-              <MenuItem
                 icon={Shield}
                 label="Interactive Bracket Engine"
                 selected={currentView === 'bracket'}
@@ -339,16 +358,6 @@ export function Navigation({
                     badgeColor="bg-[#FFE600] text-black"
                     selected={currentView === 'organiser_dashboard'}
                     onClick={() => onNavigate('organiser_dashboard')}
-                  />
-                </>
-              )}
-              {onOpenBrandKit && (
-                <>
-                  <MenuSeparator />
-                  <MenuItem
-                    icon={Palette}
-                    label="Mascot &amp; Brand Asset Kit"
-                    onClick={onOpenBrandKit}
                   />
                 </>
               )}
@@ -473,16 +482,6 @@ export function Navigation({
                 />
               )}
 
-              {currentUser.role === 'captain' && (
-                <MenuItem
-                  icon={Gavel}
-                  label="Captain Player Auction Desk"
-                  badge="Captain"
-                  badgeColor="bg-[#7C3AED] text-white"
-                  onClick={() => onNavigate('auction')}
-                />
-              )}
-
               {isAuthenticated && (
                 <MenuItem
                   icon={User}
@@ -511,11 +510,13 @@ export function Navigation({
                 onClick={() => onNavigate('players')}
               />
 
-              {onOpenBrandKit && (
+              {isProjectAdmin && onOpenAdminCredentials && (
                 <MenuItem
-                  icon={Palette}
-                  label="Official Mascot &amp; Logo Kit"
-                  onClick={onOpenBrandKit}
+                  icon={Key}
+                  label="Admin Governance &amp; Simulation"
+                  badge="Admin"
+                  badgeColor="bg-[#38EF7D] text-black"
+                  onClick={onOpenAdminCredentials}
                 />
               )}
             </div>
@@ -527,16 +528,23 @@ export function Navigation({
               {!isAuthenticated ? (
                 <button
                   type="button"
+                  disabled={isSigningIn}
                   onClick={handleGoogleSignIn}
-                  className="w-full py-2 px-3 bg-white hover:bg-stone-50 text-black border-2 border-black font-mono text-xs font-black flex items-center justify-center gap-2 shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                  className={`w-full py-2 px-3 bg-white hover:bg-stone-50 text-black border-2 border-black font-mono text-xs font-black flex items-center justify-center gap-2 shadow-[2px_2px_0px_0px_#000] ${
+                    isSigningIn ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
+                  }`}
                 >
-                  <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24">
-                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-                  </svg>
-                  <span>Sign In with Google</span>
+                  {isSigningIn ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-black shrink-0" />
+                  ) : (
+                    <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24">
+                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                    </svg>
+                  )}
+                  <span>{isSigningIn ? 'Connecting...' : 'Sign In with Google'}</span>
                 </button>
               ) : (
                 <MenuItem
@@ -652,18 +660,76 @@ export function Navigation({
                   </button>
                 )}
 
-                {onOpenBrandKit && (
+                {isProjectAdmin && onOpenAdminCredentials && (
                   <button
                     onClick={() => {
-                      onOpenBrandKit();
+                      onOpenAdminCredentials();
                       setMobileDrawerOpen(false);
                     }}
-                    className="w-full py-2 bg-[#F3E8FF] hover:bg-[#FFE600] text-black border-2 border-black shadow-[2px_2px_0px_0px_#000] font-mono text-xs font-black uppercase flex items-center justify-center gap-2 cursor-pointer"
+                    className="w-full py-2 bg-[#FFE600] hover:bg-[#FFDE59] text-black border-2 border-black shadow-[2px_2px_0px_0px_#000] font-mono text-xs font-black uppercase flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    <PurpleBeanLogo size="xs" variant="mascot" />
-                    <span>Official Brand Asset Kit (SVG)</span>
+                    <Key className="w-4 h-4" />
+                    <span>Admin Governance &amp; Simulation</span>
                   </button>
                 )}
+
+                {/* Mobile Drawer Auth Section */}
+                <div className="pt-3 border-t-2 border-black space-y-2">
+                  <div className="p-3 bg-[#FAF8F5] border-2 border-black flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 truncate">
+                      <div className="w-7 h-7 rounded-full bg-[#8B5CF6] text-white flex items-center justify-center font-black text-xs border border-black overflow-hidden shrink-0">
+                        {currentUser.avatarUrl ? (
+                          <img src={currentUser.avatarUrl} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <span>{currentUser.role === 'organizer' ? '👑' : currentUser.role === 'captain' ? '⭐' : '🎮'}</span>
+                        )}
+                      </div>
+                      <div className="truncate">
+                        <div className="font-sans font-black text-xs text-black truncate">
+                          {currentUser.displayName || 'Guest Spectator'}
+                        </div>
+                        <div className="font-mono text-[10px] text-stone-500 truncate">
+                          {currentUser.email || 'Spectator Session'}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 border border-black font-black uppercase bg-[#FFE600] text-black shrink-0">
+                      {currentUser.role.toUpperCase()}
+                    </span>
+                  </div>
+
+                  {!isAuthenticated ? (
+                    <button
+                      type="button"
+                      disabled={isSigningIn}
+                      onClick={handleGoogleSignIn}
+                      className={`w-full py-2.5 bg-white hover:bg-stone-50 text-black border-2 border-black shadow-[2px_2px_0px_0px_#000] font-mono text-xs font-black uppercase flex items-center justify-center gap-2 ${
+                        isSigningIn ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
+                      }`}
+                    >
+                      {isSigningIn ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-black shrink-0" />
+                      ) : (
+                        <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                        </svg>
+                      )}
+                      <span>{isSigningIn ? 'Connecting...' : 'Sign In with Google'}</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleSignOut}
+                      className="w-full py-2.5 bg-[#FF5757] hover:bg-red-600 text-white border-2 border-black shadow-[2px_2px_0px_0px_#000] font-mono text-xs font-black uppercase flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      <span>Sign Out</span>
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>

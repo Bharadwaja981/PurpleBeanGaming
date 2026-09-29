@@ -22,12 +22,15 @@ import {
   HelpCircle,
   AlertCircle
 } from 'lucide-react';
-import { TournamentConfig, validateTournamentConfig, formatINR } from '../domain/tournamentConfig';
+import { TournamentConfig, validateTournamentConfig, formatINR, normalizeTournamentConfig } from '../domain/tournamentConfig';
+import { removeUndefinedDeep } from '../utils/sanitizeFirestore';
 import { getAllGameDefinitions, getGameDefinition } from '../domain/gameDefinitions';
 import { SelectDropdown, DropdownOption } from './ui/Dropdown';
+import { tournamentService } from '../services/firebaseService';
+import { Tournament } from '../types/tournament';
 
 interface TournamentCreationWizardProps {
-  onTournamentCreated: (config: TournamentConfig) => void;
+  onTournamentCreated: (config: TournamentConfig, savedTournament: Tournament) => void;
   onCancel: () => void;
 }
 
@@ -44,7 +47,10 @@ export const TournamentCreationWizard: React.FC<TournamentCreationWizardProps> =
   const [description, setDescription] = useState('');
   const [region, setRegion] = useState('Pan India');
   const [locationType, setLocationType] = useState<'ONLINE' | 'LAN'>('ONLINE');
-  const [city, setCity] = useState('Bengaluru');
+  const [city, setCity] = useState('');
+  const [visibility, setVisibility] = useState<'PUBLIC' | 'DRAFT'>('PUBLIC');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   // Step 2: Entry Mode
   const [registrationMode, setRegistrationMode] = useState<'INDIVIDUAL' | 'PREMADE_TEAM'>('INDIVIDUAL');
@@ -104,18 +110,24 @@ export const TournamentCreationWizard: React.FC<TournamentCreationWizardProps> =
     const p2 = Math.round(totalPrizePoolINR * 0.25);
     const p3 = Math.round(totalPrizePoolINR * 0.15);
 
-    return {
-      identity: {
-        tournamentId,
-        name: name.trim() || `${selectedGameDef.name} Tournament`,
-        gameId: selectedGameDef.id,
-        gameName: selectedGameDef.name,
-        description: description || `Competitive ${selectedGameDef.name} tournament on Purple Bean Gaming.`,
-        region,
-        locationType,
-        city: locationType === 'LAN' ? city : undefined,
-        bannerUrl: selectedGameDef.bannerImage
-      },
+    const identity: TournamentConfig['identity'] = {
+      tournamentId,
+      name: name.trim() || `${selectedGameDef.name} Tournament`,
+      gameId: selectedGameDef.id,
+      gameName: selectedGameDef.name,
+      description: description || `Competitive ${selectedGameDef.name} tournament on Purple Bean Gaming.`,
+      region,
+      locationType,
+      bannerUrl: selectedGameDef.bannerImage,
+      visibility
+    };
+
+    if (city && city.trim()) {
+      identity.city = city.trim();
+    }
+
+    const rawConfig: TournamentConfig = {
+      identity,
       registration: {
         registrationMode,
         openDate,
@@ -171,13 +183,21 @@ export const TournamentCreationWizard: React.FC<TournamentCreationWizardProps> =
         organizerApprovalRequired
       }
     };
+
+    return normalizeTournamentConfig(rawConfig);
   };
 
   const handleNext = () => {
     if (currentStep === 1 && !name.trim()) {
-      alert('Please enter a tournament name to continue.');
+      setSubmitError('Please enter a tournament name to continue.');
       return;
     }
+    if (currentStep === 1 && locationType === 'LAN' && !city.trim()) {
+      setSubmitError('City is required for LAN tournaments.');
+      return;
+    }
+    setSubmitError(null);
+
     // Skip Step 7 (Auction) if not individual auction
     if (currentStep === 6 && (registrationMode === 'PREMADE_TEAM' || teamFormationMode !== 'AUCTION')) {
       setCurrentStep(8);
@@ -189,6 +209,7 @@ export const TournamentCreationWizard: React.FC<TournamentCreationWizardProps> =
   };
 
   const handleBack = () => {
+    setSubmitError(null);
     if (currentStep === 8 && (registrationMode === 'PREMADE_TEAM' || teamFormationMode !== 'AUCTION')) {
       setCurrentStep(6);
       return;
@@ -198,14 +219,29 @@ export const TournamentCreationWizard: React.FC<TournamentCreationWizardProps> =
     }
   };
 
-  const handleFinish = () => {
+  const handleFinish = async () => {
+    setSubmitError(null);
     const config = buildConfig();
     const val = validateTournamentConfig(config);
     if (!val.valid) {
-      alert(`Configuration validation errors:\n• ${val.errors.join('\n• ')}`);
+      setSubmitError(`Configuration validation errors:\n• ${val.errors.join('\n• ')}`);
       return;
     }
-    onTournamentCreated(config);
+
+    setIsSubmitting(true);
+    try {
+      const res = await tournamentService.createTournament(config, visibility);
+      if (!res.success) {
+        setIsSubmitting(false);
+        setSubmitError(res.error || 'Failed to create tournament.');
+        return;
+      }
+      setIsSubmitting(false);
+      onTournamentCreated(config, res.tournament!);
+    } catch (err: any) {
+      setIsSubmitting(false);
+      setSubmitError(err?.message || 'Unexpected error creating tournament.');
+    }
   };
 
   const stepsList = [
@@ -220,6 +256,10 @@ export const TournamentCreationWizard: React.FC<TournamentCreationWizardProps> =
     'Registration',
     'Review'
   ];
+
+  const currentConfig = buildConfig();
+  const reviewValidation = validateTournamentConfig(currentConfig);
+  const isConfigValid = reviewValidation.valid;
 
   return (
     <div className="bg-white border-4 border-black shadow-[8px_8px_0px_0px_#000] p-6 max-w-4xl mx-auto my-6">
@@ -352,10 +392,11 @@ export const TournamentCreationWizard: React.FC<TournamentCreationWizardProps> =
 
               <div>
                 <SelectDropdown
-                  label="Host City"
+                  label={locationType === 'LAN' ? 'Host City (Required for LAN) *' : 'Host City (Optional for Online)'}
                   value={city}
                   onChange={(val) => setCity(val)}
                   options={[
+                    { value: '', label: locationType === 'LAN' ? '-- Select Required Host City --' : '-- No Host City (Remote) --' },
                     { value: 'Bengaluru', label: 'Bengaluru' },
                     { value: 'Mumbai', label: 'Mumbai' },
                     { value: 'Delhi', label: 'Delhi' },
@@ -367,6 +408,11 @@ export const TournamentCreationWizard: React.FC<TournamentCreationWizardProps> =
                   ]}
                   className="w-full"
                 />
+                {locationType === 'LAN' && !city.trim() && (
+                  <p className="text-[11px] text-red-600 font-mono mt-1 font-bold">
+                    * City is required for LAN tournaments.
+                  </p>
+                )}
               </div>
             </div>
 
@@ -379,6 +425,41 @@ export const TournamentCreationWizard: React.FC<TournamentCreationWizardProps> =
                 rows={2}
                 className="w-full border-2 border-black p-2 font-mono text-xs"
               />
+            </div>
+
+            <div>
+              <label className="block font-mono text-xs font-black uppercase mb-1">Tournament Visibility</label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setVisibility('PUBLIC')}
+                  className={`p-3 border-2 font-mono text-xs text-left transition-all cursor-pointer ${
+                    visibility === 'PUBLIC'
+                      ? 'border-black bg-[#FFE600] font-black shadow-[2px_2px_0px_0px_#000]'
+                      : 'border-stone-300 bg-stone-50 hover:border-black font-bold'
+                  }`}
+                >
+                  <div className="font-bold">🌐 Public Circuit</div>
+                  <p className="text-[10px] text-stone-600 mt-0.5 font-normal">
+                    Visible immediately in public tournament directory and home circuit.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setVisibility('DRAFT')}
+                  className={`p-3 border-2 font-mono text-xs text-left transition-all cursor-pointer ${
+                    visibility === 'DRAFT'
+                      ? 'border-black bg-[#FFE600] font-black shadow-[2px_2px_0px_0px_#000]'
+                      : 'border-stone-300 bg-stone-50 hover:border-black font-bold'
+                  }`}
+                >
+                  <div className="font-bold">🔒 Draft / Private</div>
+                  <p className="text-[10px] text-stone-600 mt-0.5 font-normal">
+                    Visible exclusively to you in Organiser Console until you publish.
+                  </p>
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -891,8 +972,17 @@ export const TournamentCreationWizard: React.FC<TournamentCreationWizardProps> =
                 <div className="text-[10px] text-stone-500 uppercase font-black">Identity</div>
                 <div><span className="font-bold">Name:</span> {name || 'Untitled Tournament'}</div>
                 <div><span className="font-bold">Game:</span> {selectedGameDef.name} ({selectedGameDef.competitionType})</div>
-                <div><span className="font-bold">Region:</span> {region} · {locationType}</div>
+                <div>
+                  <span className="font-bold">Region:</span> {region} · {locationType}
+                  {city ? ` (${city})` : locationType === 'LAN' ? ' (No city set)' : ''}
+                </div>
                 <div><span className="font-bold">Prize Pool:</span> {formatINR(totalPrizePoolINR)}</div>
+                <div>
+                  <span className="font-bold">Visibility:</span>{' '}
+                  <span className={visibility === 'PUBLIC' ? 'text-emerald-700 font-black' : 'text-amber-700 font-black'}>
+                    {visibility === 'PUBLIC' ? '🌐 Public Circuit' : '🔒 Draft / Private'}
+                  </span>
+                </div>
               </div>
 
               <div className="p-3 bg-stone-50 border-2 border-black space-y-1.5">
@@ -905,21 +995,53 @@ export const TournamentCreationWizard: React.FC<TournamentCreationWizardProps> =
               </div>
             </div>
 
-            <div className="p-3 bg-emerald-50 border-2 border-emerald-400 font-mono text-xs text-emerald-900">
-              ✓ Ready to publish to Purple Bean Gaming. Organizers will be able to manage registration, verify participants, and run brackets directly in the Organiser Workspace.
-            </div>
+            {isConfigValid ? (
+              <div className="p-3 bg-emerald-50 border-2 border-emerald-400 font-mono text-xs text-emerald-900 flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>✓ Ready to submit to Purple Bean Gaming Firestore. The tournament will be created authoritatively with canonical ID and permissions.</span>
+              </div>
+            ) : (
+              <div className="p-3 bg-amber-50 border-2 border-amber-500 font-mono text-xs text-amber-900 space-y-1.5 shadow-[2px_2px_0px_0px_#000]">
+                <div className="font-black uppercase flex items-center gap-1.5 text-amber-800 text-xs">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                  <span>Configuration Incomplete / Invalid</span>
+                </div>
+                <p className="text-[11px] text-amber-800">
+                  The following requirements must be resolved before creating the tournament:
+                </p>
+                <ul className="list-disc list-inside space-y-0.5 text-amber-950 font-bold pl-1">
+                  {reviewValidation.errors.map((err, idx) => (
+                    <li key={idx}>{err}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         )}
       </div>
+
+      {/* Actionable Error Banner */}
+      {submitError && (
+        <div className="p-4 bg-red-100 border-3 border-red-600 font-mono text-xs text-red-900 space-y-1 mt-4 shadow-[3px_3px_0px_0px_#000]">
+          <div className="font-black uppercase flex items-center gap-2 text-sm text-red-700">
+            <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
+            <span>Tournament Creation Failed</span>
+          </div>
+          <p className="whitespace-pre-line pl-7 font-bold">{submitError}</p>
+          <p className="text-[11px] text-red-800 pl-7 mt-1">
+            Your form settings have been preserved. You can correct configuration values or retry creating the tournament.
+          </p>
+        </div>
+      )}
 
       {/* Navigation Buttons */}
       <div className="flex items-center justify-between border-t-4 border-black pt-4 mt-6">
         <button
           type="button"
           onClick={handleBack}
-          disabled={currentStep === 1}
+          disabled={currentStep === 1 || isSubmitting}
           className={`border-2 border-black px-4 py-2 font-mono text-xs font-black uppercase flex items-center gap-1.5 ${
-            currentStep === 1
+            currentStep === 1 || isSubmitting
               ? 'opacity-40 cursor-not-allowed bg-stone-100'
               : 'hover:bg-stone-100 cursor-pointer shadow-[2px_2px_0px_0px_#000]'
           }`}
@@ -939,10 +1061,17 @@ export const TournamentCreationWizard: React.FC<TournamentCreationWizardProps> =
           <button
             type="button"
             onClick={handleFinish}
-            className="bg-[#7C3AED] hover:bg-purple-700 text-white border-2 border-black px-6 py-2.5 font-mono text-xs font-black uppercase flex items-center gap-1.5 shadow-[4px_4px_0px_0px_#000] cursor-pointer"
+            disabled={!isConfigValid || isSubmitting}
+            className={`border-2 border-black px-6 py-2.5 font-mono text-xs font-black uppercase flex items-center gap-2 shadow-[4px_4px_0px_0px_#000] ${
+              !isConfigValid
+                ? 'bg-stone-300 text-stone-500 cursor-not-allowed opacity-60'
+                : isSubmitting
+                ? 'bg-[#7C3AED] text-white opacity-80 cursor-wait'
+                : 'bg-[#7C3AED] hover:bg-purple-700 text-white cursor-pointer'
+            }`}
           >
-            <Sparkles className="w-4 h-4 text-[#FFE600]" />
-            CREATE TOURNAMENT NOW
+            <Sparkles className={`w-4 h-4 text-[#FFE600] ${isSubmitting ? 'animate-spin' : ''}`} />
+            <span>{isSubmitting ? 'CREATING IN FIRESTORE...' : 'CREATE TOURNAMENT NOW'}</span>
           </button>
         )}
       </div>

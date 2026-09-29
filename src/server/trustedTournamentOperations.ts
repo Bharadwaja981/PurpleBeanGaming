@@ -85,7 +85,7 @@ import {
   PlatformSanctionType
 } from '../domain/dotaTournamentOperationsEngine';
 import { normalizeDotaIdentity } from '../../lib/dota/ids';
-import { db } from '../services/firebaseConfig';
+import { db, isQuotaExhausted, isQuotaError, setQuotaExhausted } from '../services/firebaseConfig';
 import { doc, setDoc } from 'firebase/firestore';
 
 export interface ServerCallerContext {
@@ -1953,7 +1953,7 @@ export class TrustedTournamentServer {
 
     // 3. Persist link in Firebase Firestore
     try {
-      if (db) {
+      if (db && !isQuotaExhausted()) {
         setDoc(
           doc(db, 'linkedDotaMatches', `${payload.matchId}_g${payload.gameNumber}`),
           {
@@ -1966,7 +1966,11 @@ export class TrustedTournamentServer {
             linkedAt: new Date().toISOString()
           },
           { merge: true }
-        ).catch(() => {});
+        ).catch((err) => {
+          if (isQuotaError(err)) {
+            setQuotaExhausted(true);
+          }
+        });
       }
     } catch {
       // Local execution fallback

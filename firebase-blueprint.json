@@ -250,9 +250,46 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "name", "slug", "active", "teamSize"]
+    },
+    "userRole": {
+      "title": "UserRole",
+      "description": "Role-based access assignment granted by primary project admin",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "enum": ["admin", "organizer", "moderator"] },
+        "assignedBy": { "type": "string", "maxLength": 128 },
+        "assignedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["email", "role", "assignedBy", "assignedAt"]
+    },
+    "presence": {
+      "title": "Presence",
+      "description": "Real-time presence heartbeat for auction lobbies",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 120 },
+        "role": { "type": "string", "maxLength": 64 },
+        "lastSeen": { "type": "number" },
+        "online": { "type": "boolean" }
+      },
+      "required": ["userId", "name", "online"]
+    },
+    "testConnection": {
+      "title": "TestConnection",
+      "description": "Health check document for connection verification",
+      "type": "object",
+      "properties": {
+        "status": { "type": "string", "maxLength": 32 }
+      }
     }
   },
   "firestore": {
+    "/user_roles/{roleId}": {
+      "schema": "userRole",
+      "description": "Role-based access control assignments for organizers and moderators"
+    },
     "/games/{gameId}": {
       "schema": "game",
       "description": "Server-backed competitive games configuration"
@@ -304,6 +341,14 @@
     "/admins/{adminId}": {
       "schema": "admin",
       "description": "Platform administrator access directory"
+    },
+    "/auctions/{tournamentId}/presence/{userId}": {
+      "schema": "presence",
+      "description": "Real-time captain and organiser presence in auction lobbies"
+    },
+    "/test/{docId}": {
+      "schema": "testConnection",
+      "description": "Health check probe endpoint for verifying cloud connectivity"
     }
   }
 }

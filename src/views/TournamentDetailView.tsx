@@ -22,16 +22,20 @@ import { DoubleEliminationBracket } from '../components/DoubleEliminationBracket
 import { DraftReplayViewer } from '../components/DraftReplayViewer';
 import { PremadeTeamManagement } from '../components/PremadeTeamManagement';
 import { CompetitionStructureManager } from '../components/CompetitionStructureManager';
+import { AuctionDraft } from '../components/AuctionDraft';
 import { dotaCompetitionEngine } from '../domain/dotaCompetitionEngine';
 import { testCupEngine } from '../domain/testCupEngine';
 import { tournamentService } from '../services/firebaseService';
 import { dotaTournamentOperations } from '../domain/dotaTournamentOperationsEngine';
-import { ViewType } from '../types/tournament';
+import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
+import { getAuctionEngine } from '../domain/dotaAuctionEngine';
+import { DotaTournamentRegistration } from '../domain/dotaPlayerEngine';
+import { Team, ViewType } from '../types/tournament';
 
 interface TournamentDetailViewProps {
   tournamentId?: string;
   onNavigate: (view: ViewType, entityId?: string) => void;
-  onOpenRegister: () => void;
+  onOpenRegister: (tournamentId?: string) => void;
 }
 
 export function TournamentDetailView({
@@ -40,21 +44,26 @@ export function TournamentDetailView({
   onOpenRegister
 }: TournamentDetailViewProps) {
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'matches' | 'bracket' | 'standings' | 'teams' | 'players' | 'stats' | 'rules' | 'announcements' | 'auction_replay' | 'structure'
+    'overview' | 'matches' | 'bracket' | 'standings' | 'teams' | 'players' | 'stats' | 'rules' | 'announcements' | 'auction' | 'auction_replay' | 'structure'
   >('overview');
 
-  const [allTournaments, setAllTournaments] = useState(() => tournamentService.getTournaments());
+  const [allTournaments, setAllTournaments] = useState(() => tournamentService.getTournaments('All Games', 'All', true));
   const [allTeams, setAllTeams] = useState(() => tournamentService.getTeams());
   const [allPlayers, setAllPlayers] = useState(() => tournamentService.getPlayers());
   const [allMatches, setAllMatches] = useState(() => tournamentService.getMatches());
 
-  const tournament = allTournaments.find((t) => t.id === tournamentId) || allTournaments[0];
+  const tournament = tournamentService.getTournamentById(tournamentId) || allTournaments.find((t) => t.id === tournamentId) || allTournaments[0];
   const isTestCup = tournament?.id === 'purple-bean-test-cup';
+  const isAuctionSupported = tournamentConfigRegistry.isAuctionSupported(tournament?.id);
+  const auctionLifecycle = tournamentConfigRegistry.getAuctionLifecycle(tournament?.id || '');
 
   const [currentUser, setCurrentUser] = useState(() => tournamentService.getCurrentUser());
   const isOrganiser = currentUser.role === 'organizer';
   const [userRegistration, setUserRegistration] = useState(() => 
     tournament ? tournamentService.getUserRegistration(tournament.id, tournamentService.getCurrentUser().id) : undefined
+  );
+  const [tournamentRegistrations, setTournamentRegistrations] = useState<DotaTournamentRegistration[]>(() =>
+    tournament ? tournamentService.getTournamentRegistrations(tournament.id) : []
   );
 
   const [testCupState, setTestCupState] = useState(() => ({
@@ -68,15 +77,28 @@ export function TournamentDetailView({
     const unsub = tournamentService.subscribe(() => {
       const user = tournamentService.getCurrentUser();
       setCurrentUser(user);
-      setAllTournaments(tournamentService.getTournaments());
+      setAllTournaments(tournamentService.getTournaments('All Games', 'All', true));
       setAllTeams(tournamentService.getTeams());
       setAllPlayers(tournamentService.getPlayers());
       setAllMatches(tournamentService.getMatches());
       if (tournament) {
         setUserRegistration(tournamentService.getUserRegistration(tournament.id, user.id));
+        setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
       }
     });
     return unsub;
+  }, [tournament?.id]);
+
+  useEffect(() => {
+    if (tournament?.id) {
+      setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
+      const engine = getAuctionEngine(tournament.id);
+      const unsubAuction = engine.subscribe(() => {
+        setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
+        setAllTeams(tournamentService.getTeams());
+      });
+      return unsubAuction;
+    }
   }, [tournament?.id]);
 
   useEffect(() => {
@@ -97,7 +119,36 @@ export function TournamentDetailView({
     ? testCupState.matches 
     : effectiveMatches.filter((m) => m.tournamentId === tournament?.id);
 
-  const effectiveTeams = allTeams;
+  const auctionEngineTeams = tournament?.id ? getAuctionEngine(tournament.id).getTeams() : [];
+  const mappedAuctionTeams: Team[] = auctionEngineTeams.map(at => ({
+    id: at.id,
+    name: at.name,
+    tag: at.tag,
+    logo: at.logo || '👑',
+    color: at.color || '#7C3AED',
+    bgHex: at.color || '#7C3AED',
+    captainId: at.captainId,
+    captainName: at.captainIgn,
+    city: at.primaryRoster[0]?.city || 'India',
+    region: at.primaryRoster[0]?.region || 'Pan India',
+    country: 'India',
+    flag: '🇮🇳',
+    primaryGame: 'Dota 2',
+    rating: 1500,
+    record: { wins: 0, losses: 0 },
+    tournamentWins: 0,
+    players: at.primaryRoster.map(p => p.userId || p.id),
+    standIn: '',
+    groupPoints: 0,
+    mapsRecord: { won: 0, lost: 0 },
+    form: [],
+    description: `Official franchise squad commanded by captain ${at.captainIgn}. Starting purse: ${at.startingCredits} Credits. Squad: ${at.primaryRoster.length}/5.`,
+    tournamentId: tournament?.id
+  }));
+
+  const effectiveTeams = mappedAuctionTeams.length > 0 
+    ? mappedAuctionTeams 
+    : allTeams.filter(t => !tournament?.id || !(t as any).tournamentId || (t as any).tournamentId === tournament.id);
   const effectivePlayers = allPlayers;
 
   const isPremade = tournament?.id === 'india-dota-open-2026';
@@ -109,7 +160,7 @@ export function TournamentDetailView({
     { id: 'standings', label: 'Standings' },
     { id: 'teams', label: isPremade ? 'Squads & Rosters' : 'Teams' },
     { id: 'players', label: 'Players' },
-    ...(isPremade ? [] : [{ id: 'auction_replay' as const, label: 'Draft Replay' }]),
+    ...(isAuctionSupported ? [{ id: 'auction' as const, label: auctionLifecycle.label }] : []),
     ...(isOrganiser ? [{ id: 'structure' as const, label: 'Structure & Seeding' }] : []),
     { id: 'stats', label: 'Stats' },
     { id: 'rules', label: 'Rules' },
@@ -155,7 +206,7 @@ export function TournamentDetailView({
           </div>
 
           <div className="flex items-center gap-3">
-            {isTestCup && (
+            {isOrganiser && (
               <button
                 onClick={() => onNavigate('organiser_dashboard')}
                 className="bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black px-4 py-2 font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
@@ -175,19 +226,19 @@ export function TournamentDetailView({
               </button>
             )}
 
-            {!isTestCup && !isPremade && (
+            {isAuctionSupported && (
               <button
-                onClick={() => onNavigate('auction')}
+                onClick={() => onNavigate('auction', tournament.id)}
                 className="bg-[#FF70A6] hover:bg-[#fa5fa2] text-black border-2 border-black px-4 py-2 font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
               >
                 <Gavel className="w-3.5 h-3.5" />
-                <span>Draft Room</span>
+                <span>{auctionLifecycle.label}</span>
               </button>
             )}
 
             {userRegistration && userRegistration.status !== 'WITHDRAWN' ? (
               <button
-                onClick={onOpenRegister}
+                onClick={() => onOpenRegister(tournament.id)}
                 className="bg-[#70FFAF] hover:bg-[#5ceba0] text-black border-2 border-black px-4 py-2 font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
               >
                 <CheckCircle className="w-3.5 h-3.5" />
@@ -195,7 +246,7 @@ export function TournamentDetailView({
               </button>
             ) : (
               <button
-                onClick={onOpenRegister}
+                onClick={() => onOpenRegister(tournament.id)}
                 className="bg-[#7C3AED] hover:bg-[#6D28D9] text-white border-2 border-black px-4 py-2 font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
               >
                 <Flame className="w-3.5 h-3.5 text-[#FFE600] fill-current" />
@@ -226,7 +277,7 @@ export function TournamentDetailView({
               )}
             </div>
             <button
-              onClick={onOpenRegister}
+              onClick={() => onOpenRegister(tournament.id)}
               className="bg-white hover:bg-stone-100 border border-black px-2.5 py-1 text-[11px] font-black uppercase cursor-pointer shrink-0 shadow-[1px_1px_0px_0px_#000]"
             >
               View / Manage Entry →
@@ -295,6 +346,55 @@ export function TournamentDetailView({
       {/* 1. OVERVIEW TAB */}
       {activeTab === 'overview' && (
         <div className="space-y-8">
+          {/* Team Formation & Live Auction Guiding Card (Tournament-Scoped) */}
+          {isAuctionSupported && (
+            <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-6 space-y-4 font-mono">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b-2 border-black pb-3">
+                <div>
+                  <span className="text-[10px] font-black uppercase tracking-widest text-[#7C3AED] block">
+                    TEAM FORMATION &amp; ROSTER DRAFT
+                  </span>
+                  <h2 className="text-xl sm:text-2xl font-black uppercase text-black font-sans">
+                    Captain Purse Auction
+                  </h2>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-stone-600">Status:</span>
+                  <span className={`px-2.5 py-0.5 border-2 border-black text-xs font-black uppercase ${
+                    auctionLifecycle.status === 'LIVE' ? 'bg-[#FF5757] text-white animate-pulse' :
+                    auctionLifecycle.status === 'READY' ? 'bg-[#FFE600] text-black' :
+                    auctionLifecycle.status === 'COMPLETED' ? 'bg-[#70FFAF] text-black' :
+                    'bg-stone-200 text-stone-700'
+                  }`}>
+                    {auctionLifecycle.status === 'LIVE' ? 'Live Auction' :
+                     auctionLifecycle.status === 'READY' ? 'Lobby Ready' :
+                     auctionLifecycle.status === 'COMPLETED' ? 'Completed' : 'Waiting for Captain Selection'}
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-xs text-stone-700 leading-relaxed">
+                {auctionLifecycle.description}
+              </p>
+
+              <div className="flex flex-wrap items-center gap-3 pt-1">
+                <button
+                  onClick={() => onNavigate('auction', tournament.id)}
+                  className={`px-5 py-2.5 text-xs font-black uppercase border-2 border-black shadow-[3px_3px_0px_0px_#000] flex items-center gap-2 cursor-pointer transition-all ${
+                    auctionLifecycle.status === 'LIVE' ? 'bg-[#FF5757] hover:bg-red-600 text-white' :
+                    auctionLifecycle.status === 'READY' ? 'bg-[#FFE600] hover:bg-yellow-400 text-black' :
+                    auctionLifecycle.status === 'COMPLETED' ? 'bg-[#70FFAF] hover:bg-emerald-300 text-black' :
+                    'bg-stone-100 hover:bg-stone-200 text-black'
+                  }`}
+                >
+                  <Gavel className="w-4 h-4" />
+                  <span>{auctionLifecycle.ctaText}</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Key Information & Prize Distribution Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             {/* Left: Tournament Description & Key Info (7 Cols) */}
@@ -642,7 +742,7 @@ export function TournamentDetailView({
                     </td>
                     <td className="p-3 text-center">
                       <div className="flex items-center justify-center gap-1">
-                        {team.form.map((res, fIdx) => (
+                        {team.form.map((res: string, fIdx: number) => (
                           <span
                             key={fIdx}
                             className={`w-4 h-4 text-[9px] font-black flex items-center justify-center border border-black ${
@@ -782,32 +882,108 @@ export function TournamentDetailView({
       )}
 
       {/* 6. PLAYERS TAB */}
-      {activeTab === 'players' && (
-        <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] overflow-hidden">
-          <div className="p-4 bg-[#FFE600] border-b-2 border-black font-mono text-xs font-black uppercase flex items-center justify-between">
-            <span>
-              REGISTERED ROSTER POOL ({isTestCup ? testCupState.players.length : effectivePlayers.length} PLAYERS)
-            </span>
-            <button
-              onClick={() => onNavigate(isTestCup ? 'organiser_dashboard' : 'registered_players')}
-              className="bg-black text-white px-2 py-1 hover:bg-stone-800 transition-colors cursor-pointer"
-            >
-              {isTestCup ? 'Organiser Console →' : 'Organiser Directory View →'}
-            </button>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left font-mono text-xs">
-              <thead className="bg-stone-100 border-b-2 border-black uppercase text-[10px] font-black text-black">
-                <tr>
-                  <th className="p-3">Player</th>
-                  <th className="p-3">Primary Role</th>
-                  <th className="p-3">Team</th>
-                  <th className="p-3 text-right">MMR</th>
-                  <th className="p-3 text-center">Auction / Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y border-stone-200">
-                {isTestCup ? (
+      {activeTab === 'players' && (() => {
+        const activeRegistrations = tournamentRegistrations.length > 0 
+          ? tournamentRegistrations 
+          : tournamentService.getTournamentRegistrations(tournament.id);
+        const engine = getAuctionEngine(tournament.id);
+        const totalCount = activeRegistrations.length > 0
+          ? activeRegistrations.length
+          : (isTestCup ? testCupState.players.length : effectivePlayers.length);
+
+        return (
+          <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] overflow-hidden">
+            <div className="p-4 bg-[#FFE600] border-b-2 border-black font-mono text-xs font-black uppercase flex items-center justify-between">
+              <span>
+                REGISTERED ROSTER POOL ({totalCount} CONTENDERS)
+              </span>
+              <button
+                onClick={() => onNavigate(isTestCup ? 'organiser_dashboard' : 'registered_players')}
+                className="bg-black text-white px-2 py-1 hover:bg-stone-800 transition-colors cursor-pointer"
+              >
+                {isTestCup ? 'Organiser Console →' : 'Organiser Directory View →'}
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left font-mono text-xs">
+                <thead className="bg-stone-100 border-b-2 border-black uppercase text-[10px] font-black text-black">
+                  <tr>
+                    <th className="p-3">Player</th>
+                    <th className="p-3">Primary Role</th>
+                    <th className="p-3">Team</th>
+                    <th className="p-3 text-right">MMR</th>
+                    <th className="p-3 text-center">Auction / Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y border-stone-200">
+                  {activeRegistrations.length > 0 ? (
+                    activeRegistrations.map((reg) => {
+                      const isCap = Boolean(reg.isCaptainApproved || reg.interestedInCaptaincy || reg.applyingAsCaptain);
+                      const auctionPlayer = engine.getPlayers().find(p => p.userId === reg.userId);
+                      const assignedTeam = engine.getTeams().find(t => t.captainId === reg.userId || t.primaryRoster.some(p => p.userId === reg.userId));
+                      const isVerified = reg.status === 'VERIFIED';
+                      const mmrVal = reg.tournamentMmr || reg.declaredMmr || 0;
+
+                      return (
+                        <tr key={reg.id} className="hover:bg-[#FFFDE8] transition-colors">
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              <span className="text-lg">{auctionPlayer?.avatar || (isCap ? '👑' : '🎮')}</span>
+                              <div>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-black text-black">{reg.ign}</span>
+                                  {isCap && (
+                                    <span className="bg-[#FFE600] border border-black text-[9px] px-1 font-bold uppercase">
+                                      {assignedTeam?.captainId === reg.userId ? 'Captain' : 'Captain Applicant'}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] text-stone-500 font-normal">
+                                  {reg.city || 'India'}
+                                </span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-3 font-bold text-stone-800">
+                            {reg.primaryRole}
+                            {reg.secondaryRole && <span className="text-[10px] text-stone-500 block">Sec: {reg.secondaryRole}</span>}
+                          </td>
+                          <td className="p-3 font-bold text-stone-700">
+                            {assignedTeam ? assignedTeam.name : (auctionPlayer?.isCaptain ? 'Franchise Captain' : 'Draft Eligible')}
+                          </td>
+                          <td className="p-3 text-right font-black text-black">
+                            <span className="bg-[#FFE600] px-1.5 py-0.5 border border-black inline-block">
+                              {mmrVal.toLocaleString()}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <span className={`px-2 py-0.5 text-[10px] font-black border border-black uppercase ${
+                                auctionPlayer?.status === 'SOLD' ? 'bg-[#70FFAF] text-black' :
+                                auctionPlayer?.status === 'UNSOLD' ? 'bg-[#FF70A6] text-black' :
+                                isVerified ? 'bg-[#70FFAF] text-black' :
+                                reg.status === 'UNDER_REVIEW' ? 'bg-[#BAE6FD] text-black' :
+                                'bg-[#FFE600] text-black'
+                              }`}>
+                                {auctionPlayer?.status || reg.status}
+                              </span>
+                              {isOrganiser && !isVerified && (
+                                <button
+                                  onClick={async () => {
+                                    await tournamentService.verifyRegistration(tournament.id, reg.userId, reg.declaredMmr);
+                                    setAllTournaments(tournamentService.getTournaments());
+                                  }}
+                                  className="bg-[#7C3AED] hover:bg-[#6D28D9] text-white border border-black px-1.5 py-0.5 text-[9px] font-black uppercase cursor-pointer shadow-[1px_1px_0px_0px_#000]"
+                                >
+                                  Verify
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  ) : isTestCup ? (
                   testCupState.players.map((player) => (
                     <tr key={player.id} className="hover:bg-[#FFFDE8] transition-colors">
                       <td className="p-3">
@@ -898,7 +1074,7 @@ export function TournamentDetailView({
             </table>
           </div>
         </div>
-      )}
+      );})()}
 
       {/* 7. STATS TAB */}
       {activeTab === 'stats' && (
@@ -977,9 +1153,9 @@ export function TournamentDetailView({
         )
       )}
 
-      {/* AUCTION REPLAY TAB */}
-      {activeTab === 'auction_replay' && (
-        <DraftReplayViewer />
+      {/* AUCTION & DRAFT TAB */}
+      {(activeTab === 'auction' || activeTab === 'auction_replay') && isAuctionSupported && (
+        <AuctionDraft onNavigate={onNavigate} tournamentId={tournament.id} />
       )}
 
       {/* 8. RULES TAB */}

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { X, CheckCircle, ShieldCheck, Flame, Trophy, MapPin, Gamepad2, AlertCircle, Info, ExternalLink } from 'lucide-react';
+import { X, CheckCircle, ShieldCheck, Flame, Trophy, MapPin, Gamepad2, AlertCircle, Info, ExternalLink, Crown } from 'lucide-react';
 import { IndianCity } from '../types/tournament';
 import { tournamentService } from '../services/firebaseService';
 import { SelectDropdown, DropdownOption } from './ui/Dropdown';
 import { testCupEngine } from '../domain/testCupEngine';
+import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
 import { 
   DOTA_ROLES, 
   DotaRolePosition, 
@@ -35,23 +36,42 @@ const INDIAN_CITIES: IndianCity[] = [
 export function RegistrationModal({
   isOpen,
   onClose,
-  tournamentId = 'purple-bean-test-cup',
-  tournamentName = 'Purple Bean Test Cup',
+  tournamentId = 'auction-basic-test-1',
+  tournamentName = 'Auction Basic Test 1',
   onNavigateToProfile
 }: RegistrationModalProps) {
   const currentUser = tournamentService.getCurrentUser();
   const playerProfile = tournamentService.getDotaPlayer(currentUser.id);
+
+  const [currentTourneyId, setCurrentTourneyId] = useState(tournamentId || 'auction-basic-test-1');
+
+  useEffect(() => {
+    if (tournamentId) {
+      setCurrentTourneyId(tournamentId);
+    }
+  }, [tournamentId]);
+
+  const activeRegistrations = tournamentService.getTournamentRegistrations(currentTourneyId).filter(
+    r => r.status !== 'WITHDRAWN' && r.status !== 'REJECTED'
+  );
+  const isTournamentFull = activeRegistrations.length >= 10;
 
   const [inGameId, setInGameId] = useState(playerProfile?.username || 'PhantomLancer#IN');
   const [declaredMmr, setDeclaredMmr] = useState(String(playerProfile?.declaredMmr || 7550));
   const [primaryRole, setPrimaryRole] = useState<DotaRolePosition>(playerProfile?.primaryRole || 'Position 1 — Carry');
   const [secondaryRole, setSecondaryRole] = useState<DotaRolePosition>(playerProfile?.secondaryRole || 'Position 2 — Mid');
   const [city, setCity] = useState<IndianCity>((playerProfile?.city as IndianCity) || 'Bengaluru');
+  const [interestedInCaptaincy, setInterestedInCaptaincy] = useState(false);
+  const [captainNotes, setCaptainNotes] = useState('');
   const [acceptedRules, setAcceptedRules] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [existingReg, setExistingReg] = useState<DotaTournamentRegistration | undefined>(undefined);
+
+  const isAuctionTournament = tournamentConfigRegistry.isAuctionSupported(currentTourneyId) ||
+    currentTourneyId.toLowerCase().includes('auction') ||
+    currentTourneyId === '2-team-auction-test';
 
   // Evidence submission state
   const [evidenceType, setEvidenceType] = useState<EvidenceType>('MMR_SCREENSHOT');
@@ -60,10 +80,14 @@ export function RegistrationModal({
   const [isSubmittingEvidence, setIsSubmittingEvidence] = useState(false);
   const [evidenceFeedback, setEvidenceFeedback] = useState<string | null>(null);
 
+  // Captain Interest update state
+  const [isUpdatingCaptainInterest, setIsUpdatingCaptainInterest] = useState(false);
+  const [captainInterestFeedback, setCaptainInterestFeedback] = useState<string | null>(null);
+
   // Sync state when opened or user switches
   useEffect(() => {
     if (isOpen) {
-      const reg = tournamentService.getUserRegistration(tournamentId, currentUser.id);
+      const reg = tournamentService.getUserRegistration(currentTourneyId, currentUser.id);
       setExistingReg(reg);
       const player = tournamentService.getDotaPlayer(currentUser.id);
       if (player) {
@@ -75,10 +99,17 @@ export function RegistrationModal({
           setCity(player.city as IndianCity);
         }
       }
+      if (reg) {
+        setInterestedInCaptaincy(Boolean(reg.interestedInCaptaincy || reg.applyingAsCaptain));
+        setCaptainNotes(reg.captainNotes || reg.captainHistory || '');
+      } else {
+        setInterestedInCaptaincy(false);
+        setCaptainNotes('');
+      }
       setValidationError(null);
       setSubmitted(false);
     }
-  }, [isOpen, tournamentId, currentUser.id]);
+  }, [isOpen, currentTourneyId, currentUser.id]);
 
   if (!isOpen) return null;
 
@@ -118,8 +149,10 @@ export function RegistrationModal({
         ? 'West India'
         : 'North India';
 
+      const hasCaptainInterest = isAuctionTournament ? interestedInCaptaincy : false;
+
       const res = await tournamentService.submitTournamentRegistration({
-        tournamentId,
+        tournamentId: currentTourneyId,
         userId: currentUser.id,
         ign: inGameId.trim(),
         primaryRole,
@@ -127,7 +160,11 @@ export function RegistrationModal({
         declaredMmr: parsedMmr,
         rulesAccepted: true,
         city,
-        region
+        region,
+        interestedInCaptaincy: hasCaptainInterest,
+        applyingAsCaptain: hasCaptainInterest,
+        captainInterestTimestamp: hasCaptainInterest ? new Date().toISOString() : undefined,
+        captainNotes: hasCaptainInterest ? captainNotes.trim() : undefined
       });
 
       if (!res.success) {
@@ -137,7 +174,7 @@ export function RegistrationModal({
       }
 
       // 2. Backward compatibility with Test Cup engine if applicable
-      if (tournamentId.includes('test-cup') || tournamentName.includes('Test Cup')) {
+      if (currentTourneyId.includes('test-cup') || tournamentName.includes('Test Cup')) {
         try {
           testCupEngine.submitRegistration({
             username: inGameId.trim(),
@@ -169,7 +206,7 @@ export function RegistrationModal({
 
     setIsSubmitting(true);
     try {
-      const res = await tournamentService.withdrawTournamentRegistration(tournamentId, currentUser.id);
+      const res = await tournamentService.withdrawTournamentRegistration(currentTourneyId, currentUser.id);
       if (res.success && res.registration) {
         setExistingReg(res.registration);
       } else {
@@ -192,7 +229,7 @@ export function RegistrationModal({
     setIsSubmittingEvidence(true);
     setEvidenceFeedback(null);
     try {
-      const res = await tournamentService.submitRegistrationEvidence(tournamentId, currentUser.id, {
+      const res = await tournamentService.submitRegistrationEvidence(currentTourneyId, currentUser.id, {
         type: evidenceType,
         fileUrl: evidenceUrl.trim() || undefined,
         description: evidenceDescription.trim()
@@ -210,6 +247,26 @@ export function RegistrationModal({
       setEvidenceFeedback(err.message || 'Failed to submit evidence.');
     } finally {
       setIsSubmittingEvidence(false);
+    }
+  };
+
+  const handleToggleCaptainInterest = async () => {
+    if (!existingReg) return;
+    setIsUpdatingCaptainInterest(true);
+    setCaptainInterestFeedback(null);
+    const newInterest = !Boolean(existingReg.interestedInCaptaincy || existingReg.applyingAsCaptain);
+    try {
+      const res = await tournamentService.updateCaptainInterest(currentTourneyId, currentUser.id, newInterest);
+      if (res.success && res.registration) {
+        setExistingReg(res.registration);
+        setCaptainInterestFeedback(newInterest ? '✓ You registered your interest in becoming a captain.' : '✓ Captain interest withdrawn.');
+      } else {
+        setCaptainInterestFeedback(res.error || 'Failed to update captain interest.');
+      }
+    } catch (e: any) {
+      setCaptainInterestFeedback(e.message || 'Failed to update captain interest.');
+    } finally {
+      setIsUpdatingCaptainInterest(false);
     }
   };
 
@@ -231,6 +288,34 @@ export function RegistrationModal({
           >
             <X className="w-4 h-4" />
           </button>
+        </div>
+
+        {/* Tournament Target Selector */}
+        <div className="bg-[#FFF9E6] border-b-2 border-black px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs font-mono shrink-0">
+          <div className="flex items-center gap-2">
+            <span className="font-black uppercase text-[10px] text-stone-600">Tournament:</span>
+            <span className="font-bold text-black">{tournamentService.getTournamentBySlug(currentTourneyId)?.name || tournamentName || 'Tournament'}</span>
+            <span className={`px-2 py-0.5 text-[10px] font-black border border-black uppercase ${
+              isTournamentFull ? 'bg-[#FF5757] text-white' : 'bg-[#70FFAF] text-black'
+            }`}>
+              {activeRegistrations.length}/10 Slots {isTournamentFull ? '(FULL)' : `(${Math.max(0, 10 - activeRegistrations.length)} open)`}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={currentTourneyId}
+              onChange={(e) => setCurrentTourneyId(e.target.value)}
+              className="bg-white border-2 border-black px-2 py-1 text-xs font-bold text-black cursor-pointer shadow-[1px_1px_0px_0px_#000]"
+            >
+              {tournamentService.getTournaments().length > 0 ? (
+                tournamentService.getTournaments().map(t => (
+                  <option key={t.id} value={t.id}>{t.name} ({t.game})</option>
+                ))
+              ) : (
+                <option value={currentTourneyId || 'tournament'}>{tournamentName || 'Tournament'}</option>
+              )}
+            </select>
+          </div>
         </div>
 
         {/* Existing Active Registration Display */}
@@ -283,6 +368,57 @@ export function RegistrationModal({
                   <span className="font-bold text-black truncate block">{tournamentName}</span>
                 </div>
               </div>
+
+              {/* Captain Candidate Status */}
+              {isAuctionTournament && (
+                <div className="bg-white border-2 border-black p-3.5 space-y-2.5 shadow-[2px_2px_0px_0px_#000]">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold flex items-center gap-1.5 text-stone-800 text-xs">
+                      <Crown className="w-4 h-4 text-[#7C3AED]" />
+                      Captain Candidate Status:
+                    </span>
+                    {existingReg.isCaptainApproved ? (
+                      <span className="bg-[#70FFAF] text-black border border-black px-2 py-0.5 text-[10px] font-black uppercase">
+                        ✓ SELECTED AS CAPTAIN
+                      </span>
+                    ) : (existingReg.interestedInCaptaincy || existingReg.applyingAsCaptain) ? (
+                      <span className="bg-[#FFE600] text-black border border-black px-2 py-0.5 text-[10px] font-black uppercase">
+                        CAPTAIN INTEREST SUBMITTED
+                      </span>
+                    ) : (
+                      <span className="bg-stone-200 text-stone-600 border border-black px-2 py-0.5 text-[10px] font-black uppercase">
+                        NOT SELECTED / CONTENDER
+                      </span>
+                    )}
+                  </div>
+
+                  {captainInterestFeedback && (
+                    <div className="text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-300 p-2">
+                      {captainInterestFeedback}
+                    </div>
+                  )}
+
+                  {!existingReg.isCaptainApproved && (
+                    <div className="flex items-center justify-between border-t border-black/10 pt-2 text-xs">
+                      <span className="text-[11px] text-stone-600">
+                        Interested in Being a Captain: <strong>{(existingReg.interestedInCaptaincy || existingReg.applyingAsCaptain) ? 'ON' : 'OFF'}</strong>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleToggleCaptainInterest}
+                        disabled={isUpdatingCaptainInterest}
+                        className={`px-2.5 py-1 font-mono text-[10px] font-black uppercase border border-black cursor-pointer shadow-[2px_2px_0px_0px_#000] ${
+                          (existingReg.interestedInCaptaincy || existingReg.applyingAsCaptain)
+                            ? 'bg-[#FF5757] text-white hover:bg-red-700'
+                            : 'bg-[#70FFAF] text-black hover:bg-emerald-400'
+                        }`}
+                      >
+                        {isUpdatingCaptainInterest ? 'Updating...' : (existingReg.interestedInCaptaincy || existingReg.applyingAsCaptain) ? 'Withdraw Interest' : 'Express Interest'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {existingReg.tournamentMmr && (
                 <div className="bg-[#70FFAF]/30 border-2 border-black p-3 text-xs flex items-center justify-between">
@@ -483,6 +619,17 @@ export function RegistrationModal({
               </p>
             </div>
 
+            {/* Capacity reached banner */}
+            {isTournamentFull && (
+              <div className="bg-[#FF5757]/15 border-2 border-[#FF5757] p-3 text-[#FF5757] flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold text-xs block">Tournament is Full (10/10 Slots Filled)</span>
+                  <span className="text-[11px]">Cannot join more than 10 participants. The 8 dummy contenders and 2 captain/friend slots are filled.</span>
+                </div>
+              </div>
+            )}
+
             {/* Error banner */}
             {validationError && (
               <div className="bg-[#FF5757]/15 border-2 border-[#FF5757] p-3 text-[#FF5757] flex items-start gap-2">
@@ -634,6 +781,43 @@ export function RegistrationModal({
               />
             </div>
 
+            {/* Captain Interest Option for Auction Tournaments */}
+            {isAuctionTournament && (
+              <div className="bg-[#FFF9E6] border-2 border-black p-4 space-y-2.5 shadow-[2px_2px_0px_0px_#000]">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={interestedInCaptaincy}
+                    onChange={(e) => setInterestedInCaptaincy(e.target.checked)}
+                    className="mt-0.5 accent-[#7C3AED] w-4 h-4 cursor-pointer"
+                  />
+                  <div>
+                    <span className="font-black text-black uppercase text-xs block">
+                      I AM INTERESTED IN BEING A CAPTAIN
+                    </span>
+                    <span className="text-[11px] text-stone-600 block mt-0.5 leading-snug">
+                      Interested in leading a team? Select this option to enter the Captain Candidate pool. Final captains are selected by the tournament organiser.
+                    </span>
+                  </div>
+                </label>
+
+                {interestedInCaptaincy && (
+                  <div className="pt-2 border-t border-black/15">
+                    <label className="block text-[10px] font-bold uppercase text-stone-600 mb-1">
+                      Captain Experience &amp; Leadership Notes (Optional)
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={captainNotes}
+                      onChange={(e) => setCaptainNotes(e.target.value)}
+                      placeholder="e.g. 5 years competitive drafting experience, previously captained team in local Bangalore LANs..."
+                      className="w-full bg-white border border-black p-2 text-xs font-mono"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Rules Acknowledgement */}
             <div className="bg-stone-50 border-2 border-black p-3 space-y-2">
               <label className="flex items-start gap-2.5 cursor-pointer text-[11px]">
@@ -653,15 +837,21 @@ export function RegistrationModal({
             {/* Submit CTA */}
             <button
               type="submit"
-              disabled={isSubmitting || !acceptedRules || primaryRole === secondaryRole}
+              disabled={isSubmitting || !acceptedRules || primaryRole === secondaryRole || isTournamentFull}
               className={`w-full py-3 border-[3px] border-black font-mono text-xs font-black uppercase tracking-tight shadow-[4px_4px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                isSubmitting || !acceptedRules || primaryRole === secondaryRole
+                isSubmitting || !acceptedRules || primaryRole === secondaryRole || isTournamentFull
                   ? 'bg-stone-300 text-stone-500 cursor-not-allowed border-stone-400 shadow-none'
                   : 'bg-[#FFE600] hover:bg-[#FFE600]/90 text-black'
               }`}
             >
               <Flame className="w-4 h-4 text-[#7C3AED]" />
-              <span>{isSubmitting ? 'Recording Registration...' : 'Register for Tournament'}</span>
+              <span>
+                {isSubmitting 
+                  ? 'Recording Registration...' 
+                  : isTournamentFull 
+                  ? 'Tournament Full (10/10 Slots Closed)' 
+                  : 'Register for Tournament'}
+              </span>
             </button>
           </form>
         )}

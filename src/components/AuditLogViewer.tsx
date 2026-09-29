@@ -44,22 +44,25 @@ const CATEGORIES: AuditCategory[] = [
 ];
 
 export const AuditLogViewer: React.FC<AuditLogViewerProps> = ({ tournamentId }) => {
-  const curUser = tournamentService.getCurrentUser();
+  const curUser = tournamentService.getCurrentUser() || { id: 'guest-spectator', email: '', role: 'spectator' };
   const caller = {
     userId: curUser.id,
     email: curUser.email,
-    role: (curUser.role || 'organizer') as any,
+    role: (curUser.role || 'spectator') as any,
     isAdmin: Boolean(curUser.isAdmin)
   };
 
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [searchEntity, setSearchEntity] = useState<string>('');
 
-  const logs = dotaTournamentOperations.getAuditTrail(caller, {
-    tournamentId,
-    category: selectedCategory !== 'ALL' ? (selectedCategory as AuditCategory) : undefined,
-    entityId: searchEntity || undefined
-  });
+  const isAuthorized = caller.isAdmin || caller.role === 'organizer';
+  const logs = isAuthorized
+    ? dotaTournamentOperations.getAuditTrail(caller, {
+        tournamentId,
+        category: selectedCategory !== 'ALL' ? (selectedCategory as AuditCategory) : undefined,
+        entityId: searchEntity || undefined
+      })
+    : [];
 
   return (
     <div className="space-y-6 font-mono text-xs">

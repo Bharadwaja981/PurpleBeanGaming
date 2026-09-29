@@ -43,6 +43,7 @@ export type DotaRole = EsportsRole;
 export interface Player {
   id: string;
   username: string;
+  displayName?: string;
   realName: string;
   avatar: string;
   country: string;
@@ -94,6 +95,7 @@ export interface Team {
   form: ('W' | 'L')[];
   description: string;
   earningsINR?: string;
+  tournamentId?: string;
 }
 
 export interface TournamentStage {
@@ -107,7 +109,9 @@ export interface Tournament {
   id: string;
   name: string;
   game: CompetitiveGame | string;
-  status: 'Live' | 'Upcoming' | 'Registration Open' | 'Registration Closed' | 'Drafting' | 'Completed';
+  gameId?: string;
+  status: 'Live' | 'Upcoming' | 'Registration Open' | 'Registration Closed' | 'Drafting' | 'Completed' | 'Draft' | 'DRAFT' | 'REGISTRATION_OPEN' | 'REGISTRATION_CLOSED' | 'ACTIVE' | string;
+  lifecycle?: string;
   dates: string;
   startDate: string;
   endDate: string;
@@ -118,6 +122,9 @@ export interface Tournament {
   playerCount: number;
   format: string;
   organizer: string;
+  organiserId?: string;
+  organizerEmail?: string;
+  organizerName?: string;
   city?: IndianCity | string;
   region: IndianRegion | string;
   description: string;
@@ -129,6 +136,19 @@ export interface Tournament {
   };
   prizeDistribution: Array<{ place: string; amount: string; percentage: string }>;
   stages: TournamentStage[];
+  isDevelopment?: boolean;
+  visibility?: 'PUBLIC' | 'DEVELOPMENT' | 'UNLISTED' | 'DRAFT' | 'PRIVATE' | string;
+  config?: any;
+  deleted?: boolean;
+  registrationSettings?: any;
+  teamFormation?: any;
+  roster?: any;
+  auction?: any;
+  competition?: any;
+  prizes?: any;
+  integrity?: any;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface MatchScoreTeam {
@@ -245,7 +265,15 @@ export interface NotificationItem {
   description: string;
   timestamp: string;
   unread: boolean;
-  type: 'registration' | 'captain' | 'auction' | 'match' | 'bracket' | 'system';
+  type: 'registration' | 'captain' | 'auction' | 'match' | 'bracket' | 'system' | 'CAPTAIN_SELECTED' | 'MATCH_SCHEDULED' | 'EVIDENCE_REQUESTED' | 'AUCTION_STARTING' | 'RESULT_CONFIRMATION_REQUIRED' | 'TOURNAMENT_ANNOUNCEMENT';
+  tournamentId?: string;
+  actionType?: string;
+  actionUrl?: string;
+  actionTarget?: {
+    view: ViewType;
+    entityId?: string;
+  };
+  linkText?: string;
 }
 
 export interface AuctionPlayer {
