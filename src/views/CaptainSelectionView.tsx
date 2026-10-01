@@ -35,19 +35,32 @@ interface CaptainSelectionViewProps {
 
 export function CaptainSelectionView({ 
   onNavigate, 
-  tournamentId = 'auction-basic-test-1' 
+  tournamentId: propTournamentId
 }: CaptainSelectionViewProps) {
+  const [allTournaments, setAllTournaments] = useState(() => tournamentService.getTournaments());
+  const [activeTournamentId, setActiveTournamentId] = useState<string>(() => {
+    if (propTournamentId) return propTournamentId;
+    const tourneys = tournamentService.getTournaments();
+    return tourneys[0]?.id || 'auction-basic-test-1';
+  });
+
+  useEffect(() => {
+    if (propTournamentId) {
+      setActiveTournamentId(propTournamentId);
+    }
+  }, [propTournamentId]);
+
   const currentUser = tournamentService.getCurrentUser();
   const isOrganiser = currentUser.role === 'organizer' || currentUser.isAdmin;
-  const activeEngine = getAuctionEngine(tournamentId);
-  const tournamentConfig = tournamentConfigRegistry.getConfig(tournamentId);
+  const activeEngine = getAuctionEngine(activeTournamentId);
+  const tournamentConfig = tournamentConfigRegistry.getConfig(activeTournamentId);
   const [targetTeamsCount, setTargetTeamsCount] = useState<number>(() => tournamentConfig?.teamFormation?.numberOfTeams ?? 2);
   const maxSlots = targetTeamsCount;
 
   const [teams, setTeams] = useState<DotaAuctionTeam[]>(() => activeEngine.getTeams());
   const [candidates, setCandidates] = useState<DotaAuctionPlayer[]>(() => activeEngine.getEligibleCaptainCandidates());
   const [captainApplicants, setCaptainApplicants] = useState(() => 
-    tournamentService.getTournamentRegistrations(tournamentId).filter(r => Boolean(r.interestedInCaptaincy || r.applyingAsCaptain))
+    tournamentService.getTournamentRegistrations(activeTournamentId).filter(r => Boolean(r.interestedInCaptaincy || r.applyingAsCaptain))
   );
   const [selectedCandidateId, setSelectedCandidateId] = useState<string>('');
   
@@ -71,13 +84,24 @@ export function CaptainSelectionView({
   const [isPurseConfirmed, setIsPurseConfirmed] = useState<boolean>(() => activeEngine.isPurseConfirmed());
 
   useEffect(() => {
-    const engine = getAuctionEngine(tournamentId);
+    const unsub = tournamentService.subscribe(() => {
+      setAllTournaments(tournamentService.getTournaments());
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const engine = getAuctionEngine(activeTournamentId);
+    const cfg = tournamentConfigRegistry.getConfig(activeTournamentId);
+    if (cfg?.teamFormation?.numberOfTeams) {
+      setTargetTeamsCount(cfg.teamFormation.numberOfTeams);
+    }
 
     // Hydrate any missing external teams once on mount without recursing in the listener
     const initialTeams = engine.getTeams();
     if (initialTeams.length < 2) {
-      const serviceTeams = tournamentService.getTeams().filter(t => (t as any).tournamentId === tournamentId);
-      const tourney = tournamentService.getTournamentById(tournamentId);
+      const serviceTeams = tournamentService.getTeams().filter(t => (t as any).tournamentId === activeTournamentId);
+      const tourney = tournamentService.getTournamentById(activeTournamentId);
       const candidateTeams = (tourney as any)?.teams?.length > 0 ? (tourney as any).teams : serviceTeams;
       if (candidateTeams && candidateTeams.length > 0) {
         candidateTeams.forEach((ct: any) => {
@@ -92,7 +116,7 @@ export function CaptainSelectionView({
       setTeams(engine.getTeams());
       setCandidates(engine.getEligibleCaptainCandidates());
       setCaptainApplicants(
-        tournamentService.getTournamentRegistrations(tournamentId).filter(r => Boolean(r.interestedInCaptaincy || r.applyingAsCaptain))
+        tournamentService.getTournamentRegistrations(activeTournamentId).filter(r => Boolean(r.interestedInCaptaincy || r.applyingAsCaptain))
       );
       setPurseAudit(engine.getPurseAllocationAudit());
       setIsPurseConfirmed(engine.isPurseConfirmed());
@@ -104,7 +128,7 @@ export function CaptainSelectionView({
       unsubEngine();
       unsubService();
     };
-  }, [tournamentId]);
+  }, [activeTournamentId]);
 
   const handleAppointCaptain = (e: React.FormEvent) => {
     e.preventDefault();
@@ -132,7 +156,7 @@ export function CaptainSelectionView({
       }
 
       const res = tournamentService.appointRealUserAsCaptain({
-        tournamentId,
+        tournamentId: activeTournamentId,
         userId: realUserId.trim(),
         email: realUserEmail.trim() || undefined,
         ign: realUserIgn.trim(),
@@ -168,7 +192,7 @@ export function CaptainSelectionView({
       tag: teamTag.trim().toUpperCase(),
       color: teamColor,
       logo: teamLogo
-    }, tournamentId);
+    }, activeTournamentId);
 
     if (res.success && res.team) {
       setSuccessMsg(`✓ Appointed ${res.team.captainIgn} as captain of ${res.team.name}! Team initialized with ${res.team.startingCredits} credits and 1/5 primary roster.`);
@@ -204,7 +228,7 @@ export function CaptainSelectionView({
         tag,
         color: i === 0 ? '#7C3AED' : '#2563EB',
         logo: i === 0 ? '⚡' : '🛡️'
-      }, tournamentId);
+      }, activeTournamentId);
       if (res.success) {
         appointedCount++;
       }
@@ -213,12 +237,12 @@ export function CaptainSelectionView({
   };
 
   const handleConfirmPurses = () => {
-    const res = tournamentService.confirmDotaAuctionPurses(tournamentId);
+    const res = tournamentService.confirmDotaAuctionPurses(activeTournamentId);
     if (res.success) {
       setIsPurseConfirmed(true);
       setSuccessMsg('✓ Organiser confirmed MMR-balanced starting purses! Auction lobby is now READY.');
       if (onNavigate) {
-        setTimeout(() => onNavigate('auction', tournamentId), 800);
+        setTimeout(() => onNavigate('auction', activeTournamentId), 800);
       }
     } else {
       setErrorMsg(res.error || 'Failed to confirm starting purses.');
@@ -227,6 +251,7 @@ export function CaptainSelectionView({
 
   const selectedCandidate = candidates.find(c => c.id === selectedCandidateId);
   const candidateProfile = selectedCandidate ? dotaPlayerRegistry.getPlayer(selectedCandidate.id) : undefined;
+  const currentTourneyObj = allTournaments.find(t => t.id === activeTournamentId);
 
   return (
     <div className="space-y-8 pb-16 font-mono">
@@ -240,21 +265,40 @@ export function CaptainSelectionView({
           <span>Back to Organiser Dashboard</span>
         </button>
 
-        <button
-          onClick={() => onNavigate('auction', tournamentId)}
-          className="inline-flex items-center gap-2 text-xs font-black uppercase text-white bg-[#7C3AED] hover:bg-purple-700 px-4 py-2 border-2 border-black shadow-[3px_3px_0px_0px_#000] cursor-pointer"
-        >
-          <Gavel className="w-4 h-4 text-[#FFE600]" />
-          <span>Go to Live Player Auction</span>
-          <ArrowRight className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-2">
+          {allTournaments.length > 1 && (
+            <div className="flex items-center gap-1.5 bg-white border-2 border-black px-2 py-1 shadow-[2px_2px_0px_0px_#000]">
+              <span className="text-[10px] font-black uppercase text-stone-600">Tournament:</span>
+              <select
+                value={activeTournamentId}
+                onChange={(e) => setActiveTournamentId(e.target.value)}
+                className="bg-transparent font-mono text-xs font-black text-black outline-none cursor-pointer"
+              >
+                {allTournaments.map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <button
+            onClick={() => onNavigate('auction', activeTournamentId)}
+            className="inline-flex items-center gap-2 text-xs font-black uppercase text-white bg-[#7C3AED] hover:bg-purple-700 px-4 py-2 border-2 border-black shadow-[3px_3px_0px_0px_#000] cursor-pointer"
+          >
+            <Gavel className="w-4 h-4 text-[#FFE600]" />
+            <span>Go to Live Player Auction</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Header Banner */}
       <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-6 sm:p-8 space-y-3">
         <div className="flex items-center gap-2 text-stone-600 text-xs uppercase font-black">
           <Crown className="w-4 h-4 text-[#7C3AED]" />
-          <span>DOTA 2 PHASE 2 · CAPTAIN SELECTION & FRANCHISE FORMATION</span>
+          <span>DOTA 2 PHASE 2 · CAPTAIN SELECTION &amp; FRANCHISE FORMATION</span>
         </div>
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
@@ -262,7 +306,7 @@ export function CaptainSelectionView({
               TEAM CAPTAINS PANEL
             </h1>
             <p className="text-xs sm:text-sm text-stone-600 max-w-2xl mt-2 leading-relaxed">
-              Designated franchise captains selected strictly from verified contenders. Appointing a captain creates the official tournament team with the captain placed directly into the 1/5 mandatory primary roster.
+              Designated franchise captains for <strong>{currentTourneyObj ? currentTourneyObj.name : activeTournamentId}</strong> selected strictly from verified contenders. Appointing a captain creates the official tournament team with the captain placed directly into the 1/5 mandatory primary roster.
             </p>
           </div>
           <div className="bg-[#FFF9E6] border-2 border-black p-3 text-xs space-y-1 shrink-0">
@@ -299,7 +343,7 @@ export function CaptainSelectionView({
                 onChange={(val) => {
                   const num = Number(val);
                   setTargetTeamsCount(num);
-                  tournamentConfigRegistry.updateTeamCount(tournamentId, num);
+                  tournamentConfigRegistry.updateTeamCount(activeTournamentId, num);
                 }}
                 options={[
                   { value: 2, label: '2 Teams (10 Players)' },
@@ -457,10 +501,10 @@ export function CaptainSelectionView({
                               <button
                                 type="button"
                                 onClick={async () => {
-                                  const res = await tournamentService.verifyRegistration(tournamentId, applicant.userId, applicant.declaredMmr);
+                                  const res = await tournamentService.verifyRegistration(activeTournamentId, applicant.userId, applicant.declaredMmr);
                                   if (res.success) {
                                     setSuccessMsg(`✓ Verified ${applicant.ign}! Locked Tournament MMR: ${applicant.declaredMmr?.toLocaleString()}.`);
-                                    const engine = getAuctionEngine(tournamentId);
+                                    const engine = getAuctionEngine(activeTournamentId);
                                     setCandidates(engine.getEligibleCaptainCandidates());
                                     setSelectedCandidateId(applicant.userId);
                                     setTeamName(`${applicant.ign}'s Squad`);
@@ -847,7 +891,7 @@ export function CaptainSelectionView({
                 </span>
               </div>
               <button
-                onClick={() => onNavigate('auction', tournamentId)}
+                onClick={() => onNavigate('auction', activeTournamentId)}
                 className="bg-[#7C3AED] hover:bg-purple-700 text-white border-2 border-black px-4 py-2 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
               >
                 <Gavel className="w-4 h-4 text-[#FFE600]" />

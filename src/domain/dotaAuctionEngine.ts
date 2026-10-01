@@ -573,7 +573,7 @@ export class DotaAuctionEngine {
       this.stopTimer();
       this.state.timerEndsAt = undefined;
       // Host Organiser executes authoritative conclusion; Captains & Spectators keep nominee visible
-      if (this.isOrganiserHost) {
+      if (this.isOrganiserHost || typeof window === 'undefined') {
         const hasWinningBid = Boolean(this.state.leadingTeamId);
         this.concludeNomination(hasWinningBid, 'system-timer');
       } else {

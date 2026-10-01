@@ -535,7 +535,7 @@ export default function App() {
               )}
 
               {currentView === 'registered_players' && (
-                <RegisteredPlayersView onNavigate={handleNavigate} />
+                <RegisteredPlayersView onNavigate={handleNavigate} tournamentId={activeEntityId} />
               )}
 
               {currentView === 'captain_selection' && (
