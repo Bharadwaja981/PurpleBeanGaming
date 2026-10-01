@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Gavel, 
   Clock, 
@@ -26,8 +26,105 @@ import {
   Settings,
   Send,
   ArrowRight,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Volume2,
+  VolumeX,
+  Bell
 } from 'lucide-react';
+
+// Web Audio API Synthesizer for Auction Floor Sound Effects (Calling Once, Twice, Thrice, Sold, Anti-Snipe)
+function playAuctionSound(type: 'call_once' | 'call_twice' | 'call_thrice' | 'sold' | 'antisnipe') {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    const now = ctx.currentTime;
+
+    if (type === 'call_once') {
+      // Single clear bell chime (D5)
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(587.33, now);
+      gain.gain.setValueAtTime(0.28, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.6);
+    } else if (type === 'call_twice') {
+      // Double urgent chime (D5 -> E5)
+      [587.33, 659.25].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, now + i * 0.18);
+        gain.gain.setValueAtTime(0.32, now + i * 0.18);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.18 + 0.5);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + i * 0.18);
+        osc.stop(now + i * 0.18 + 0.5);
+      });
+    } else if (type === 'call_thrice') {
+      // Triple rapid urgent warning chimes (E5 -> G5 -> A5)
+      [659.25, 783.99, 880].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(freq, now + i * 0.13);
+        gain.gain.setValueAtTime(0.35, now + i * 0.13);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.13 + 0.4);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + i * 0.13);
+        osc.stop(now + i * 0.13 + 0.4);
+      });
+    } else if (type === 'sold') {
+      // Gavel strike heavy impact thud
+      const oscThump = ctx.createOscillator();
+      const gainThump = ctx.createGain();
+      oscThump.type = 'sine';
+      oscThump.frequency.setValueAtTime(140, now);
+      oscThump.frequency.exponentialRampToValueAtTime(35, now + 0.25);
+      gainThump.gain.setValueAtTime(0.7, now);
+      gainThump.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+      oscThump.connect(gainThump);
+      gainThump.connect(ctx.destination);
+      oscThump.start(now);
+      oscThump.stop(now + 0.25);
+
+      // Triumph chord (C5 - E5 - G5 - C6)
+      [523.25, 659.25, 783.99, 1046.50].forEach(freq => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, now + 0.08);
+        gain.gain.setValueAtTime(0.22, now + 0.08);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + 0.08);
+        osc.stop(now + 1.2);
+      });
+    } else if (type === 'antisnipe') {
+      // Electric extension laser sweep
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(320, now);
+      osc.frequency.exponentialRampToValueAtTime(980, now + 0.35);
+      gain.gain.setValueAtTime(0.35, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.42);
+    }
+  } catch {
+    // Audio context not allowed or supported in client context
+  }
+}
 import { tournamentService } from '../services/firebaseService';
 import { SelectDropdown } from './ui/Dropdown';
 import { 
@@ -108,6 +205,100 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
 
   // MMR-balanced purse allocation state
   const [purseAudit, setPurseAudit] = useState<AuctionPurseAllocationAudit | null>(() => activeEngine.getPurseAllocationAudit());
+
+  // Auction sound & live call stage state
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [activeAntiSnipeNotice, setActiveAntiSnipeNotice] = useState<{
+    teamName: string;
+    amount: number;
+    extendedSeconds: number;
+    timestamp: number;
+  } | null>(null);
+
+  const lastSoundPlayedRef = useRef<{ phase: string; nomineeId: string; revision: number }>({
+    phase: '',
+    nomineeId: '',
+    revision: 0
+  });
+  const lastAntiSnipeTsRef = useRef<number>(0);
+  const lastLotResultTsRef = useRef<string>('');
+
+  // Anti-snipe detection and dynamic toast notification
+  useEffect(() => {
+    if (auctionState.lastAntiSnipe && auctionState.lastAntiSnipe.timestamp > lastAntiSnipeTsRef.current) {
+      lastAntiSnipeTsRef.current = auctionState.lastAntiSnipe.timestamp;
+      setActiveAntiSnipeNotice(auctionState.lastAntiSnipe);
+      // Reset sound tracking so calling once/twice/thrice chime fresh on the extended clock
+      lastSoundPlayedRef.current = {
+        phase: '',
+        nomineeId: auctionState.nominee?.id || '',
+        revision: auctionState.revision
+      };
+      if (soundEnabled) {
+        playAuctionSound('antisnipe');
+      }
+      const t = setTimeout(() => {
+        setActiveAntiSnipeNotice(null);
+      }, 6500);
+      return () => clearTimeout(t);
+    }
+  }, [auctionState.lastAntiSnipe, auctionState.nominee?.id, auctionState.revision, soundEnabled]);
+
+  // Audio & announcement synchronization for Calling Once, Twice, Thrice
+  useEffect(() => {
+    if (auctionState.status !== 'LIVE' || !auctionState.nominee) return;
+
+    const nomId = auctionState.nominee.id;
+    const sec = auctionState.secondsRemaining;
+    const hasBids = Boolean(auctionState.leadingTeamId);
+    let currentCall = '';
+
+    // Only play formal gavel call chimes if at least one bid is on the floor
+    if (hasBids) {
+      if (sec <= 2 && sec > 0) {
+        currentCall = 'thrice';
+      } else if (sec <= 5 && sec > 2) {
+        currentCall = 'twice';
+      } else if (sec <= 8 && sec > 5) {
+        currentCall = 'once';
+      }
+    }
+
+    if (
+      currentCall &&
+      (lastSoundPlayedRef.current.phase !== currentCall ||
+        lastSoundPlayedRef.current.nomineeId !== nomId ||
+        lastSoundPlayedRef.current.revision !== auctionState.revision)
+    ) {
+      lastSoundPlayedRef.current = {
+        phase: currentCall,
+        nomineeId: nomId,
+        revision: auctionState.revision
+      };
+      if (soundEnabled) {
+        if (currentCall === 'once') playAuctionSound('call_once');
+        if (currentCall === 'twice') playAuctionSound('call_twice');
+        if (currentCall === 'thrice') playAuctionSound('call_thrice');
+      }
+    }
+  }, [
+    auctionState.secondsRemaining,
+    auctionState.status,
+    auctionState.nominee?.id,
+    auctionState.revision,
+    auctionState.leadingTeamId,
+    soundEnabled
+  ]);
+
+  // SOLD gavel drop sound effect
+  useEffect(() => {
+    if (auctionState.lastLotResult && auctionState.lastLotResult.timestamp !== lastLotResultTsRef.current) {
+      lastLotResultTsRef.current = auctionState.lastLotResult.timestamp;
+      if (auctionState.lastLotResult.outcome === 'SOLD' && soundEnabled) {
+        playAuctionSound('sold');
+      }
+    }
+  }, [auctionState.lastLotResult, soundEnabled]);
 
   // Subscribe to domain engine events for this specific tournament
   useEffect(() => {
@@ -585,8 +776,8 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                 </span>
               )}
               {config.bidExtensionEnabled && (
-                <span className="text-[9px] font-black uppercase bg-[#E0F2FE] border border-black px-1.5 py-0.5 text-blue-900">
-                  Anti-Snipe +5s
+                <span className="text-[9px] font-black uppercase bg-[#00F0FF]/30 border border-black px-1.5 py-0.5 text-cyan-950 flex items-center gap-1 font-bold">
+                  <span>⚡</span> Anti-Snipe +{config.extensionTimeSeconds || 8}s
                 </span>
               )}
             </div>
@@ -604,12 +795,25 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
           {onNavigate && (
             <button
               onClick={() => onNavigate('tournament_detail', selectedTournamentId)}
-              className="bg-white hover:bg-stone-100 text-black border-2 border-black px-3 py-1.5 font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1 cursor-pointer mr-2"
+              className="bg-white hover:bg-stone-100 text-black border-2 border-black px-3 py-1.5 font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1 cursor-pointer mr-1"
               title="Return to tournament details and overview"
             >
               ← Tournament Hub
             </button>
           )}
+
+          {/* Sound FX Toggle */}
+          <button
+            type="button"
+            onClick={() => setSoundEnabled(prev => !prev)}
+            className={`px-2.5 py-1.5 border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer mr-1 ${
+              soundEnabled ? 'bg-[#70FFAF] text-black hover:bg-emerald-300' : 'bg-stone-200 text-stone-600 hover:bg-stone-300'
+            }`}
+            title={soundEnabled ? 'Auction sound effects enabled (Calling chimes, Gavel, Anti-Snipe)' : 'Sound effects muted'}
+          >
+            {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">{soundEnabled ? 'SFX ON' : 'SFX MUTED'}</span>
+          </button>
           <div className="bg-stone-50 border-2 border-black px-3 py-1.5">
             <span className="text-[9px] uppercase text-stone-500 block">Available</span>
             <span className="font-black text-black">{availablePlayers.length}</span>
@@ -765,45 +969,139 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
         </div>
       )}
 
-      {/* WINNER / OUTCOME ANNOUNCEMENT NOTIFICATION */}
+      {/* WINNER / OUTCOME ANNOUNCEMENT NOTIFICATION WITH GAVEL SLAM CELEBRATION */}
       {auctionState.lastLotResult && !currentNominee && (
-        <div className={`p-4 border-[3px] border-black shadow-[4px_4px_0px_0px_#000] flex flex-wrap items-center justify-between gap-4 ${
-          auctionState.lastLotResult.outcome === 'SOLD' ? 'bg-[#70FFAF]/30' : 'bg-[#FFDE59]/40'
+        <div className={`p-6 border-[4px] border-black shadow-[8px_8px_0px_0px_#000] relative overflow-hidden transition-all duration-300 ${
+          auctionState.lastLotResult.outcome === 'SOLD'
+            ? 'bg-gradient-to-r from-[#70FFAF]/50 via-[#FFE600]/40 to-[#70FFAF]/50'
+            : 'bg-[#FFDE59]/50'
         }`}>
-          <div className="flex items-center gap-3">
-            <span className="text-3xl">
-              {auctionState.lastLotResult.outcome === 'SOLD' ? '🎉' : '⏳'}
-            </span>
-            <div>
-              <span className="text-[10px] font-black uppercase text-stone-600 block">
-                LOT CONCLUDED: {auctionState.lastLotResult.outcome}
-              </span>
-              <strong className="text-black text-sm block">
-                {auctionState.lastLotResult.outcome === 'SOLD'
-                  ? `${auctionState.lastLotResult.player.username} SOLD to ${auctionState.lastLotResult.winningTeamName} for ${auctionState.lastLotResult.winningBid} Credits!`
-                  : `${auctionState.lastLotResult.player.username} concluded without valid bids and passed as UNSOLD.`}
-              </strong>
+          {/* SOLD RUBBER STAMP BADGE ANIMATION */}
+          {auctionState.lastLotResult.outcome === 'SOLD' && (
+            <div className="absolute top-2 right-2 sm:top-4 sm:right-6 pointer-events-none animate-sold-stamp z-10">
+              <div className="border-[5px] border-dashed border-[#D90429] bg-[#D90429]/15 px-4 sm:px-6 py-1.5 sm:py-2 text-[#D90429] font-black text-2xl sm:text-4xl tracking-widest uppercase shadow-[3px_3px_0px_0px_rgba(217,4,41,0.3)] select-none">
+                🔨 SOLD!
+              </div>
             </div>
-          </div>
+          )}
 
-          <div className="flex items-center gap-2">
-            {isOrganiserDeskActive && (
-              <button
-                onClick={() => dotaAuctionEngine.dismissLastLotResult()}
-                className="px-3 py-1.5 bg-black hover:bg-stone-800 text-white border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
-              >
-                Move to Next Contender →
-              </button>
-            )}
-            {!isOrganiserDeskActive && (
-              <button
-                onClick={() => dotaAuctionEngine.dismissLastLotResult()}
-                className="px-3 py-1.5 bg-white border border-black text-xs font-bold uppercase cursor-pointer"
-              >
-                Dismiss
-              </button>
-            )}
-          </div>
+          {auctionState.lastLotResult.outcome === 'SOLD' ? (
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-b-2 border-black pb-4 text-center sm:text-left">
+                <div className="flex flex-col sm:flex-row items-center gap-4">
+                  <div className="w-16 h-16 sm:w-20 sm:h-20 bg-[#FFE600] border-[3.5px] border-black flex items-center justify-center text-3xl sm:text-5xl shadow-[4px_4px_0px_0px_#000] animate-gavel-slam shrink-0">
+                    🔨
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-center sm:justify-start gap-2 flex-wrap">
+                      <span className="bg-black text-[#70FFAF] text-[10px] font-black uppercase px-2 py-0.5 border border-black tracking-widest">
+                        GAVEL STRIKE · LOT CONCLUDED
+                      </span>
+                      <span className="bg-[#70FFAF] text-black text-[10px] font-black uppercase px-2 py-0.5 border border-black font-bold">
+                        OFFICIALLY DRAFTED
+                      </span>
+                      <span className="bg-[#FFE600] text-black text-[10px] font-black uppercase px-2 py-0.5 border border-black font-bold animate-pulse">
+                        CONGRATULATIONS!
+                      </span>
+                    </div>
+                    <h2 className="text-2xl sm:text-4xl font-black uppercase text-black font-sans mt-1">
+                      🔨 SOLD! SOLD! SOLD!
+                    </h2>
+                    <p className="text-xs sm:text-sm font-bold text-stone-800 mt-0.5">
+                      The gavel has officially dropped! Player drafted to <strong>{auctionState.lastLotResult.winningTeamName}</strong>.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-white border-2 border-black p-3 text-center sm:text-right shrink-0">
+                  <span className="text-[10px] font-black uppercase text-stone-500 block">Winning Bid</span>
+                  <span className="text-2xl sm:text-3xl font-black text-[#7C3AED]">
+                    {auctionState.lastLotResult.winningBid?.toLocaleString()} Cr
+                  </span>
+                </div>
+              </div>
+
+              {/* Player & Awarded Team Presentation */}
+              <div className="bg-white border-2 border-black p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <span className="text-3xl">{auctionState.lastLotResult.player.avatar}</span>
+                  <div>
+                    <strong className="text-black text-lg block">
+                      {auctionState.lastLotResult.player.username}
+                    </strong>
+                    <span className="text-xs text-stone-600 block">
+                      {auctionState.lastLotResult.player.city || 'India'} • {auctionState.lastLotResult.player.primaryRole} • MMR {auctionState.lastLotResult.player.tournamentMmr.toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 bg-[#F3E8FF] border border-black px-4 py-2">
+                  <span className="text-xl">🏆</span>
+                  <div>
+                    <span className="text-[9px] uppercase font-black text-stone-500 block">Awarded To Franchise:</span>
+                    <strong className="text-black text-base uppercase block">
+                      {auctionState.lastLotResult.winningTeamName}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                {isOrganiserDeskActive ? (
+                  <button
+                    onClick={() => dotaAuctionEngine.dismissLastLotResult()}
+                    className="px-5 py-2.5 bg-black hover:bg-stone-800 text-white border-2 border-black text-xs font-black uppercase shadow-[3px_3px_0px_0px_#FFE600] cursor-pointer"
+                  >
+                    Nominate Next Contender →
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => dotaAuctionEngine.dismissLastLotResult()}
+                    className="px-4 py-2 bg-white hover:bg-stone-100 text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                  >
+                    Dismiss
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            /* UNSOLD LOT NOTIFICATION */
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <span className="text-3xl">⚠️</span>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="bg-[#FF70A6] text-black text-[10px] font-black uppercase px-2 py-0.5 border border-black">
+                      PASSED AS UNSOLD
+                    </span>
+                  </div>
+                  <strong className="text-black text-base block mt-1">
+                    {auctionState.lastLotResult.player.username} concluded without winning bids.
+                  </strong>
+                  <p className="text-xs text-stone-600">
+                    Contender was moved to the Unsold Contenders Pool. Organiser can re-auction this player at any time.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                {isOrganiserDeskActive && (
+                  <button
+                    onClick={() => handleReauctionPlayer(auctionState.lastLotResult!.player.id)}
+                    className="px-3 py-1.5 bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                  >
+                    ⚡ Re-Auction Now
+                  </button>
+                )}
+                <button
+                  onClick={() => dotaAuctionEngine.dismissLastLotResult()}
+                  className="px-3 py-1.5 bg-black hover:bg-stone-800 text-white border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -827,13 +1125,31 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                   </span>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap justify-end">
-                  <div className={`flex items-center gap-1.5 text-xs font-black px-2 py-0.5 border border-black ${
-                    auctionState.secondsRemaining <= 5 && auctionState.status === 'LIVE'
+                  <div className={`flex items-center gap-1.5 text-xs font-black px-2.5 py-1 border-2 border-black transition-all ${
+                    activeAntiSnipeNotice 
+                      ? 'bg-[#00F0FF] text-black animate-pulse shadow-[2px_2px_0px_0px_#000]'
+                      : Boolean(auctionState.leadingTeamId) && auctionState.secondsRemaining <= 2 && auctionState.status === 'LIVE'
+                      ? 'bg-[#FF3333] text-white animate-calling-thrice shadow-[2px_2px_0px_0px_#000]'
+                      : Boolean(auctionState.leadingTeamId) && auctionState.secondsRemaining <= 5 && auctionState.status === 'LIVE'
+                      ? 'bg-[#FF9900] text-black shadow-[2px_2px_0px_0px_#000]'
+                      : Boolean(auctionState.leadingTeamId) && auctionState.secondsRemaining <= 8 && auctionState.status === 'LIVE'
+                      ? 'bg-[#FFE600] text-black shadow-[2px_2px_0px_0px_#000]'
+                      : auctionState.secondsRemaining <= 5 && auctionState.status === 'LIVE'
                       ? 'bg-[#FF5757] text-white animate-pulse'
                       : 'bg-[#F3E8FF] text-[#7C3AED]'
                   }`}>
-                    <Clock className="w-4 h-4" />
-                    <span>Time: {auctionState.secondsRemaining}s</span>
+                    <Clock className="w-4 h-4 shrink-0" />
+                    <span>
+                      {activeAntiSnipeNotice 
+                        ? `⚡ Anti-Snipe +${activeAntiSnipeNotice.extendedSeconds}s (${auctionState.secondsRemaining}s)`
+                        : Boolean(auctionState.leadingTeamId) && auctionState.secondsRemaining <= 2 && auctionState.status === 'LIVE'
+                        ? `🚨 Calling Thrice · ${auctionState.secondsRemaining}s`
+                        : Boolean(auctionState.leadingTeamId) && auctionState.secondsRemaining <= 5 && auctionState.status === 'LIVE'
+                        ? `🔨 Calling Twice · ${auctionState.secondsRemaining}s`
+                        : Boolean(auctionState.leadingTeamId) && auctionState.secondsRemaining <= 8 && auctionState.status === 'LIVE'
+                        ? `🔨 Calling Once · ${auctionState.secondsRemaining}s`
+                        : `Clock: ${auctionState.secondsRemaining}s`}
+                    </span>
                   </div>
                   {isOrganiserDeskActive && auctionState.status === 'LIVE' && (
                     <div className="flex items-center gap-1">
@@ -929,6 +1245,179 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                     </div>
                   )}
 
+                  {/* PROMINENT ANTI-SNIPE EXTENSION NOTIFICATION BANNER */}
+                  {activeAntiSnipeNotice && (
+                    <div className="bg-[#00F0FF] border-[3.5px] border-black p-4 shadow-[5px_5px_0px_0px_#000] text-black animate-electric-snipe flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="w-12 h-12 bg-[#FFE600] border-2 border-black flex items-center justify-center text-3xl font-black shrink-0 animate-bounce shadow-[2px_2px_0px_0px_#000]">
+                          ⚡
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="bg-black text-[#00F0FF] text-[10px] font-black uppercase px-2 py-0.5 border border-black tracking-widest font-mono">
+                              ANTI-SNIPE TRIGGERED
+                            </span>
+                            <span className="bg-[#FFE600] text-black text-[10px] font-black uppercase px-2 py-0.5 border border-black font-bold">
+                              +{activeAntiSnipeNotice.extendedSeconds}s CLOCK EXTENDED
+                            </span>
+                            <span className="bg-white text-black text-[10px] font-black uppercase px-2 py-0.5 border border-black font-bold">
+                              CALLS RESET
+                            </span>
+                          </div>
+                          <h3 className="font-sans font-black text-sm sm:text-base uppercase text-black mt-1 leading-snug">
+                            ⚡ {activeAntiSnipeNotice.teamName} BID {activeAntiSnipeNotice.amount.toLocaleString()} CR IN THE FINAL SECONDS!
+                          </h3>
+                          <p className="text-xs text-stone-900 font-bold mt-0.5">
+                            Timer extended to <strong>{auctionState.secondsRemaining}s</strong> so other franchises can counter. Calling once / twice / thrice announcements have been reset!
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                        <div className="bg-black text-[#00F0FF] border-2 border-black px-3 py-1.5 text-center shadow-[2px_2px_0px_0px_#000]">
+                          <span className="text-[9px] uppercase font-black tracking-wider block text-yellow-300 font-mono">CLOCK</span>
+                          <span className="text-2xl font-black font-mono leading-none">
+                            {auctionState.secondsRemaining}s
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveAntiSnipeNotice(null)}
+                          className="px-2 py-1 bg-white hover:bg-stone-200 border-2 border-black text-black cursor-pointer text-xs font-black"
+                          title="Dismiss notification"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* DYNAMIC AUCTIONEER GAVEL ANNOUNCEMENTS: CALLING ONCE, TWICE, THRICE */}
+                  {(() => {
+                    const hasBids = Boolean(auctionState.leadingTeamId);
+                    const sec = auctionState.secondsRemaining;
+
+                    if (hasBids) {
+                      if (sec <= 2 && sec > 0) {
+                        return (
+                          <div className="p-4 sm:p-5 bg-[#FF3333] border-[3.5px] border-black text-white shadow-[5px_5px_0px_0px_#000] animate-calling-thrice space-y-1.5">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-3">
+                                <span className="text-3xl sm:text-4xl animate-bounce">🔨</span>
+                                <div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="bg-black text-[#FFE600] text-[10px] font-black uppercase px-2 py-0.5 border border-white tracking-widest font-mono">
+                                      URGENT · FINAL CALL
+                                    </span>
+                                    <span className="bg-white text-red-600 text-[10px] font-black uppercase px-2 py-0.5 border border-black font-bold">
+                                      GAVEL DESCENDING
+                                    </span>
+                                  </div>
+                                  <h3 className="text-xl sm:text-3xl font-black uppercase font-sans tracking-wide text-white mt-1">
+                                    🚨 CALLING THRICE! GOING THREE TIMES!
+                                  </h3>
+                                </div>
+                              </div>
+                              <div className="bg-black text-white border-2 border-white px-3 sm:px-4 py-1.5 text-center shrink-0 shadow-[2px_2px_0px_0px_#fff]">
+                                <span className="text-[9px] uppercase font-bold text-red-400 block font-mono">FINAL SECONDS</span>
+                                <span className="text-2xl sm:text-4xl font-black font-mono leading-none text-[#FFE600]">
+                                  {sec}s
+                                </span>
+                              </div>
+                            </div>
+                            <p className="text-xs sm:text-sm font-black text-yellow-200 leading-snug">
+                              Going thrice at <span className="underline decoration-2 font-mono">{auctionState.currentBid.toLocaleString()} Cr</span> to <span className="underline decoration-2">{auctionState.leadingTeamName}</span>! Counter-bid RIGHT NOW or this contender is SOLD!
+                            </p>
+                          </div>
+                        );
+                      } else if (sec <= 5 && sec > 2) {
+                        return (
+                          <div className="p-4 bg-[#FF9900] border-[3.5px] border-black text-black shadow-[4px_4px_0px_0px_#000] space-y-1.5">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-3">
+                                <span className="text-2xl sm:text-3xl animate-pulse">🔨</span>
+                                <div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="bg-black text-white text-[10px] font-black uppercase px-2 py-0.5 border border-black tracking-widest font-mono">
+                                      AUCTIONEER FLOOR DESK
+                                    </span>
+                                    <span className="bg-[#FFE600] text-black text-[10px] font-black uppercase px-2 py-0.5 border border-black font-bold">
+                                      SECOND CALL
+                                    </span>
+                                  </div>
+                                  <h3 className="text-lg sm:text-2xl font-black uppercase font-sans tracking-wide text-black mt-1">
+                                    🔨 CALLING TWICE! GOING TWICE!
+                                  </h3>
+                                </div>
+                              </div>
+                              <div className="bg-white text-black border-2 border-black px-3 sm:px-4 py-1.5 text-center shrink-0 shadow-[2px_2px_0px_0px_#000]">
+                                <span className="text-[9px] uppercase font-bold text-stone-500 block font-mono">CLOCK</span>
+                                <span className="text-2xl sm:text-3xl font-black font-mono leading-none text-orange-600">
+                                  {sec}s
+                                </span>
+                              </div>
+                            </div>
+                            <p className="text-xs sm:text-sm font-bold text-stone-900 leading-snug">
+                              Going twice at <strong className="font-mono">{auctionState.currentBid.toLocaleString()} Cr</strong> to <strong>{auctionState.leadingTeamName}</strong>! Any franchise raising the bid before the final call?
+                            </p>
+                          </div>
+                        );
+                      } else if (sec <= 8 && sec > 5) {
+                        return (
+                          <div className="p-3.5 bg-[#FFE600] border-[3.5px] border-black text-black shadow-[4px_4px_0px_0px_#000] space-y-1">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex items-center gap-2.5">
+                                <span className="text-2xl">🔨</span>
+                                <div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="bg-black text-white text-[10px] font-black uppercase px-2 py-0.5 border border-black tracking-widest font-mono">
+                                      AUCTIONEER FLOOR DESK
+                                    </span>
+                                    <span className="bg-white text-black text-[10px] font-black uppercase px-2 py-0.5 border border-black font-bold">
+                                      FIRST CALL
+                                    </span>
+                                  </div>
+                                  <h3 className="text-base sm:text-xl font-black uppercase font-sans tracking-wide text-black mt-0.5">
+                                    🔨 CALLING ONCE... GOING ONCE!
+                                  </h3>
+                                </div>
+                              </div>
+                              <div className="bg-white text-black border-2 border-black px-3 py-1 text-center shrink-0 shadow-[2px_2px_0px_0px_#000]">
+                                <span className="text-[9px] uppercase font-bold text-stone-500 block font-mono">CLOCK</span>
+                                <span className="text-xl sm:text-2xl font-black font-mono leading-none text-stone-900">
+                                  {sec}s
+                                </span>
+                              </div>
+                            </div>
+                            <p className="text-xs font-bold text-stone-800">
+                              First call at <strong className="font-mono">{auctionState.currentBid.toLocaleString()} Cr</strong> to <strong>{auctionState.leadingTeamName}</strong>. Floor remains open for bids!
+                            </p>
+                          </div>
+                        );
+                      }
+                    } else {
+                      // No bids placed yet on this contender
+                      if (sec <= 8 && sec > 0) {
+                        return (
+                          <div className="p-3 bg-[#FFF3CD] border-2 border-black text-amber-950 shadow-[3px_3px_0px_0px_#000] flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-2.5">
+                              <span className="text-2xl">⏳</span>
+                              <div>
+                                <strong className="text-xs uppercase font-black block">PASSING COUNTDOWN · NO BIDS PLACED YET</strong>
+                                <span className="text-[11px] block text-amber-900">
+                                  Contender will pass as UNSOLD in {sec}s unless a franchise opens the bidding floor at {config.minimumBid} Cr!
+                                </span>
+                              </div>
+                            </div>
+                            <div className="bg-white border-2 border-black px-2.5 py-1 text-center shrink-0 shadow-[1px_1px_0px_0px_#000]">
+                              <span className="text-xl font-black font-mono text-red-600">{sec}s</span>
+                            </div>
+                          </div>
+                        );
+                      }
+                    }
+                    return null;
+                  })()}
+
                   {/* Player Hero Section */}
                   <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-stone-50 border-2 border-black p-5 shadow-[3px_3px_0px_0px_#000]">
                     <div className="flex items-center gap-4">
@@ -976,8 +1465,8 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                     </div>
                   </div>
 
-                  {/* Bidding Grid: Price & Leading Bidder */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Bidding Grid: Price, Leading Bidder & Live Floor Clock */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                     <div className="bg-[#FFF9E6] border-2 border-black p-4 space-y-1">
                       <span className="text-[10px] uppercase font-bold text-stone-500 block">Current High Bid</span>
                       <div className="text-3xl font-black text-black">
@@ -994,6 +1483,72 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                       <span className="text-[10px] text-stone-500 block">
                         {auctionState.leadingTeamId ? `Team ID: ${auctionState.leadingTeamId}` : 'Opening floor minimum'}
                       </span>
+                    </div>
+
+                    {/* Prominent Live Floor Clock & Gavel Call Status */}
+                    <div className={`border-2 border-black p-4 space-y-1 transition-all ${
+                      activeAntiSnipeNotice
+                        ? 'bg-[#00F0FF]/30 border-cyan-500'
+                        : Boolean(auctionState.leadingTeamId) && auctionState.secondsRemaining <= 2
+                        ? 'bg-[#FF3333]/20 border-red-500'
+                        : Boolean(auctionState.leadingTeamId) && auctionState.secondsRemaining <= 5
+                        ? 'bg-[#FF9900]/20 border-orange-500'
+                        : Boolean(auctionState.leadingTeamId) && auctionState.secondsRemaining <= 8
+                        ? 'bg-[#FFE600]/30 border-yellow-500'
+                        : 'bg-stone-50'
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] uppercase font-bold text-stone-500 block">Auctioneer Clock</span>
+                        <span className={`text-[9px] font-black uppercase px-1.5 py-0.2 border border-black ${
+                          activeAntiSnipeNotice
+                            ? 'bg-[#00F0FF] text-black animate-pulse'
+                            : Boolean(auctionState.leadingTeamId) && auctionState.secondsRemaining <= 2
+                            ? 'bg-[#FF3333] text-white animate-bounce'
+                            : Boolean(auctionState.leadingTeamId) && auctionState.secondsRemaining <= 5
+                            ? 'bg-[#FF9900] text-black'
+                            : Boolean(auctionState.leadingTeamId) && auctionState.secondsRemaining <= 8
+                            ? 'bg-[#FFE600] text-black'
+                            : Boolean(auctionState.leadingTeamId)
+                            ? 'bg-[#70FFAF] text-black'
+                            : 'bg-stone-200 text-stone-700'
+                        }`}>
+                          {activeAntiSnipeNotice
+                            ? `⚡ +${activeAntiSnipeNotice.extendedSeconds}s EXTENDED`
+                            : Boolean(auctionState.leadingTeamId) && auctionState.secondsRemaining <= 2
+                            ? '🚨 CALLING THRICE'
+                            : Boolean(auctionState.leadingTeamId) && auctionState.secondsRemaining <= 5
+                            ? '🔨 CALLING TWICE'
+                            : Boolean(auctionState.leadingTeamId) && auctionState.secondsRemaining <= 8
+                            ? '🔨 CALLING ONCE'
+                            : Boolean(auctionState.leadingTeamId)
+                            ? '🟢 BIDDING OPEN'
+                            : auctionState.secondsRemaining <= 8
+                            ? '⚠️ PASSING SOON'
+                            : '⏱️ FLOOR OPEN'}
+                        </span>
+                      </div>
+                      <div className="text-3xl font-black font-mono text-black flex items-center gap-2">
+                        <span>{auctionState.secondsRemaining}s</span>
+                        <Clock className={`w-5 h-5 ${
+                          auctionState.secondsRemaining <= 5 ? 'text-red-600 animate-spin' : 'text-stone-400'
+                        }`} />
+                      </div>
+                      <div className="w-full bg-stone-200 h-2 border border-black overflow-hidden mt-1">
+                        <div 
+                          className={`h-full transition-all duration-300 ${
+                            auctionState.secondsRemaining <= 2 
+                              ? 'bg-[#FF3333]' 
+                              : auctionState.secondsRemaining <= 5 
+                              ? 'bg-[#FF9900]' 
+                              : auctionState.secondsRemaining <= 8 
+                              ? 'bg-[#FFE600]' 
+                              : 'bg-[#70FFAF]'
+                          }`}
+                          style={{
+                            width: `${Math.min(100, Math.max(0, (auctionState.secondsRemaining / (config.nominationTimerSeconds || 30)) * 100))}%`
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -1348,10 +1903,46 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                           </div>
                         </div>
 
-                        {/* Reset Exact Seconds */}
+                        {/* Reset Exact Seconds & Jump to Calling Stages */}
                         <div className="flex items-center justify-between flex-wrap gap-2 pt-2 border-t border-black/10">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-[10px] font-black uppercase text-amber-900">Set Exact Clock:</span>
+                            <span className="text-[10px] font-black uppercase text-amber-900">Set Clock / Test Calls:</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                activeEngine.adjustTimer(8, currentUser.id);
+                                setBidSuccess('Jumped to 8s · Calling Once stage active');
+                                setTimeout(() => setBidSuccess(null), 2500);
+                              }}
+                              className="px-2 py-0.5 bg-[#FFE600] hover:bg-yellow-400 border border-black text-[10px] font-black cursor-pointer"
+                              title="Test Calling Once stage (8s)"
+                            >
+                              8s (Once)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                activeEngine.adjustTimer(5, currentUser.id);
+                                setBidSuccess('Jumped to 5s · Calling Twice stage active');
+                                setTimeout(() => setBidSuccess(null), 2500);
+                              }}
+                              className="px-2 py-0.5 bg-[#FF9900] hover:bg-orange-400 border border-black text-[10px] font-black cursor-pointer"
+                              title="Test Calling Twice stage (5s)"
+                            >
+                              5s (Twice)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                activeEngine.adjustTimer(2, currentUser.id);
+                                setBidSuccess('Jumped to 2s · Calling Thrice stage active');
+                                setTimeout(() => setBidSuccess(null), 2500);
+                              }}
+                              className="px-2 py-0.5 bg-[#FF3333] hover:bg-red-600 text-white border border-black text-[10px] font-black cursor-pointer"
+                              title="Test Calling Thrice stage (2s)"
+                            >
+                              2s (Thrice)
+                            </button>
                             {[15, 30, 45, 60, 90].map((sec) => (
                               <button
                                 key={sec}

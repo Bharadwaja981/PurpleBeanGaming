@@ -129,7 +129,7 @@ export interface DotaAuctionLotResult {
 export interface DotaAuctionState {
   tournamentId: string;
   status: 'PENDING' | 'READY' | 'LIVE' | 'PAUSED' | 'COMPLETED' | 'INTERMISSION';
-  roundPhase?: 'NOMINATION' | 'BIDDING' | 'GOING_ONCE' | 'GOING_TWICE' | 'OUTCOME_RESOLUTION' | 'INTERMISSION';
+  roundPhase?: 'NOMINATION' | 'BIDDING' | 'GOING_ONCE' | 'GOING_TWICE' | 'GOING_THRICE' | 'OUTCOME_RESOLUTION' | 'INTERMISSION';
   intermissionRemainingSeconds?: number;
   isPurseConfirmed?: boolean;
   revision: number;
@@ -148,6 +148,12 @@ export interface DotaAuctionState {
   lastLotResult?: DotaAuctionLotResult | null;
   standInRoundActive?: boolean;
   primaryRostersComplete?: boolean;
+  lastAntiSnipe?: {
+    teamName: string;
+    amount: number;
+    extendedSeconds: number;
+    timestamp: number;
+  } | null;
 }
 
 export class DotaAuctionEngine {
@@ -189,8 +195,8 @@ export class DotaAuctionEngine {
       bidTimerSeconds: customConfig?.bidTimerSeconds ?? 25,
       spectatorDelaySeconds: customConfig?.spectatorDelaySeconds ?? 0,
       bidExtensionEnabled: customConfig?.bidExtensionEnabled ?? true,
-      extensionWindowSeconds: customConfig?.extensionWindowSeconds ?? 5,
-      extensionTimeSeconds: customConfig?.extensionTimeSeconds ?? 5
+      extensionWindowSeconds: customConfig?.extensionWindowSeconds ?? 8,
+      extensionTimeSeconds: customConfig?.extensionTimeSeconds ?? 8
     };
 
     this.state = {
@@ -208,7 +214,8 @@ export class DotaAuctionEngine {
       isCompleted: false,
       lastLotResult: null,
       standInRoundActive: false,
-      primaryRostersComplete: false
+      primaryRostersComplete: false,
+      lastAntiSnipe: null
     };
 
     this.initializeFromRegistrations();
@@ -584,9 +591,11 @@ export class DotaAuctionEngine {
         this.notify(false);
       }
     } else {
-      if (this.state.secondsRemaining <= 5) {
+      if (this.state.secondsRemaining <= 2) {
+        this.state.roundPhase = 'GOING_THRICE';
+      } else if (this.state.secondsRemaining <= 5) {
         this.state.roundPhase = 'GOING_TWICE';
-      } else if (this.state.secondsRemaining <= 15) {
+      } else if (this.state.secondsRemaining <= 8) {
         this.state.roundPhase = 'GOING_ONCE';
       } else {
         this.state.roundPhase = 'BIDDING';
@@ -1877,6 +1886,7 @@ export class DotaAuctionEngine {
     this.state.roundPhase = 'BIDDING';
     this.state.status = 'LIVE';
     this.state.revision += 1;
+    this.state.lastAntiSnipe = null;
 
     // Start server-authoritative timer for the nomination
     this.startTimer();
@@ -2089,15 +2099,31 @@ export class DotaAuctionEngine {
     }
 
     // 13. Server-authoritative anti-sniping timer extension
-    // If a valid bid happens in the final extensionWindowSeconds (default 5s), reset/extend timer to extensionTimeSeconds (5s)
+    // If a valid bid happens in the final extensionWindowSeconds (default 8s), reset/extend timer to extensionTimeSeconds (8s)
     if (this.config.bidExtensionEnabled) {
       const remainingSec = this.state.timerEndsAt
         ? Math.max(0, Math.ceil((this.state.timerEndsAt - nowMs) / 1000))
         : this.state.secondsRemaining;
 
-      if (remainingSec <= this.config.extensionWindowSeconds || this.state.secondsRemaining <= this.config.extensionWindowSeconds) {
-        this.state.secondsRemaining = this.config.extensionTimeSeconds;
-        this.state.timerEndsAt = nowMs + this.config.extensionTimeSeconds * 1000;
+      const windowSec = this.config.extensionWindowSeconds || 8;
+      if (remainingSec <= windowSec || this.state.secondsRemaining <= windowSec) {
+        const extendSec = Math.max(8, this.config.extensionTimeSeconds || 8);
+        this.state.secondsRemaining = extendSec;
+        this.state.timerEndsAt = nowMs + extendSec * 1000;
+        this.state.roundPhase = 'BIDDING';
+        this.state.lastAntiSnipe = {
+          teamName: team.name,
+          amount: proposedBid,
+          extendedSeconds: extendSec,
+          timestamp: nowMs
+        };
+        this.logAudit(
+          'anti_snipe_triggered',
+          captainUserId,
+          `⚡ Anti-snipe triggered by ${team.name}'s bid of ${proposedBid} Cr! Clock extended to ${extendSec}s and calls reset.`
+        );
+      } else {
+        this.state.roundPhase = 'BIDDING';
       }
     }
 
