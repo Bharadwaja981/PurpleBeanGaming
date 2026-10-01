@@ -131,7 +131,16 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
       .filter((t) => {
         // 1. Authoritative public discovery rule:
         // Tournament must be visibility == PUBLIC and lifecycle is discoverable
-        if (!isPubliclyDiscoverable(t)) {
+        // (unless current user is an organiser/admin, or created the tournament)
+        const isMine = Boolean(
+          currentUser.id && (
+            (t as any).organiserId === currentUser.id ||
+            (t as any).organizer === currentUser.id ||
+            (t as any).createdBy === currentUser.id ||
+            (currentUser.email && (t as any).organizerEmail && (t as any).organizerEmail.toLowerCase().trim() === currentUser.email.toLowerCase().trim())
+          )
+        );
+        if (!isPubliclyDiscoverable(t) && !isOrganiserOrAdmin && !isMine) {
           return false;
         }
 

@@ -36,8 +36,12 @@ export function OrganiserDashboardView({
   onOpenCreateTournament,
   initialTournamentId 
 }: OrganiserDashboardViewProps) {
-  const [tournaments, setTournaments] = useState<Tournament[]>([]);
-  const [selectedTournamentId, setSelectedTournamentId] = useState<string>(initialTournamentId || '');
+  const [tournaments, setTournaments] = useState<Tournament[]>(() => tournamentService.getTournaments('All Games', 'All', true));
+  const [selectedTournamentId, setSelectedTournamentId] = useState<string>(() => {
+    if (initialTournamentId) return initialTournamentId;
+    const initialList = tournamentService.getTournaments('All Games', 'All', true);
+    return initialList[0]?.id || '';
+  });
   const [lifecycleBusy, setLifecycleBusy] = useState(false);
   const [actionNotice, setActionNotice] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const currentUser = tournamentService.getCurrentUser();

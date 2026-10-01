@@ -37,19 +37,12 @@ export const LEGACY_MOCK_TOURNAMENT_IDS = new Set([
   'basic-test-1',
   'tourney-mumnc5ax',
   'pb-tourney-1790757456408',
-  'purple-bean-india-masters-2026',
-  'del-test-1790877658476',
-  'pb-game-dota2-1790851864337',
-  'pb-game-dota2-1790856656915',
-  'pb-game-dota2-1790856981535',
-  'ping-test',
-  'tourney-test-1'
+  'purple-bean-india-masters-2026'
 ]);
 
 export function isTestTournament(tournament: any): boolean {
   if (!tournament) return false;
   const idLower = (tournament.id || '').toLowerCase();
-  const nameLower = (tournament.name || '').toLowerCase().trim();
 
   if (
     (tournament as any).isDevelopment === true ||
@@ -64,26 +57,6 @@ export function isTestTournament(tournament: any): boolean {
   }
 
   if (LEGACY_MOCK_TOURNAMENT_IDS.has(idLower)) {
-    return true;
-  }
-
-  // Detect test / scratch / dummy tournament IDs or titles generated during sandbox testing
-  if (
-    idLower.startsWith('del-test') ||
-    idLower.startsWith('test-') ||
-    idLower.startsWith('tourney-test') ||
-    idLower.startsWith('ping-test') ||
-    idLower.startsWith('dummy-') ||
-    idLower.startsWith('demo-') ||
-    idLower === 'ping-test' ||
-    idLower.includes('auction-test') ||
-    nameLower.startsWith('test ') ||
-    nameLower === 'test' ||
-    nameLower === 'test 1' ||
-    nameLower === 'test 2' ||
-    nameLower === 'test 3' ||
-    nameLower === 'tournament'
-  ) {
     return true;
   }
 

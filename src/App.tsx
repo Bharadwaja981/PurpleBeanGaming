@@ -235,11 +235,23 @@ export default function App() {
     } else if (tournamentPathMatch) {
       const tourneyId = tournamentPathMatch[1];
       setActiveEntityId(tourneyId);
-      setCurrentView('tournament_detail');
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('manage') === 'true') {
+        setCurrentView('organiser_dashboard');
+      } else {
+        setCurrentView('tournament_detail');
+      }
     } else if (pathname === '/auction' || pathname === '/auction/') {
       // Direct un-scoped /auction URL requested: redirect to tournaments directory
       window.history.replaceState({}, '', '/tournaments');
       setCurrentView('tournaments');
+    } else if (pathname === '/tournaments' || pathname === '/tournaments/') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('manage') === 'true') {
+        setCurrentView('organiser_dashboard');
+      } else {
+        setCurrentView('tournaments');
+      }
     } else {
       const params = new URLSearchParams(window.location.search);
       const viewParam = params.get('view') as ViewType;
@@ -276,6 +288,8 @@ export default function App() {
       try {
         const data = event.data;
         if (!data || typeof data !== 'object') return;
+        // Ignore PB_VIEW_CHANGED echoes
+        if (data.type === 'PB_VIEW_CHANGED') return;
         if (data.type === 'PB_NAVIGATE' && data.view) {
           handleNavigate(data.view as ViewType, data.entityId);
         } else if (data.type === 'PB_SET_THEME' && typeof data.themeIdx === 'number') {
@@ -307,6 +321,8 @@ export default function App() {
           window.history.pushState({ view, entityId }, '', `/tournaments/${entityId}/auction`);
         } else if (view === 'tournament_detail' && entityId) {
           window.history.pushState({ view, entityId }, '', `/tournaments/${entityId}`);
+        } else if (view === 'organiser_dashboard') {
+          window.history.pushState({ view, entityId }, '', entityId ? `/tournaments/${entityId}?manage=true` : '/tournaments?manage=true');
         } else if (view === 'home') {
           window.history.pushState({ view }, '', '/');
         } else if (view === 'tournaments') {
@@ -324,7 +340,18 @@ export default function App() {
 
     // Notify host application if running in an iframe
     if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
-      window.parent.postMessage({ type: 'PB_VIEW_CHANGED', view, entityId }, '*');
+      window.parent.postMessage({ 
+        type: 'PB_VIEW_CHANGED', 
+        view, 
+        entityId,
+        url: (view === 'auction' || view === 'draft') && entityId
+          ? `/tournaments/${entityId}/auction`
+          : (view === 'tournament_detail' || view === 'organiser_dashboard') && entityId
+            ? `/tournaments/${entityId}`
+            : view === 'tournaments'
+              ? '/tournaments'
+              : '/'
+      }, '*');
     }
   };
 
@@ -655,7 +682,7 @@ export default function App() {
           isOpen={isCreateTournamentOpen}
           onClose={() => setIsCreateTournamentOpen(false)}
           onSuccess={(newTournamentId) => {
-            handleNavigate('organiser_dashboard', newTournamentId);
+            handleNavigate('tournament_detail', newTournamentId);
           }}
         />
       )}
