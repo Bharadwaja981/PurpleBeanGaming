@@ -22,7 +22,8 @@ import {
   Key,
   Loader2,
   Zap,
-  AlertCircle
+  AlertCircle,
+  Plus
 } from 'lucide-react';
 import { ViewType, CompetitiveGame, Match, Tournament } from '../types/tournament';
 import { PurpleBeanLogo } from './PurpleBeanLogo';
@@ -50,6 +51,7 @@ interface NavigationProps {
   onOpenBrandKit?: () => void;
   onOpenLoadingSystem?: () => void;
   onOpenAdminCredentials?: () => void;
+  onOpenCreateTournament?: () => void;
 }
 
 export function Navigation({
@@ -65,7 +67,8 @@ export function Navigation({
   onSelectGame,
   onOpenBrandKit,
   onOpenLoadingSystem,
-  onOpenAdminCredentials
+  onOpenAdminCredentials,
+  onOpenCreateTournament
 }: NavigationProps) {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserSession>(() => tournamentService.getCurrentUser());
@@ -496,6 +499,16 @@ export function Navigation({
                 />
               )}
 
+              {isOrganiserUser && onOpenCreateTournament && (
+                <MenuItem
+                  icon={Plus}
+                  label="Create New Tournament"
+                  badge="New"
+                  badgeColor="bg-[#38EF7D] text-black"
+                  onClick={onOpenCreateTournament}
+                />
+              )}
+
               {isAuthenticated && (
                 <MenuItem
                   icon={User}
@@ -693,6 +706,19 @@ export function Navigation({
                   >
                     <Shield className="w-4 h-4 text-[#FFE600]" />
                     <span>Organiser &amp; Referee Dashboard</span>
+                  </button>
+                )}
+
+                {isOrganiserUser && onOpenCreateTournament && (
+                  <button
+                    onClick={() => {
+                      onOpenCreateTournament();
+                      setMobileDrawerOpen(false);
+                    }}
+                    className="w-full py-2.5 bg-[#FFE600] hover:bg-[#FFDE59] text-black border-2 border-black shadow-[2px_2px_0px_0px_#000] font-mono text-xs font-black uppercase flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4 text-black" />
+                    <span>+ Create New Tournament</span>
                   </button>
                 )}
 

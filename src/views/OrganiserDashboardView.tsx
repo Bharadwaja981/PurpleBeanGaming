@@ -23,9 +23,10 @@ import { SelectDropdown } from '../components/ui/Dropdown';
 interface OrganiserDashboardViewProps {
   onNavigate: (view: ViewType, entityId?: string) => void;
   onOpenRegister?: (tourneyId?: string) => void;
+  onOpenCreateTournament?: () => void;
 }
 
-export function OrganiserDashboardView({ onNavigate, onOpenRegister }: OrganiserDashboardViewProps) {
+export function OrganiserDashboardView({ onNavigate, onOpenRegister, onOpenCreateTournament }: OrganiserDashboardViewProps) {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [selectedTournamentId, setSelectedTournamentId] = useState<string>('');
   const currentUser = tournamentService.getCurrentUser();
@@ -57,15 +58,29 @@ export function OrganiserDashboardView({ onNavigate, onOpenRegister }: Organiser
     <div className="space-y-8 animate-in fade-in duration-200">
       {/* Top Banner */}
       <div className="bg-[#7C3AED] text-white border-[3.5px] border-black p-6 sm:p-8 shadow-[6px_6px_0px_0px_#000] relative overflow-hidden">
-        <div className="relative z-10 space-y-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-xs font-black uppercase bg-[#FFE600] text-black px-2.5 py-1 border border-black">
-              Lead Organiser Workspace
-            </span>
-            <span className="font-mono text-xs font-black uppercase bg-black text-white px-2.5 py-1 border border-white">
-              Role: {currentUser.role}
-            </span>
+        <div className="relative z-10 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-xs font-black uppercase bg-[#FFE600] text-black px-2.5 py-1 border border-black">
+                Lead Organiser Workspace
+              </span>
+              <span className="font-mono text-xs font-black uppercase bg-black text-white px-2.5 py-1 border border-white">
+                Role: {currentUser.role}
+              </span>
+            </div>
+
+            {onOpenCreateTournament && (
+              <button
+                type="button"
+                onClick={onOpenCreateTournament}
+                className="px-4 py-2 bg-[#FFE600] hover:bg-[#FFDE59] active:translate-x-0.5 active:translate-y-0.5 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-2 cursor-pointer transition-all shrink-0"
+              >
+                <Plus className="w-4 h-4 stroke-[3]" />
+                <span>+ Create Tournament</span>
+              </button>
+            )}
           </div>
+
           <h1 className="text-3xl sm:text-5xl font-black uppercase tracking-tight font-sans">
             Tournament Operations Console
           </h1>
@@ -76,7 +91,7 @@ export function OrganiserDashboardView({ onNavigate, onOpenRegister }: Organiser
       </div>
 
       {/* Tournament Selector Bar */}
-      {tournaments.length > 1 && (
+      {tournaments.length > 0 && (
         <div className="bg-white border-[3.5px] border-black p-4 shadow-[4px_4px_0px_0px_#000] flex flex-wrap items-center justify-between gap-4 font-mono text-xs">
           <div className="flex items-center gap-3 flex-wrap">
             <span className="font-black uppercase text-black shrink-0">Active Circuit:</span>
@@ -94,7 +109,18 @@ export function OrganiserDashboardView({ onNavigate, onOpenRegister }: Organiser
             />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {onOpenCreateTournament && (
+              <button
+                type="button"
+                onClick={onOpenCreateTournament}
+                className="px-3.5 py-1.5 bg-white hover:bg-stone-50 text-black border-2 border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>New Tournament</span>
+              </button>
+            )}
+
             <button
               onClick={() => onNavigate('captain_selection', activeTourney?.id)}
               className="px-3.5 py-1.5 bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer flex items-center gap-1.5"
@@ -118,9 +144,19 @@ export function OrganiserDashboardView({ onNavigate, onOpenRegister }: Organiser
           <h3 className="text-xl font-black uppercase text-black font-sans">
             No Tournaments Configured
           </h3>
-          <p className="font-mono text-xs text-stone-600">
-            Create or initialize an esports tournament to open the operational workspace.
+          <p className="font-mono text-xs text-stone-600 max-w-md mx-auto">
+            You don't have any active tournaments right now. Create a new championship to open the operations workspace.
           </p>
+          {onOpenCreateTournament && (
+            <button
+              type="button"
+              onClick={onOpenCreateTournament}
+              className="px-6 py-3 bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[4px_4px_0px_0px_#000] inline-flex items-center gap-2 cursor-pointer transition-all"
+            >
+              <Plus className="w-4 h-4 stroke-[3]" />
+              <span>Create Your First Tournament</span>
+            </button>
+          )}
         </div>
       )}
     </div>

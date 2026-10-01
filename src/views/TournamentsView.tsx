@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Trophy, Search, Filter, Calendar, Users, ArrowRight, Radio, MapPin, Gamepad2 } from 'lucide-react';
+import { Trophy, Search, Filter, Calendar, Users, ArrowRight, Radio, MapPin, Gamepad2, Plus } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
 import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
 import { Tournament, ViewType } from '../types/tournament';
@@ -17,15 +17,18 @@ import {
 interface TournamentsViewProps {
   onNavigate: (view: ViewType, entityId?: string) => void;
   onOpenRegister: (tournamentId?: string) => void;
+  onOpenCreateTournament?: () => void;
 }
 
-export function TournamentsView({ onNavigate, onOpenRegister }: TournamentsViewProps) {
+export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTournament }: TournamentsViewProps) {
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [gameFilter, setGameFilter] = useState<string>('All');
   const [regionFilter, setRegionFilter] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [tournaments, setTournaments] = useState<Tournament[]>(() => tournamentService.getTournaments());
   const [activeGames, setActiveGames] = useState(() => gameManagementEngine.getActiveGames());
+  const currentUser = tournamentService.getCurrentUser();
+  const isOrganiserOrAdmin = currentUser.role === 'organizer' || currentUser.isAdmin;
 
   useEffect(() => {
     const sync = () => {
@@ -101,14 +104,29 @@ export function TournamentsView({ onNavigate, onOpenRegister }: TournamentsViewP
   return (
     <div className="space-y-8 pb-16">
       {/* Header */}
-      <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-6 sm:p-8 space-y-2">
-        <div className="flex items-center gap-2 text-stone-600 font-mono text-xs uppercase font-black">
-          <Trophy className="w-4 h-4 text-[#7C3AED]" />
-          <span>PURPLE BEAN GAMING · INDIA CIRCUIT</span>
+      <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-6 sm:p-8 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 text-stone-600 font-mono text-xs uppercase font-black">
+              <Trophy className="w-4 h-4 text-[#7C3AED]" />
+              <span>PURPLE BEAN GAMING · INDIA CIRCUIT</span>
+            </div>
+            <h1 className="text-3xl sm:text-5xl font-black uppercase text-black font-sans">
+              ESPORTS TOURNAMENTS
+            </h1>
+          </div>
+
+          {isOrganiserOrAdmin && onOpenCreateTournament && (
+            <button
+              type="button"
+              onClick={onOpenCreateTournament}
+              className="px-4 py-2.5 bg-[#FFE600] hover:bg-[#FFDE59] active:translate-x-0.5 active:translate-y-0.5 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-2 cursor-pointer transition-all self-start sm:self-center shrink-0"
+            >
+              <Plus className="w-4 h-4 stroke-[3]" />
+              <span>+ Create Tournament</span>
+            </button>
+          )}
         </div>
-        <h1 className="text-3xl sm:text-5xl font-black uppercase text-black font-sans">
-          ESPORTS TOURNAMENTS
-        </h1>
         <p className="font-mono text-xs sm:text-sm text-stone-600 max-w-2xl">
           Browse active Indian championships, open registration brackets, live captain drafts, and regional LAN tournaments across India with verified ₹ INR prize pools.
         </p>

@@ -11,6 +11,7 @@ import { NotificationsModal } from './components/NotificationsModal';
 import { RegistrationModal } from './components/RegistrationModal';
 import { BrandKitModal } from './components/BrandKitModal';
 import { AdminCredentialsModal } from './components/AdminCredentialsModal';
+import { CreateTournamentModal } from './components/CreateTournamentModal';
 import { PurpleBeanLogo } from './components/PurpleBeanLogo';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { tournamentService } from './services/firebaseService';
@@ -70,6 +71,7 @@ export default function App() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
+  const [isCreateTournamentOpen, setIsCreateTournamentOpen] = useState(false);
   const [registerTournamentId, setRegisterTournamentId] = useState<string | undefined>(undefined);
   const [isBrandKitOpen, setIsBrandKitOpen] = useState(false);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
@@ -412,6 +414,7 @@ export default function App() {
         onOpenSearch={() => setIsSearchOpen(true)}
         onOpenRegister={() => handleOpenRegister()}
         onOpenAdminCredentials={() => setIsAdminModalOpen(true)}
+        onOpenCreateTournament={() => setIsCreateTournamentOpen(true)}
         activeThemeName={currentTheme.name}
         onCycleTheme={handleCycleTheme}
         selectedGame={selectedGame}
@@ -462,6 +465,7 @@ export default function App() {
                 <TournamentsView 
                   onNavigate={handleNavigate} 
                   onOpenRegister={handleOpenRegister} 
+                  onOpenCreateTournament={() => setIsCreateTournamentOpen(true)}
                 />
               )}
 
@@ -546,6 +550,7 @@ export default function App() {
                 <OrganiserDashboardView 
                   onNavigate={handleNavigate} 
                   onOpenRegister={handleOpenRegister} 
+                  onOpenCreateTournament={() => setIsCreateTournamentOpen(true)}
                 />
               )}
 
@@ -640,6 +645,17 @@ export default function App() {
           isOpen={isAdminModalOpen}
           onClose={() => setIsAdminModalOpen(false)}
           onOpenBrandKit={() => setIsBrandKitOpen(true)}
+        />
+      )}
+
+      {/* Create Tournament Modal (Organiser & Admin Only) */}
+      {isCreateTournamentOpen && (
+        <CreateTournamentModal
+          isOpen={isCreateTournamentOpen}
+          onClose={() => setIsCreateTournamentOpen(false)}
+          onSuccess={(newTournamentId) => {
+            handleNavigate('organiser_dashboard', newTournamentId);
+          }}
         />
       )}
 
