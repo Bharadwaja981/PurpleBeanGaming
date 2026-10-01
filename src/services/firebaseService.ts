@@ -1438,32 +1438,24 @@ class FirebaseTournamentService {
   }
 
   public async signInWithGoogle(): Promise<{ user: UserSession; error: any; cancelled?: boolean }> {
-    // If a popup/redirect request is already active, return the existing in-flight promise
+    // If a request is already active, return the existing in-flight promise
     if (this.activeSignInPromise) {
       return this.activeSignInPromise;
     }
 
     this.activeSignInPromise = (async () => {
-      // Check if running on a mobile device or touch-centric small viewport
-      const isMobileDevice = typeof window !== 'undefined' && (
-        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
-        (window.innerWidth <= 768 && ('ontouchstart' in window || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0)))
-      );
-
-      // On mobile devices, mobile browsers (Safari, Chrome, in-app webviews) aggressively block
-      // popups and fail window.open from touch events. Use signInWithRedirect directly on mobile!
-      if (isMobileDevice) {
+      // Check if running inside an iframe (such as AI Studio preview or embedded frame)
+      const isInIframe = typeof window !== 'undefined' && (() => {
         try {
-          console.info('Initiating mobile Google Sign-In with redirect...');
-          await signInWithRedirect(auth, googleProvider);
-          return { user: this.currentUser, error: null, cancelled: false };
-        } catch (redirectErr: any) {
-          console.error('Mobile Google Sign-In with redirect error:', redirectErr);
-          return { user: this.currentUser, error: redirectErr, cancelled: false };
+          return window.self !== window.top;
+        } catch {
+          return true;
         }
-      }
+      })();
 
-      // On desktop, attempt signInWithPopup for uninterrupted in-page auth
+      // Primary Authentication: Attempt signInWithPopup across all platforms.
+      // With the mobile drawer dismiss bug resolved, popup sign-in works cleanly
+      // without reloading or navigating away from the application state.
       try {
         const result = await signInWithPopup(auth, googleProvider);
         const fbUser = result.user;
@@ -1491,13 +1483,15 @@ class FirebaseTournamentService {
         const errorCode = error?.code || '';
         const errorMessage = error?.message || String(error || '');
 
-        // If popup was blocked or unsupported, automatically fallback to redirect!
+        // Fallback to redirect ONLY on top-level standalone windows (never in an iframe).
+        // If an iframe navigates to Google Accounts, Google strictly blocks it with 403 Forbidden.
         if (
-          errorCode === 'auth/popup-blocked' ||
-          errorCode === 'auth/operation-not-supported-in-this-environment' ||
-          errorMessage.includes('popup-blocked')
+          !isInIframe &&
+          (errorCode === 'auth/popup-blocked' ||
+           errorCode === 'auth/operation-not-supported-in-this-environment' ||
+           errorMessage.includes('popup-blocked'))
         ) {
-          console.warn('Popup blocked by browser, falling back to signInWithRedirect...');
+          console.warn('Popup blocked on standalone window, falling back to signInWithRedirect...');
           try {
             await signInWithRedirect(auth, googleProvider);
             return { user: this.currentUser, error: null, cancelled: false };

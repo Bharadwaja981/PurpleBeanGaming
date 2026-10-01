@@ -129,7 +129,7 @@ export function Navigation({
         if (errCode === 'auth/unauthorized-domain') {
           setSignInError('Domain not authorized: Please add purplebeangaming.com to Firebase Console -> Authentication -> Settings -> Authorized domains.');
         } else if (errCode === 'auth/popup-blocked') {
-          setSignInError('Popup was blocked by your browser. Retrying with mobile redirect...');
+          setSignInError('Popup was blocked by your browser. Please allow popups for this site or use a direct browser tab.');
         } else {
           setSignInError(errMsg || 'Google Sign-In failed. Please try again.');
         }
