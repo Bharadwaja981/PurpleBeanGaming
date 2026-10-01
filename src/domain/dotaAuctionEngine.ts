@@ -146,6 +146,8 @@ export interface DotaAuctionState {
   isCompleted: boolean;
   completedAt?: string;
   lastLotResult?: DotaAuctionLotResult | null;
+  standInRoundActive?: boolean;
+  primaryRostersComplete?: boolean;
 }
 
 export class DotaAuctionEngine {
@@ -204,7 +206,9 @@ export class DotaAuctionEngine {
       unsoldCount: 0,
       unselectedCount: 0,
       isCompleted: false,
-      lastLotResult: null
+      lastLotResult: null,
+      standInRoundActive: false,
+      primaryRostersComplete: false
     };
 
     this.initializeFromRegistrations();
@@ -1318,22 +1322,113 @@ export class DotaAuctionEngine {
   }
 
   public startUnsoldSecondPass(staffActorId = 'organizer'): { success: boolean; reauctionCount: number; error?: string } {
-    if (this.unsoldQueue.length === 0) {
-      return { success: false, reauctionCount: 0, error: 'No unsold players in queue.' };
-    }
     let count = 0;
-    for (const pId of this.unsoldQueue) {
-      const p = this.players.get(pId);
-      if (p && p.status === 'UNSOLD') {
+    for (const p of this.players.values()) {
+      if (p.status === 'UNSOLD') {
         p.status = 'AVAILABLE';
         count++;
       }
     }
-    this.state.unsoldCount = Math.max(0, this.state.unsoldCount - count);
+    if (count === 0) {
+      return { success: false, reauctionCount: 0, error: 'No unsold players to re-auction.' };
+    }
+    this.state.unsoldCount = 0;
     this.unsoldQueue = [];
+    if (this.state.isCompleted) {
+      this.state.isCompleted = false;
+      this.state.status = 'READY';
+    }
     this.logAudit('unsold_second_pass_started', staffActorId, `Started unsold second-pass: restored ${count} players to available pool.`);
     this.notify();
     return { success: true, reauctionCount: count };
+  }
+
+  /**
+   * Restores an individual UNSOLD or UNSELECTED contender back to AVAILABLE auction pool.
+   * If the auction was previously marked completed, reopens it.
+   */
+  public reauctionPlayer(playerId: string, staffActorId = 'organizer'): { success: boolean; player?: DotaAuctionPlayer; error?: string } {
+    const p = this.players.get(playerId);
+    if (!p) return { success: false, error: `Player '${playerId}' not found.` };
+    if (p.status !== 'UNSOLD' && p.status !== 'UNSELECTED') {
+      return { success: false, error: `Player '${p.username}' is not UNSOLD or UNSELECTED (status: ${p.status}).` };
+    }
+    if (p.status === 'UNSOLD') {
+      this.state.unsoldCount = Math.max(0, this.state.unsoldCount - 1);
+    }
+    if (p.status === 'UNSELECTED') {
+      this.state.unselectedCount = Math.max(0, (this.state.unselectedCount || 0) - 1);
+    }
+    p.status = 'AVAILABLE';
+    this.unsoldQueue = this.unsoldQueue.filter(id => id !== playerId);
+    if (this.state.isCompleted) {
+      this.state.isCompleted = false;
+      this.state.status = 'READY';
+    }
+    this.logAudit('player_reauction_restored', staffActorId, `Restored ${p.username} back to available auction pool for re-auction.`);
+    this.notify();
+    return { success: true, player: p };
+  }
+
+  /**
+   * Re-auctions and immediately puts the UNSOLD or UNSELECTED contender on the live auction block.
+   */
+  public reauctionAndNominatePlayer(playerId: string, staffActorId = 'organizer'): { success: boolean; nominee?: DotaAuctionPlayer; error?: string } {
+    const p = this.players.get(playerId);
+    if (!p) return { success: false, error: `Player '${playerId}' not found.` };
+    if (p.status === 'UNSOLD' || p.status === 'UNSELECTED') {
+      const rest = this.reauctionPlayer(playerId, staffActorId);
+      if (!rest.success) return { success: false, error: rest.error };
+    }
+    return this.nominatePlayer(playerId, staffActorId);
+  }
+
+  /**
+   * Organiser officially initiates the Stand-in auction round.
+   * Can ONLY be started when ALL teams have filled their mandatory primary rosters (e.g. 5/5).
+   */
+  public startStandInAuction(staffActorId = 'organizer'): { success: boolean; error?: string } {
+    const teamsList = Array.from(this.teams.values());
+    if (teamsList.length === 0) {
+      return { success: false, error: 'No teams registered in this tournament.' };
+    }
+    const incompleteTeams = teamsList.filter(t => t.primaryRoster.length < this.config.primaryRosterSize);
+    if (incompleteTeams.length > 0) {
+      return {
+        success: false,
+        error: `Cannot start stand-in auction: ${incompleteTeams.length} team(s) still have incomplete primary rosters (${incompleteTeams.map(t => `${t.name}: ${t.primaryRoster.length}/${this.config.primaryRosterSize}`).join(', ')}). All teams must first reach 5/5 full primary rosters.`
+      };
+    }
+    this.state.standInRoundActive = true;
+    this.state.isCompleted = false;
+    this.state.status = 'READY';
+    this.logAudit(
+      'standin_auction_started',
+      staffActorId,
+      `Stand-in auction round officially started! All ${teamsList.length} teams have completed primary rosters. Teams can now bid on optional 6th slot stand-in players.`
+    );
+    this.notify();
+    return { success: true };
+  }
+
+  /**
+   * Concludes the Stand-in auction round and finalizes the auction.
+   */
+  public concludeStandInAuction(staffActorId = 'organizer'): { success: boolean; error?: string } {
+    this.state.standInRoundActive = false;
+    this.finalizeAuction(staffActorId);
+    return { success: true };
+  }
+
+  /**
+   * Reopens an auction if it was completed or closed.
+   */
+  public reopenAuction(staffActorId = 'organizer'): { success: boolean } {
+    this.state.isCompleted = false;
+    this.state.status = 'READY';
+    this.logAudit('auction_reopened', staffActorId, 'Auction floor reopened by organiser.');
+    this.notify();
+    return { success: true };
   }
 
   public addTime(seconds: number, staffActorId = 'organizer') {
@@ -1741,7 +1836,10 @@ export class DotaAuctionEngine {
     staffActorId: string
   ): { success: boolean; error?: string; nominee?: DotaAuctionPlayer } {
     if (this.state.isCompleted) {
-      return { success: false, error: 'Auction is completed. Cannot nominate additional players.' };
+      // Reopen auction when organiser nominates a player
+      this.state.isCompleted = false;
+      this.state.status = 'READY';
+      this.logAudit('auction_reopened', staffActorId, 'Auction reopened by organiser to nominate contender.');
     }
 
     if (this.state.nominee) {
@@ -1757,13 +1855,17 @@ export class DotaAuctionEngine {
       return { success: false, error: `Cannot nominate captain '${player.username}'.` };
     }
 
-    if (player.status !== 'AVAILABLE' && player.status !== 'UNSOLD') {
-      return { success: false, error: `Player '${player.username}' is not AVAILABLE or UNSOLD (current status: ${player.status}).` };
+    if (player.status !== 'AVAILABLE' && player.status !== 'UNSOLD' && player.status !== 'UNSELECTED') {
+      return { success: false, error: `Player '${player.username}' is not AVAILABLE, UNSOLD, or UNSELECTED (current status: ${player.status}).` };
     }
 
     const nowMs = Date.now();
     if (player.status === 'UNSOLD') {
       this.state.unsoldCount = Math.max(0, this.state.unsoldCount - 1);
+      this.unsoldQueue = this.unsoldQueue.filter(id => id !== playerId);
+    }
+    if (player.status === 'UNSELECTED') {
+      this.state.unselectedCount = Math.max(0, (this.state.unselectedCount || 0) - 1);
     }
     player.status = 'NOMINATED';
     this.state.nominee = player;
@@ -1936,13 +2038,26 @@ export class DotaAuctionEngine {
     // 10. Roster capacity check
     const currentPrimaryCount = team.primaryRoster.length;
     const isPrimaryFull = currentPrimaryCount >= this.config.primaryRosterSize;
-    const isStandInFull = team.standIns.length >= this.config.optionalStandInLimit;
+    const isStandInRoundActive = Boolean(this.state.standInRoundActive);
 
-    if (isPrimaryFull && isStandInFull) {
-      return { 
-        success: false, 
-        error: `Reject: Full roster. ${team.name} roster is completely full (${currentPrimaryCount}/5 primary, ${team.standIns.length}/${this.config.optionalStandInLimit} stand-in).` 
-      };
+    // Primary Roster Phase vs Stand-in Round Phase
+    if (!isStandInRoundActive) {
+      // During primary roster bidding, any team whose roster is full (5/5) MUST NOT be allowed to bid!
+      if (isPrimaryFull) {
+        return { 
+          success: false, 
+          error: `Reject: Roster full. ${team.name} already has a complete primary roster (${currentPrimaryCount}/${this.config.primaryRosterSize}). Teams with complete rosters cannot bid while other teams are still filling their primary rosters. Stand-in auction will only open after all teams have full rosters.` 
+        };
+      }
+    } else {
+      // Stand-in Round Phase (only started by organiser after ALL teams filled primary rosters)
+      const isStandInFull = team.standIns.length >= this.config.optionalStandInLimit;
+      if (isStandInFull) {
+        return { 
+          success: false, 
+          error: `Reject: Stand-in slot full. ${team.name} already has the maximum ${this.config.optionalStandInLimit} stand-in.` 
+        };
+      }
     }
 
     // 11. MANDATORY RESERVE RULE:
@@ -2058,12 +2173,12 @@ export class DotaAuctionEngine {
       nominee.soldAmount = winningPrice;
 
       // Assign to primary roster if < 5, else stand-in
-      if (winnerTeam.primaryRoster.length < this.config.primaryRosterSize) {
-        nominee.isStandIn = false;
-        winnerTeam.primaryRoster.push(nominee);
-      } else if (winnerTeam.standIns.length < this.config.optionalStandInLimit) {
+      if (this.state.standInRoundActive || winnerTeam.primaryRoster.length >= this.config.primaryRosterSize) {
         nominee.isStandIn = true;
         winnerTeam.standIns.push(nominee);
+      } else {
+        nominee.isStandIn = false;
+        winnerTeam.primaryRoster.push(nominee);
       }
 
       this.state.soldCount += 1;
@@ -2074,7 +2189,7 @@ export class DotaAuctionEngine {
       this.logAudit(
         'player_sold',
         staffActorId,
-        `Player ${nominee.username} SOLD to ${winnerTeam.name} for ${winningPrice} credits. Roster: ${winnerTeam.primaryRoster.length}/${this.config.primaryRosterSize} primary.`
+        `Player ${nominee.username} SOLD to ${winnerTeam.name} for ${winningPrice} credits. Roster: ${winnerTeam.primaryRoster.length}/${this.config.primaryRosterSize} primary, ${winnerTeam.standIns.length}/${this.config.optionalStandInLimit} stand-in.`
       );
     } else {
       // UNSOLD: nominated but nomination closed without winning bid
@@ -2129,16 +2244,35 @@ export class DotaAuctionEngine {
     this.state.leadingTeamName = '';
     this.state.revision += 1;
 
-    // Check if ALL teams have completed their mandatory 5/5 primary rosters!
-    const allMandatoryRostersFilled = Array.from(this.teams.values()).every(
+    // Check if ALL teams have completed their mandatory primary rosters!
+    const allMandatoryRostersFilled = Array.from(this.teams.values()).length > 0 && Array.from(this.teams.values()).every(
       t => t.primaryRoster.length >= this.config.primaryRosterSize
     );
 
     if (allMandatoryRostersFilled) {
-      this.finalizeAuction(staffActorId);
-      outcome = 'AUCTION_COMPLETED';
-      this.state.status = 'COMPLETED';
+      this.state.primaryRostersComplete = true;
+      if (this.state.standInRoundActive) {
+        const allStandInsFilled = Array.from(this.teams.values()).every(
+          t => t.standIns.length >= this.config.optionalStandInLimit
+        );
+        if (allStandInsFilled) {
+          this.finalizeAuction(staffActorId);
+          outcome = 'AUCTION_COMPLETED';
+          this.state.status = 'COMPLETED';
+        } else {
+          this.state.status = 'READY';
+        }
+      } else {
+        // All primary rosters are filled! Organiser can now start stand-in round or re-auction unsold players
+        this.state.status = 'READY';
+        this.logAudit(
+          'primary_rosters_completed',
+          staffActorId,
+          `All ${this.teams.size} teams reached complete ${this.config.primaryRosterSize}/${this.config.primaryRosterSize} primary rosters! Stand-in auction round can now be opened by organiser.`
+        );
+      }
     } else {
+      this.state.primaryRostersComplete = false;
       this.state.status = 'READY';
     }
 
@@ -2202,13 +2336,13 @@ export class DotaAuctionEngine {
       return { success: true, unselectedCount: this.state.unselectedCount };
     }
 
-    // Invariant: Do not finalize while either team is below 5/5 for auction-basic-test-1
-    if (this.config.tournamentId === 'auction-basic-test-1' || this.config.tournamentId === '2-team-auction-test') {
+    // Invariant: Do not finalize while any registered team has an incomplete primary roster (< 5/5)
+    if (this.teams.size > 0) {
       for (const team of this.teams.values()) {
         if (team.primaryRoster.length < this.config.primaryRosterSize) {
           return {
             success: false,
-            error: `Cannot finalize auction: Team '${team.name}' has only ${team.primaryRoster.length}/${this.config.primaryRosterSize} players. All teams must reach full ${this.config.primaryRosterSize}/${this.config.primaryRosterSize} roster before finalizing.`,
+            error: `Cannot finalize auction: Team '${team.name}' has only ${team.primaryRoster.length}/${this.config.primaryRosterSize} players. All teams must reach full ${this.config.primaryRosterSize}/${this.config.primaryRosterSize} primary roster before finalizing.`,
             unselectedCount: 0
           };
         }

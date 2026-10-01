@@ -4033,6 +4033,48 @@ class FirebaseTournamentService {
     return res;
   }
 
+  public startStandInAuction(tournamentId?: string): { success: boolean; error?: string } {
+    const engine = this.getDotaAuctionEngine(tournamentId);
+    const res = engine.startStandInAuction(this.currentUser.id);
+    this.notify();
+    return res;
+  }
+
+  public concludeStandInAuction(tournamentId?: string): { success: boolean; error?: string } {
+    const engine = this.getDotaAuctionEngine(tournamentId);
+    const res = engine.concludeStandInAuction(this.currentUser.id);
+    this.notify();
+    return res;
+  }
+
+  public reopenDotaAuction(tournamentId?: string): { success: boolean } {
+    const engine = this.getDotaAuctionEngine(tournamentId);
+    const res = engine.reopenAuction(this.currentUser.id);
+    this.notify();
+    return res;
+  }
+
+  public reauctionDotaPlayer(playerId: string, tournamentId?: string): { success: boolean; player?: any; error?: string } {
+    const engine = this.getDotaAuctionEngine(tournamentId);
+    const res = engine.reauctionPlayer(playerId, this.currentUser.id);
+    this.notify();
+    return res;
+  }
+
+  public reauctionAndNominateDotaPlayer(playerId: string, tournamentId?: string): { success: boolean; nominee?: any; error?: string } {
+    const engine = this.getDotaAuctionEngine(tournamentId);
+    const res = engine.reauctionAndNominatePlayer(playerId, this.currentUser.id);
+    this.notify();
+    return res;
+  }
+
+  public startDotaUnsoldSecondPass(tournamentId?: string): { success: boolean; reauctionCount: number; error?: string } {
+    const engine = this.getDotaAuctionEngine(tournamentId);
+    const res = engine.startUnsoldSecondPass(this.currentUser.id);
+    this.notify();
+    return res;
+  }
+
   // -------------------------------------------------------------
   // Phase 3: Premade Teams & Authoritative Roster Management
   // -------------------------------------------------------------

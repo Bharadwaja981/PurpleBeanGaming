@@ -95,7 +95,7 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
   const [appointTeamLogo, setAppointTeamLogo] = useState('🛡️');
   const [appointError, setAppointError] = useState<string | null>(null);
   const [actionSuccessNotice, setActionSuccessNotice] = useState<string | null>(null);
-  const [playerFilter, setPlayerFilter] = useState<'all' | 'applicants' | 'captains' | 'pool'>('all');
+  const [playerFilter, setPlayerFilter] = useState<'all' | 'applicants' | 'captains' | 'pool' | 'unsold' | 'sold'>('all');
   const [targetTeamCount, setTargetTeamCount] = useState<number>(() => config.teamFormation?.numberOfTeams || 4);
 
   const handleOpenAppointModal = (reg: DotaTournamentRegistration) => {
@@ -536,6 +536,9 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
       {!isPremade && activeTab === 'players' && (() => {
         const auctionEngine = tournamentService.getDotaAuctionEngine(config.identity.tournamentId);
         const auctionTeams = auctionEngine.getTeams();
+        const auctionPlayers = auctionEngine.getPlayers();
+        const unsoldPlayers = auctionEngine.getUnsoldPlayers();
+        const soldPlayers = auctionEngine.getSoldPlayers();
         const assignedCaptainCount = auctionTeams.length;
         const captainApplicantsCount = tournamentRegs.filter(r => r.interestedInCaptaincy || r.applyingAsCaptain).length;
         const auctionPoolCount = tournamentRegs.filter(r => {
@@ -546,9 +549,14 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
         const filteredRegs = tournamentRegs.filter(reg => {
           const isCap = Boolean(reg.isCaptainApproved || auctionTeams.some(t => t.captainId === reg.userId));
           const isApplicant = Boolean(reg.interestedInCaptaincy || reg.applyingAsCaptain);
+          const pObj = auctionPlayers.find(p => p.id === reg.userId || p.userId === reg.userId);
+          const isUnsold = pObj?.status === 'UNSOLD';
+          const isSold = pObj?.status === 'SOLD' || isCap;
           if (playerFilter === 'applicants') return isApplicant && !isCap;
           if (playerFilter === 'captains') return isCap;
           if (playerFilter === 'pool') return !isCap;
+          if (playerFilter === 'unsold') return isUnsold;
+          if (playerFilter === 'sold') return isSold;
           return true;
         });
 
@@ -567,6 +575,50 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
                 >
                   ✕
                 </button>
+              </div>
+            )}
+
+            {/* Unsold Contenders Alert Banner */}
+            {isAuction && unsoldPlayers.length > 0 && (
+              <div className="bg-[#FFF4E5] border-4 border-black p-4 shadow-[4px_4px_0px_0px_#000] flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">⚠️</span>
+                  <div>
+                    <strong className="text-sm font-black uppercase text-black block">
+                      {unsoldPlayers.length} Contender(s) Passed as UNSOLD in Auction
+                    </strong>
+                    <p className="text-xs text-stone-600 mt-0.5">
+                      These players had no winning bids. You can re-auction them individually or return all unsold players to the pool so teams can draft them.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={() => setPlayerFilter('unsold')}
+                    className="bg-white hover:bg-stone-100 text-black border-2 border-black px-3 py-1.5 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                  >
+                    Filter Unsold ({unsoldPlayers.length})
+                  </button>
+                  <button
+                    onClick={() => {
+                      const res = tournamentService.startDotaUnsoldSecondPass(config.identity.tournamentId);
+                      if (res.success) {
+                        setActionSuccessNotice(`✓ Re-auction started! ${res.reauctionCount} unsold contenders returned to pool.`);
+                      }
+                    }}
+                    className="bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black px-3 py-1.5 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                  >
+                    ⚡ Re-Auction All to Pool
+                  </button>
+                  {onNavigate && (
+                    <button
+                      onClick={() => onNavigate('auction', config.identity.tournamentId)}
+                      className="bg-[#7C3AED] hover:bg-purple-700 text-white border-2 border-black px-3 py-1.5 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                    >
+                      Enter Auction Room ↗
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 
@@ -689,6 +741,30 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
                 >
                   Auction Pool ({auctionPoolCount})
                 </button>
+                {isAuction && (
+                  <>
+                    <button
+                      onClick={() => setPlayerFilter('unsold')}
+                      className={`px-3 py-1.5 border-2 border-black font-black uppercase text-xs transition-all cursor-pointer flex items-center gap-1 ${
+                        playerFilter === 'unsold'
+                          ? 'bg-[#FF70A6] text-black shadow-[2px_2px_0px_0px_#000]'
+                          : 'bg-rose-50 hover:bg-rose-100 text-rose-800'
+                      }`}
+                    >
+                      <span>⚠️ Unsold ({unsoldPlayers.length})</span>
+                    </button>
+                    <button
+                      onClick={() => setPlayerFilter('sold')}
+                      className={`px-3 py-1.5 border-2 border-black font-black uppercase text-xs transition-all cursor-pointer flex items-center gap-1 ${
+                        playerFilter === 'sold'
+                          ? 'bg-[#70FFAF] text-black shadow-[2px_2px_0px_0px_#000]'
+                          : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800'
+                      }`}
+                    >
+                      <span>✅ Sold ({soldPlayers.length})</span>
+                    </button>
+                  </>
+                )}
               </div>
 
               <div className="flex items-center gap-2 flex-wrap font-mono text-xs">
@@ -727,7 +803,7 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
                       <th className="p-3 text-right">MMR</th>
                       <th className="p-3">Hometown</th>
                       <th className="p-3 text-center">Captaincy</th>
-                      <th className="p-3 text-center">Status</th>
+                      <th className="p-3 text-center">Auction / Status</th>
                       <th className="p-3 text-right">Actions</th>
                     </tr>
                   </thead>
@@ -740,6 +816,8 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
                             <p className="text-xs text-stone-600">
                               {playerFilter === 'applicants'
                                 ? 'No contenders currently have active captain applications for this tournament.'
+                                : playerFilter === 'unsold'
+                                ? 'No contenders are currently marked unsold.'
                                 : 'Try switching the filter tab above or adding new players.'}
                             </p>
                           </div>
@@ -750,6 +828,7 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
                         const assignedTeam = auctionTeams.find(t => t.captainId === reg.userId || (reg.teamId && t.id === reg.teamId));
                         const isAssignedCaptain = Boolean(reg.isCaptainApproved || assignedTeam);
                         const isCaptainApplicant = Boolean(reg.interestedInCaptaincy || reg.applyingAsCaptain);
+                        const pObj = auctionPlayers.find(p => p.id === reg.userId || p.userId === reg.userId);
                         const isVerified = reg.status === 'VERIFIED';
                         const mmrVal = reg.tournamentMmr || reg.declaredMmr || 0;
 
@@ -793,17 +872,69 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
                               )}
                             </td>
                             <td className="p-3 text-center">
-                              <span className={`px-2 py-0.5 text-[10px] font-black border border-black uppercase ${
-                                isVerified ? 'bg-[#70FFAF] text-black' :
-                                reg.status === 'UNDER_REVIEW' ? 'bg-[#BAE6FD] text-black' :
-                                'bg-[#FFE600] text-black'
-                              }`}>
-                                {reg.status}
-                              </span>
+                              <div className="flex flex-col items-center gap-1">
+                                {isAuction && (
+                                  <span className={`px-2 py-0.5 text-[9px] font-black border border-black uppercase ${
+                                    isAssignedCaptain ? 'bg-[#70FFAF] text-black' :
+                                    pObj?.status === 'SOLD' ? 'bg-[#70FFAF] text-black' :
+                                    pObj?.status === 'UNSOLD' ? 'bg-[#FF70A6] text-black animate-pulse' :
+                                    pObj?.status === 'UNSELECTED' ? 'bg-stone-200 text-stone-700' :
+                                    'bg-[#BAE6FD] text-black'
+                                  }`}>
+                                    {isAssignedCaptain 
+                                      ? `👑 ${assignedTeam?.name || 'Captain'}` 
+                                      : pObj?.status === 'SOLD' 
+                                      ? `Sold (${pObj.teamName || 'Team'})` 
+                                      : pObj?.status === 'UNSOLD' 
+                                      ? '⚠️ UNSOLD' 
+                                      : pObj?.status || 'AVAILABLE'}
+                                  </span>
+                                )}
+                                <span className={`px-1.5 py-0.5 text-[9px] font-bold border border-black uppercase ${
+                                  isVerified ? 'bg-emerald-50 text-emerald-800' :
+                                  reg.status === 'UNDER_REVIEW' ? 'bg-blue-50 text-blue-800' :
+                                  'bg-amber-50 text-amber-800'
+                                }`}>
+                                  {reg.status}
+                                </span>
+                              </div>
                             </td>
                             <td className="p-3 text-right">
                               <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                                {isAuction && !isAssignedCaptain && (
+                                {isAuction && pObj?.status === 'UNSOLD' && (
+                                  <>
+                                    <button
+                                      onClick={() => {
+                                        const res = tournamentService.reauctionDotaPlayer(reg.userId, config.identity.tournamentId);
+                                        if (res.success) {
+                                          setActionSuccessNotice(`✓ ${reg.ign} returned to available pool for re-auction!`);
+                                          refreshState();
+                                        }
+                                      }}
+                                      title="Return unsold contender to available pool"
+                                      className="bg-[#FFE600] hover:bg-yellow-400 text-black border border-black px-2 py-1 text-[10px] font-black uppercase cursor-pointer shadow-[1px_1px_0px_0px_#000]"
+                                    >
+                                      ⚡ Re-Auction
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        const res = tournamentService.reauctionAndNominateDotaPlayer(reg.userId, config.identity.tournamentId);
+                                        if (res.success) {
+                                          if (onNavigate) {
+                                            onNavigate('auction', config.identity.tournamentId);
+                                          } else {
+                                            setActionSuccessNotice(`✓ ${reg.ign} re-auctioned and nominated live!`);
+                                          }
+                                        }
+                                      }}
+                                      title="Re-nominate directly onto auction floor"
+                                      className="bg-[#7C3AED] hover:bg-purple-700 text-white border border-black px-2 py-1 text-[10px] font-black uppercase cursor-pointer shadow-[1px_1px_0px_0px_#000]"
+                                    >
+                                      ⚡ Nominate
+                                    </button>
+                                  </>
+                                )}
+                                {isAuction && !isAssignedCaptain && pObj?.status !== 'SOLD' && (
                                   <button
                                     onClick={() => handleOpenAppointModal(reg)}
                                     title="Appoint as Franchise Captain"

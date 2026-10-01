@@ -1174,118 +1174,222 @@ export function TournamentDetailView({
 
       {/* 6. PLAYERS TAB */}
       {activeTab === 'players' && (() => {
-        const activeRegistrations = tournament 
+        const rawRegistrations = tournament 
           ? tournamentService.getTournamentRegistrations(tournament.id)
           : [];
         const engine = getAuctionEngine(tournament.id);
+        const enginePlayers = isAuctionSupported ? engine.getPlayers() : [];
+        const unsoldContenders = isAuctionSupported ? engine.getUnsoldPlayers() : [];
+
+        // Synthesize any auction engine players that may have been created in auction draft
+        const activeRegistrations: DotaTournamentRegistration[] = [...rawRegistrations];
+        for (const ep of enginePlayers) {
+          const exists = activeRegistrations.some(
+            r => r.userId === ep.id || r.userId === ep.userId || (r.ign && ep.username && r.ign.toLowerCase() === ep.username.toLowerCase())
+          );
+          if (!exists) {
+            activeRegistrations.push({
+              id: ep.id,
+              userId: ep.id,
+              tournamentId: tournament.id,
+              ign: ep.username,
+              primaryRole: ep.primaryRole,
+              secondaryRole: ep.secondaryRole || ep.primaryRole,
+              declaredMmr: ep.tournamentMmr,
+              tournamentMmr: ep.tournamentMmr,
+              status: 'VERIFIED',
+              city: ep.city || 'India',
+              rulesAccepted: true,
+              registeredAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            });
+          }
+        }
+
         const totalCount = activeRegistrations.length > 0
           ? activeRegistrations.length
           : (isTestCup ? testCupState.players.length : 0);
 
         return (
-          <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] overflow-hidden">
-            <div className="p-4 bg-[#FFE600] border-b-2 border-black font-mono text-xs font-black uppercase flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-3">
-                <span>
-                  REGISTERED ROSTER POOL ({totalCount} CONTENDERS)
-                </span>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
+          <div className="space-y-4">
+            {/* Unsold Contenders Alert Banner */}
+            {isAuctionSupported && unsoldContenders.length > 0 && (
+              <div className="bg-[#FFF4E5] border-4 border-black p-4 shadow-[4px_4px_0px_0px_#000] flex flex-wrap items-center justify-between gap-3 font-mono text-xs">
+                <div className="flex items-center gap-3">
+                  <span className="text-2xl">⚠️</span>
+                  <div>
+                    <strong className="text-sm font-black uppercase text-black block">
+                      {unsoldContenders.length} Contender(s) Passed as UNSOLD in Auction
+                    </strong>
+                    <p className="text-xs text-stone-600 mt-0.5">
+                      These players had no winning bids. You can re-auction them individually or return all unsold players to the draft pool so teams can choose them.
+                    </p>
+                  </div>
+                </div>
                 {isOrganiser && (
-                  <>
+                  <div className="flex items-center gap-2 flex-wrap">
                     <button
                       onClick={() => {
-                        setPlayerManagerInitialTab('manual');
-                        setShowPlayerManagerModal(true);
+                        const res = tournamentService.startDotaUnsoldSecondPass(tournament.id);
+                        if (res.success) {
+                          setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
+                        }
                       }}
-                      className="bg-white hover:bg-stone-100 text-black border-2 border-black px-2.5 py-1 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
+                      className="bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black px-3 py-1.5 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
                     >
-                      <UserPlus className="w-3.5 h-3.5" />
-                      + Enter Player / Upload File
+                      ⚡ Re-Auction All Unsold ({unsoldContenders.length})
                     </button>
                     <button
-                      onClick={() => {
-                        setPlayerManagerInitialTab('dummy');
-                        setShowPlayerManagerModal(true);
-                      }}
-                      className="bg-[#70FFAF] hover:bg-[#52e896] text-black border-2 border-black px-2.5 py-1 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer font-bold"
+                      onClick={() => onNavigate('auction', tournament.id)}
+                      className="bg-[#7C3AED] hover:bg-purple-700 text-white border-2 border-black px-3 py-1.5 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
                     >
-                      <Bot className="w-3.5 h-3.5" />
-                      ⚡ Add Dummy Players
+                      Enter Auction Room ↗
                     </button>
-                  </>
+                  </div>
                 )}
-                <button
-                  onClick={() => onNavigate(isTestCup ? 'organiser_dashboard' : 'registered_players')}
-                  className="bg-black text-white px-2 py-1 hover:bg-stone-800 transition-colors cursor-pointer"
-                >
-                  {isTestCup ? 'Organiser Console →' : 'Organiser Directory View →'}
-                </button>
               </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left font-mono text-xs">
-                <thead className="bg-stone-100 border-b-2 border-black uppercase text-[10px] font-black text-black">
-                  <tr>
-                    <th className="p-3">Player</th>
-                    <th className="p-3">Primary Role</th>
-                    <th className="p-3">Team</th>
-                    <th className="p-3 text-right">MMR</th>
-                    <th className="p-3 text-center">Auction / Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y border-stone-200">
-                  {activeRegistrations.length > 0 ? (
-                    activeRegistrations.map((reg) => {
-                      const isCap = Boolean(reg.isCaptainApproved || reg.interestedInCaptaincy || reg.applyingAsCaptain);
-                      const auctionPlayer = engine.getPlayers().find(p => p.userId === reg.userId);
-                      const assignedTeam = engine.getTeams().find(t => t.captainId === reg.userId || t.primaryRoster.some(p => p.userId === reg.userId));
-                      const isVerified = reg.status === 'VERIFIED';
-                      const mmrVal = reg.tournamentMmr || reg.declaredMmr || 0;
+            )}
 
-                      return (
-                        <tr key={reg.id} className="hover:bg-[#FFFDE8] transition-colors">
-                          <td className="p-3">
-                            <div className="flex items-center gap-2">
-                              <span className="text-lg">{auctionPlayer?.avatar || (isCap ? '👑' : '🎮')}</span>
-                              <div>
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span className="font-black text-black">{reg.ign}</span>
-                                  {isCap && (
-                                    <span className="bg-[#FFE600] border border-black text-[9px] px-1 font-bold uppercase">
-                                      {assignedTeam?.captainId === reg.userId ? 'Captain' : 'Captain Applicant'}
-                                    </span>
-                                  )}
+            <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] overflow-hidden">
+              <div className="p-4 bg-[#FFE600] border-b-2 border-black font-mono text-xs font-black uppercase flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-3">
+                  <span>
+                    REGISTERED ROSTER POOL ({totalCount} CONTENDERS)
+                  </span>
+                  {unsoldContenders.length > 0 && (
+                    <span className="bg-[#FF70A6] text-black px-2 py-0.5 border border-black text-[10px]">
+                      {unsoldContenders.length} Unsold
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {isOrganiser && (
+                    <>
+                      <button
+                        onClick={() => {
+                          setPlayerManagerInitialTab('manual');
+                          setShowPlayerManagerModal(true);
+                        }}
+                        className="bg-white hover:bg-stone-100 text-black border-2 border-black px-2.5 py-1 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <UserPlus className="w-3.5 h-3.5" />
+                        + Enter Player / Upload File
+                      </button>
+                      <button
+                        onClick={() => {
+                          setPlayerManagerInitialTab('dummy');
+                          setShowPlayerManagerModal(true);
+                        }}
+                        className="bg-[#70FFAF] hover:bg-[#52e896] text-black border-2 border-black px-2.5 py-1 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer font-bold"
+                      >
+                        <Bot className="w-3.5 h-3.5" />
+                        ⚡ Add Dummy Players
+                      </button>
+                    </>
+                  )}
+                  <button
+                    onClick={() => onNavigate(isTestCup ? 'organiser_dashboard' : 'registered_players')}
+                    className="bg-black text-white px-2 py-1 hover:bg-stone-800 transition-colors cursor-pointer"
+                  >
+                    {isTestCup ? 'Organiser Console →' : 'Organiser Directory View →'}
+                  </button>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left font-mono text-xs">
+                  <thead className="bg-stone-100 border-b-2 border-black uppercase text-[10px] font-black text-black">
+                    <tr>
+                      <th className="p-3">Player</th>
+                      <th className="p-3">Primary Role</th>
+                      <th className="p-3">Team</th>
+                      <th className="p-3 text-right">MMR</th>
+                      <th className="p-3 text-center">Auction / Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y border-stone-200">
+                    {activeRegistrations.length > 0 ? (
+                      activeRegistrations.map((reg) => {
+                        const isCap = Boolean(reg.isCaptainApproved || reg.interestedInCaptaincy || reg.applyingAsCaptain);
+                        const auctionPlayer = engine.getPlayers().find(
+                          p => p.userId === reg.userId || p.id === reg.userId || (p.username && reg.ign && p.username.toLowerCase() === reg.ign.toLowerCase())
+                        );
+                        const assignedTeam = engine.getTeams().find(
+                          t => t.captainId === reg.userId || t.primaryRoster.some(p => p.userId === reg.userId || p.id === reg.userId) || t.standIns.some(p => p.userId === reg.userId || p.id === reg.userId)
+                        );
+                        const isVerified = reg.status === 'VERIFIED';
+                        const mmrVal = reg.tournamentMmr || reg.declaredMmr || 0;
+
+                        return (
+                          <tr key={reg.id} className="hover:bg-[#FFFDE8] transition-colors">
+                            <td className="p-3">
+                              <div className="flex items-center gap-2">
+                                <span className="text-lg">{auctionPlayer?.avatar || (isCap ? '👑' : '🎮')}</span>
+                                <div>
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-black text-black">{reg.ign}</span>
+                                    {isCap && (
+                                      <span className="bg-[#FFE600] border border-black text-[9px] px-1 font-bold uppercase">
+                                        {assignedTeam?.captainId === reg.userId ? 'Captain' : 'Captain Applicant'}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <span className="text-[10px] text-stone-500 font-normal">
+                                    {reg.city || 'India'}
+                                  </span>
                                 </div>
-                                <span className="text-[10px] text-stone-500 font-normal">
-                                  {reg.city || 'India'}
-                                </span>
                               </div>
-                            </div>
-                          </td>
-                          <td className="p-3 font-bold text-stone-800">
-                            {reg.primaryRole}
-                            {reg.secondaryRole && <span className="text-[10px] text-stone-500 block">Sec: {reg.secondaryRole}</span>}
-                          </td>
-                          <td className="p-3 font-bold text-stone-700">
-                            {assignedTeam ? assignedTeam.name : (auctionPlayer?.isCaptain ? 'Franchise Captain' : 'Draft Eligible')}
-                          </td>
-                          <td className="p-3 text-right font-black text-black">
-                            <span className="bg-[#FFE600] px-1.5 py-0.5 border border-black inline-block">
-                              {mmrVal.toLocaleString()}
-                            </span>
-                          </td>
-                          <td className="p-3 text-center">
-                            <div className="flex items-center justify-center gap-1.5">
-                              <span className={`px-2 py-0.5 text-[10px] font-black border border-black uppercase ${
-                                auctionPlayer?.status === 'SOLD' ? 'bg-[#70FFAF] text-black' :
-                                auctionPlayer?.status === 'UNSOLD' ? 'bg-[#FF70A6] text-black' :
-                                isVerified ? 'bg-[#70FFAF] text-black' :
-                                reg.status === 'UNDER_REVIEW' ? 'bg-[#BAE6FD] text-black' :
-                                'bg-[#FFE600] text-black'
-                              }`}>
-                                {auctionPlayer?.status || reg.status}
+                            </td>
+                            <td className="p-3 font-bold text-stone-800">
+                              {reg.primaryRole}
+                              {reg.secondaryRole && <span className="text-[10px] text-stone-500 block">Sec: {reg.secondaryRole}</span>}
+                            </td>
+                            <td className="p-3 font-bold text-stone-700">
+                              {assignedTeam ? `${assignedTeam.name} [${assignedTeam.tag}]` : (auctionPlayer?.isCaptain ? 'Franchise Captain' : 'Draft Eligible')}
+                            </td>
+                            <td className="p-3 text-right font-black text-black">
+                              <span className="bg-[#FFE600] px-1.5 py-0.5 border border-black inline-block">
+                                {mmrVal.toLocaleString()}
                               </span>
+                            </td>
+                            <td className="p-3 text-center">
+                              <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                                <span className={`px-2 py-0.5 text-[10px] font-black border border-black uppercase ${
+                                  auctionPlayer?.status === 'SOLD' ? 'bg-[#70FFAF] text-black' :
+                                  auctionPlayer?.status === 'UNSOLD' ? 'bg-[#FF70A6] text-black animate-pulse' :
+                                  isVerified ? 'bg-[#70FFAF] text-black' :
+                                  reg.status === 'UNDER_REVIEW' ? 'bg-[#BAE6FD] text-black' :
+                                  'bg-[#FFE600] text-black'
+                                }`}>
+                                  {auctionPlayer?.status === 'UNSOLD' ? '⚠️ UNSOLD' : (auctionPlayer?.status || reg.status)}
+                                </span>
+                                {isOrganiser && isAuctionSupported && auctionPlayer?.status === 'UNSOLD' && (
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => {
+                                        const res = tournamentService.reauctionDotaPlayer(auctionPlayer.id, tournament.id);
+                                        if (res.success) {
+                                          setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
+                                        }
+                                      }}
+                                      title="Return unsold contender to available auction pool"
+                                      className="bg-[#FFE600] hover:bg-yellow-400 text-black border border-black px-1.5 py-0.5 text-[9px] font-black uppercase cursor-pointer shadow-[1px_1px_0px_0px_#000]"
+                                    >
+                                      ⚡ Re-Auction
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        const res = tournamentService.reauctionAndNominateDotaPlayer(auctionPlayer.id, tournament.id);
+                                        if (res.success) {
+                                          onNavigate('auction', tournament.id);
+                                        }
+                                      }}
+                                      title="Re-auction and put directly on live block"
+                                      className="bg-[#7C3AED] hover:bg-purple-700 text-white border border-black px-1.5 py-0.5 text-[9px] font-black uppercase cursor-pointer shadow-[1px_1px_0px_0px_#000]"
+                                    >
+                                      Nominate ⚡
+                                    </button>
+                                  </div>
+                                )}
                               {isOrganiser && isAuctionSupported && assignedTeam?.captainId !== reg.userId && (
                                 <button
                                   onClick={async () => {
@@ -1430,7 +1534,8 @@ export function TournamentDetailView({
             </table>
           </div>
         </div>
-      );})()}
+      </div>
+    );})()}
 
       {/* 7. STATS TAB */}
       {activeTab === 'stats' && (
