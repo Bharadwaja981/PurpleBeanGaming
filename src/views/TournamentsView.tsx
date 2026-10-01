@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Trophy, Search, Filter, Calendar, Users, ArrowRight, Radio, MapPin, Gamepad2, Plus } from 'lucide-react';
+import { Trophy, Search, Filter, Calendar, Users, ArrowRight, Radio, MapPin, Gamepad2, Plus, Shield, Play, Pause, StopCircle, Trash2, Gavel } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
 import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
 import { Tournament, ViewType } from '../types/tournament';
@@ -27,8 +27,73 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
   const [searchQuery, setSearchQuery] = useState('');
   const [tournaments, setTournaments] = useState<Tournament[]>(() => tournamentService.getTournaments());
   const [activeGames, setActiveGames] = useState(() => gameManagementEngine.getActiveGames());
+  const [lifecycleBusyId, setLifecycleBusyId] = useState<string | null>(null);
+  const [feedbackNotice, setFeedbackNotice] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
   const currentUser = tournamentService.getCurrentUser();
-  const isOrganiserOrAdmin = currentUser.role === 'organizer' || currentUser.isAdmin;
+  const isOrganiserOrAdmin = 
+    currentUser.role === 'organizer' || 
+    currentUser.isAdmin || 
+    currentUser.isPrimaryAdmin || 
+    (currentUser.email?.toLowerCase().trim() === '11106cm009@gmail.com');
+
+  const showFeedback = (message: string, type: 'success' | 'error' = 'success') => {
+    setFeedbackNotice({ message, type });
+    setTimeout(() => setFeedbackNotice(null), 4000);
+  };
+
+  const handleCardAdvance = async (t: Tournament) => {
+    setLifecycleBusyId(t.id);
+    let nextStage: 'DRAFTING' | 'LIVE' | 'COMPLETED' = 'DRAFTING';
+    const s = t.status;
+    if (s === 'Registration Open' || t.lifecycle === 'REGISTRATION_OPEN') nextStage = 'DRAFTING';
+    else if (s === 'Drafting' || t.lifecycle === 'DRAFTING') nextStage = 'LIVE';
+    else if (s === 'Live' || t.lifecycle === 'LIVE') nextStage = 'COMPLETED';
+
+    const res = await tournamentService.setTournamentLifecycle(t.id, nextStage);
+    setLifecycleBusyId(null);
+    if (res.success) showFeedback(res.message || `Advanced to ${nextStage}!`);
+    else showFeedback(res.error || 'Failed to advance', 'error');
+  };
+
+  const handleCardHoldResume = async (t: Tournament) => {
+    setLifecycleBusyId(t.id);
+    const isOnHold = t.status === 'On Hold' || t.lifecycle === 'ON_HOLD';
+    if (isOnHold) {
+      const res = await tournamentService.resumeTournament(t.id);
+      setLifecycleBusyId(null);
+      if (res.success) showFeedback(res.message || 'Tournament resumed.');
+      else showFeedback(res.error || 'Failed to resume.', 'error');
+    } else {
+      const reason = window.prompt(`Hold tournament '${t.name}'? Reason:`, 'Operational hold');
+      if (reason === null) {
+        setLifecycleBusyId(null);
+        return;
+      }
+      const res = await tournamentService.setTournamentLifecycle(t.id, 'ON_HOLD', reason.trim());
+      setLifecycleBusyId(null);
+      if (res.success) showFeedback(res.message || 'Tournament put on hold.');
+      else showFeedback(res.error || 'Failed to hold.', 'error');
+    }
+  };
+
+  const handleCardCancel = async (t: Tournament) => {
+    if (!window.confirm(`Cancel '${t.name}'? All players will be freed immediately.`)) return;
+    setLifecycleBusyId(t.id);
+    const res = await tournamentService.setTournamentLifecycle(t.id, 'CANCELLED');
+    setLifecycleBusyId(null);
+    if (res.success) showFeedback(res.message || 'Tournament cancelled.');
+    else showFeedback(res.error || 'Failed to cancel.', 'error');
+  };
+
+  const handleCardDelete = async (t: Tournament) => {
+    if (!window.confirm(`PERMANENT DELETION: Delete '${t.name}'? This cannot be undone.`)) return;
+    setLifecycleBusyId(t.id);
+    const res = await tournamentService.deleteTournament(t.id);
+    setLifecycleBusyId(null);
+    if (res.success) showFeedback(`Tournament '${t.name}' deleted.`);
+    else showFeedback(res.error || 'Failed to delete.', 'error');
+  };
 
   useEffect(() => {
     const sync = () => {
@@ -199,6 +264,21 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
         </div>
       </div>
 
+      {/* Action Feedback Notice */}
+      {feedbackNotice && (
+        <div className={`p-4 border-[3px] border-black font-mono text-xs font-black flex items-center justify-between shadow-[4px_4px_0px_0px_#000] animate-in fade-in ${
+          feedbackNotice.type === 'error' ? 'bg-red-50 text-red-900 border-red-950' : 'bg-[#70FFAF] text-black'
+        }`}>
+          <span>{feedbackNotice.message}</span>
+          <button 
+            onClick={() => setFeedbackNotice(null)}
+            className="px-1.5 py-0.5 border border-black hover:bg-black hover:text-white cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Tournament Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredTournaments.map((tourney) => {
@@ -285,6 +365,130 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
                   </div>
                 </div>
               </div>
+
+              {/* Organiser Lifecycle Quick Actions */}
+              {isOrganiserOrAdmin && (
+                <div className="pt-3 border-t-2 border-dashed border-stone-300 space-y-2 bg-[#FFFDE8] -mx-5 -mb-2 p-3">
+                  <div className="flex items-center justify-between text-[10px] font-black uppercase text-stone-600">
+                    <span className="flex items-center gap-1 text-black font-bold">
+                      <Shield className="w-3 h-3 text-[#7C3AED]" />
+                      <span>Organiser Controls:</span>
+                    </span>
+                    <span className="font-bold text-stone-500">
+                      ID: {tourney.id}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {/* Advance */}
+                    {(tourney.status === 'Registration Open' || tourney.lifecycle === 'REGISTRATION_OPEN') && (
+                      <button
+                        type="button"
+                        disabled={lifecycleBusyId === tourney.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCardAdvance(tourney);
+                        }}
+                        className="px-2 py-1 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white border border-black text-[10px] font-black uppercase shadow-[1px_1px_0px_0px_#000] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                      >
+                        <Gavel className="w-3 h-3 text-[#FFE600]" />
+                        <span>Advance to Draft</span>
+                      </button>
+                    )}
+
+                    {(tourney.status === 'Drafting' || tourney.lifecycle === 'DRAFTING') && (
+                      <button
+                        type="button"
+                        disabled={lifecycleBusyId === tourney.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCardAdvance(tourney);
+                        }}
+                        className="px-2 py-1 bg-[#38EF7D] hover:bg-emerald-400 text-black border border-black text-[10px] font-black uppercase shadow-[1px_1px_0px_0px_#000] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                      >
+                        <Play className="w-3 h-3 text-black" />
+                        <span>Start Matches</span>
+                      </button>
+                    )}
+
+                    {(tourney.status === 'Live' || tourney.lifecycle === 'LIVE') && (
+                      <button
+                        type="button"
+                        disabled={lifecycleBusyId === tourney.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCardAdvance(tourney);
+                        }}
+                        className="px-2 py-1 bg-black hover:bg-stone-800 text-white border border-black text-[10px] font-black uppercase shadow-[1px_1px_0px_0px_#000] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                      >
+                        <Trophy className="w-3 h-3 text-[#FFE600]" />
+                        <span>Conclude</span>
+                      </button>
+                    )}
+
+                    {/* Hold / Resume */}
+                    {(tourney.status === 'On Hold' || tourney.lifecycle === 'ON_HOLD') ? (
+                      <button
+                        type="button"
+                        disabled={lifecycleBusyId === tourney.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCardHoldResume(tourney);
+                        }}
+                        className="px-2 py-1 bg-[#38EF7D] hover:bg-emerald-400 text-black border border-black text-[10px] font-black uppercase shadow-[1px_1px_0px_0px_#000] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                      >
+                        <Play className="w-3 h-3 text-black" />
+                        <span>Resume</span>
+                      </button>
+                    ) : (
+                      tourney.status !== 'Completed' && tourney.status !== 'Cancelled' && (
+                        <button
+                          type="button"
+                          disabled={lifecycleBusyId === tourney.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleCardHoldResume(tourney);
+                          }}
+                          className="px-2 py-1 bg-amber-100 hover:bg-amber-200 text-amber-950 border border-black text-[10px] font-black uppercase shadow-[1px_1px_0px_0px_#000] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                        >
+                          <Pause className="w-3 h-3" />
+                          <span>Hold</span>
+                        </button>
+                      )
+                    )}
+
+                    {/* Cancel */}
+                    {tourney.status !== 'Cancelled' && tourney.status !== 'Completed' && (
+                      <button
+                        type="button"
+                        disabled={lifecycleBusyId === tourney.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCardCancel(tourney);
+                        }}
+                        className="px-2 py-1 bg-rose-100 hover:bg-rose-200 text-rose-800 border border-black text-[10px] font-black uppercase shadow-[1px_1px_0px_0px_#000] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                      >
+                        <StopCircle className="w-3 h-3 text-rose-700" />
+                        <span>Cancel</span>
+                      </button>
+                    )}
+
+                    {/* Delete */}
+                    <button
+                      type="button"
+                      disabled={lifecycleBusyId === tourney.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCardDelete(tourney);
+                      }}
+                      className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white border border-black text-[10px] font-black uppercase shadow-[1px_1px_0px_0px_#000] flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                      title="Permanently delete tournament"
+                    >
+                      <Trash2 className="w-3 h-3 text-white" />
+                      <span>Delete</span>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="pt-4 border-t-2 border-black flex items-center justify-between">
                 <div className="font-mono text-xs text-stone-600 font-bold flex items-center gap-1">

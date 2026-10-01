@@ -174,6 +174,7 @@ import { dotaCareerHistoryEngine } from '../domain/dotaCareerHistoryEngine';
 import {
   dotaAuctionEngine,
   getAuctionEngine,
+  resetAuctionEngine,
   DotaAuctionEngine,
   DotaAuctionPlayer,
   DotaAuctionTeam,
@@ -1266,9 +1267,17 @@ class FirebaseTournamentService {
 
   public async deleteTournament(tournamentId: string): Promise<{ success: boolean; error?: string }> {
     const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
+    // 1. Delete from Firestore
     if (!isTest) {
       try {
         await deleteDoc(doc(db, 'tournaments', tournamentId));
+        // Clean up tournament registrations subcollection and global registrations
+        const tourneyRegs = dotaPlayerRegistry.getTournamentRegistrations(tournamentId);
+        for (const reg of tourneyRegs) {
+          deleteDoc(doc(db, 'tournaments', tournamentId, 'registrations', reg.userId)).catch(() => {});
+          deleteDoc(doc(db, 'registrations', reg.id)).catch(() => {});
+        }
+        deleteDoc(doc(db, 'auctions', tournamentId)).catch(() => {});
       } catch (err: any) {
         if (isQuotaError(err)) {
           setQuotaExhausted(true);
@@ -1279,8 +1288,98 @@ class FirebaseTournamentService {
     }
     this.tournaments = this.tournaments.filter(t => t.id !== tournamentId);
     tournamentConfigRegistry.removeConfig(tournamentId);
+    dotaPlayerRegistry.removeTournamentRegistrations(tournamentId);
+    resetAuctionEngine(tournamentId);
     this.notify();
     return { success: true };
+  }
+
+  public async setTournamentLifecycle(
+    tournamentId: string,
+    nextStatus: 'REGISTRATION_OPEN' | 'DRAFTING' | 'LIVE' | 'COMPLETED' | 'ON_HOLD' | 'CANCELLED',
+    reason?: string
+  ): Promise<{ success: boolean; message?: string; error?: string }> {
+    const isAllowed = 
+      this.currentUser.role === 'organizer' || 
+      this.currentUser.isAdmin || 
+      this.currentUser.isPrimaryAdmin || 
+      (this.currentUser.email && this.currentUser.email.toLowerCase() === PRIMARY_PROJECT_ADMIN_EMAIL);
+
+    if (!isAllowed) {
+      return { success: false, error: 'Forbidden: Only organisers or administrators can alter tournament lifecycle.' };
+    }
+
+    const tournament = this.tournaments.find(t => t.id === tournamentId);
+    if (!tournament) {
+      return { success: false, error: 'Tournament not found.' };
+    }
+
+    const statusLabels: Record<string, string> = {
+      'REGISTRATION_OPEN': 'Registration Open',
+      'DRAFTING': 'Drafting',
+      'LIVE': 'Live',
+      'COMPLETED': 'Completed',
+      'ON_HOLD': 'On Hold',
+      'CANCELLED': 'Cancelled'
+    };
+
+    const previousStatus = tournament.status;
+    const label = statusLabels[nextStatus] || nextStatus;
+    tournament.status = label as any;
+    tournament.lifecycle = nextStatus;
+    (tournament as any).updatedAt = new Date().toISOString();
+    if (reason) {
+      (tournament as any).statusReason = reason;
+    }
+    if (nextStatus === 'ON_HOLD') {
+      (tournament as any).previousStatusBeforeHold = previousStatus;
+    }
+
+    // If CANCELLED, cancel all active registrations for this tournament so players are immediately freed up!
+    if (nextStatus === 'CANCELLED') {
+      const tourneyRegs = dotaPlayerRegistry.getTournamentRegistrations(tournamentId);
+      for (const reg of tourneyRegs) {
+        if (reg.status !== 'WITHDRAWN' && reg.status !== 'REJECTED') {
+          reg.status = 'CANCELLED' as any;
+          reg.updatedAt = new Date().toISOString();
+        }
+      }
+    }
+
+    // Persist to Firestore
+    if (typeof window !== 'undefined' && db && !isQuotaExhausted()) {
+      try {
+        await updateDoc(doc(db, 'tournaments', tournamentId), {
+          status: label,
+          lifecycle: nextStatus,
+          statusReason: reason || null,
+          ...(nextStatus === 'ON_HOLD' ? { previousStatusBeforeHold: previousStatus } : {}),
+          updatedAt: new Date().toISOString()
+        });
+      } catch (err: any) {
+        if (isQuotaError(err)) setQuotaExhausted(true);
+        console.warn('Firestore tournament lifecycle update deferred:', err);
+      }
+    }
+
+    this.notify();
+    return { success: true, message: `Tournament status updated to ${label}.` };
+  }
+
+  public async resumeTournament(tournamentId: string): Promise<{ success: boolean; message?: string; error?: string }> {
+    const tourney = this.tournaments.find(t => t.id === tournamentId);
+    if (!tourney) return { success: false, error: 'Tournament not found.' };
+    const prev = (tourney as any).previousStatusBeforeHold || 'REGISTRATION_OPEN';
+    const statusMap: Record<string, 'REGISTRATION_OPEN' | 'DRAFTING' | 'LIVE'> = {
+      'Registration Open': 'REGISTRATION_OPEN',
+      'REGISTRATION_OPEN': 'REGISTRATION_OPEN',
+      'Drafting': 'DRAFTING',
+      'DRAFTING': 'DRAFTING',
+      'Live': 'LIVE',
+      'LIVE': 'LIVE'
+    };
+    const targetStatus = statusMap[prev] || 'REGISTRATION_OPEN';
+    return this.setTournamentLifecycle(tournamentId, targetStatus, 'Resumed from hold.');
   }
 
   public addTestTournament(tournament: Tournament) {
@@ -2403,6 +2502,31 @@ class FirebaseTournamentService {
     captainNotes?: string;
     captainHistory?: string;
   }): Promise<{ success: boolean; error?: string; registration?: DotaTournamentRegistration }> {
+    // Invariant: One user can join in one tournament at a time if that tournament is active and not completed
+    const existingTournaments = this.tournaments;
+    const currentEmail = (this.currentUser.email || '').toLowerCase().trim();
+    const otherActiveReg = dotaPlayerRegistry.getAllRegistrations().find(r => {
+      if (r.tournamentId === params.tournamentId) return false;
+      if (r.status === 'WITHDRAWN' || r.status === 'REJECTED' || (r.status as string) === 'CANCELLED') return false;
+      const matchUserId = r.userId === params.userId;
+      const matchEmail = Boolean(currentEmail && (r as any).userEmail?.toLowerCase() === currentEmail);
+      if (!matchUserId && !matchEmail) return false;
+
+      const otherT = existingTournaments.find(t => t.id === r.tournamentId);
+      if (!otherT) return true;
+      const statusUpper = (otherT.status || otherT.lifecycle || '').toUpperCase();
+      return statusUpper !== 'COMPLETED' && statusUpper !== 'CANCELLED';
+    });
+
+    if (otherActiveReg) {
+      const otherTourney = existingTournaments.find(t => t.id === otherActiveReg.tournamentId);
+      const otherName = otherTourney ? otherTourney.name : otherActiveReg.tournamentId;
+      return {
+        success: false,
+        error: `Active Tournament Restriction: You are already registered in active tournament "${otherName}". A player can only participate in one active tournament at a time until that tournament is completed or your registration is withdrawn.`
+      };
+    }
+
     const tourn = this.getTournamentBySlug(params.tournamentId);
     const tourneyStatus = tourn ? tourn.status.toLowerCase() : 'registration';
 

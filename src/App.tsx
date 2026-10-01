@@ -551,6 +551,7 @@ export default function App() {
                   onNavigate={handleNavigate} 
                   onOpenRegister={handleOpenRegister} 
                   onOpenCreateTournament={() => setIsCreateTournamentOpen(true)}
+                  initialTournamentId={activeEntityId}
                 />
               )}
 

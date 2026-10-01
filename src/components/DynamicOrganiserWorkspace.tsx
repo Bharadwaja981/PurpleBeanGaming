@@ -150,6 +150,7 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
   };
 
   useEffect(() => {
+    setTournamentRegs(tournamentService.getTournamentRegistrations(config.identity.tournamentId));
     const unsub = tournamentService.subscribe(() => {
       setTournamentRegs(tournamentService.getTournamentRegistrations(config.identity.tournamentId));
     });

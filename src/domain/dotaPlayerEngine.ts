@@ -543,12 +543,13 @@ export class DotaPlayerRegistry {
         r => r.userId === userId && 
              r.tournamentId !== tournamentId && 
              r.status !== 'WITHDRAWN' && 
-             r.status !== 'REJECTED'
+             r.status !== 'REJECTED' &&
+             (r.status as string) !== 'CANCELLED'
       );
       if (activeOtherTourneyReg) {
         return {
           success: false,
-          error: `Tournament Invariant: You already have an active registration in another tournament ('${activeOtherTourneyReg.tournamentId}'). A player cannot participate in two tournaments at a time.`
+          error: `Tournament Invariant: You already have an active registration in another tournament ('${activeOtherTourneyReg.tournamentId}'). A player can only participate in one active tournament at a time until that tournament is completed or withdrawn.`
         };
       }
     }
@@ -831,6 +832,14 @@ export class DotaPlayerRegistry {
       }
     }
     return Array.from(byUserId.values());
+  }
+
+  public removeTournamentRegistrations(tournamentId: string) {
+    for (const [key, reg] of this.registrations.entries()) {
+      if (reg.tournamentId === tournamentId) {
+        this.registrations.delete(key);
+      }
+    }
   }
 
   public getRegistrationsForTournament(tournamentId: string): DotaTournamentRegistration[] {

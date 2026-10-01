@@ -131,19 +131,31 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
 
   // Direct URL Security Check 0: Tournament ID not provided (global access attempt)
   if (!selectedTournamentId) {
+    const auctionTourneys = tournaments.filter(t => tournamentConfigRegistry.isAuctionSupported(t.id));
     return (
       <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-8 text-center space-y-4 my-8 font-mono">
         <AlertCircle className="w-12 h-12 text-[#FF5757] mx-auto" />
         <h2 className="font-sans font-black text-2xl uppercase text-black">Tournament Context Required</h2>
         <p className="text-sm text-stone-600 max-w-md mx-auto">
-          Auction rooms are tournament-specific and cannot be accessed as a global feature. Please enter the auction through an active tournament page.
+          Each tournament has its own dedicated auction room, franchises, and contenders. Select which tournament's auction room you wish to enter:
         </p>
-        <button
-          onClick={() => onNavigate && onNavigate('tournaments')}
-          className="bg-[#FFE600] border-2 border-black px-4 py-2 text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] cursor-pointer"
-        >
-          Browse Tournaments
-        </button>
+        <div className="flex flex-wrap justify-center gap-3 pt-2">
+          {auctionTourneys.map(t => (
+            <button
+              key={t.id}
+              onClick={() => onNavigate && onNavigate('auction', t.id)}
+              className="bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black px-4 py-2 text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] cursor-pointer"
+            >
+              Enter {t.name} Auction →
+            </button>
+          ))}
+          <button
+            onClick={() => onNavigate && onNavigate('tournaments')}
+            className="bg-white hover:bg-stone-100 text-black border-2 border-black px-4 py-2 text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] cursor-pointer"
+          >
+            Browse All Tournaments
+          </button>
+        </div>
       </div>
     );
   }

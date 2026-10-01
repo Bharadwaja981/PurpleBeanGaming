@@ -54,6 +54,11 @@ export function RegistrationModal({
   tournamentName
 }: RegistrationModalProps) {
   const currentUser = tournamentService.getCurrentUser();
+  const allTournaments = tournamentService.getTournaments('All Games', 'All', true);
+  const targetTourneyId = tournamentId || allTournaments[0]?.id || 'purple-bean-test-cup';
+  const currentTourneyObj = allTournaments.find(t => t.id === targetTourneyId);
+  const effectiveTourneyName = tournamentName || currentTourneyObj?.name || 'Tournament';
+
   const [ign, setIgn] = useState('');
   const [primaryRole, setPrimaryRole] = useState<DotaRolePosition>('Position 1 — Carry');
   const [secondaryRole, setSecondaryRole] = useState<DotaRolePosition>('Position 2 — Mid');
@@ -67,6 +72,29 @@ export function RegistrationModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successData, setSuccessData] = useState<{ id: string; ign: string } | null>(null);
+  const [withdrawBusy, setWithdrawBusy] = useState(false);
+
+  // Check if current user is already registered for this tournament
+  const existingRegThisTourney = (currentUser && currentUser.id !== 'guest-spectator')
+    ? tournamentService.getUserRegistration(targetTourneyId, currentUser.id)
+    : undefined;
+  const isRegisteredThisTourney = Boolean(
+    existingRegThisTourney && 
+    existingRegThisTourney.status !== 'WITHDRAWN' && 
+    existingRegThisTourney.status !== 'REJECTED' && 
+    (existingRegThisTourney.status as any) !== 'CANCELLED'
+  );
+
+  // Check if current user is registered in another active tournament
+  const otherActiveTourneyWithReg = (currentUser && currentUser.id !== 'guest-spectator')
+    ? allTournaments.find(t => {
+        if (t.id === targetTourneyId) return false;
+        const statusUpper = (t.status || t.lifecycle || '').toUpperCase();
+        if (statusUpper === 'COMPLETED' || statusUpper === 'CANCELLED') return false;
+        const reg = tournamentService.getUserRegistration(t.id, currentUser.id);
+        return reg && reg.status !== 'WITHDRAWN' && reg.status !== 'REJECTED' && (reg.status as any) !== 'CANCELLED';
+      })
+    : undefined;
 
   // Autofill user profile if available
   useEffect(() => {
@@ -82,6 +110,34 @@ export function RegistrationModal({
   }, [isOpen, currentUser]);
 
   if (!isOpen) return null;
+
+  const handleWithdrawOtherTourney = async () => {
+    if (!otherActiveTourneyWithReg || !currentUser) return;
+    if (!window.confirm(`Withdraw your active registration from '${otherActiveTourneyWithReg.name}' so you can enter '${effectiveTourneyName}'?`)) {
+      return;
+    }
+    setWithdrawBusy(true);
+    const res = await tournamentService.withdrawTournamentRegistration(otherActiveTourneyWithReg.id, currentUser.id);
+    setWithdrawBusy(false);
+    if (!res.success) {
+      setErrorMessage(res.error || 'Failed to withdraw from other tournament.');
+    }
+  };
+
+  const handleWithdrawThisTourney = async () => {
+    if (!existingRegThisTourney || !currentUser) return;
+    if (!window.confirm(`Are you sure you want to withdraw your registration from '${effectiveTourneyName}'?`)) {
+      return;
+    }
+    setWithdrawBusy(true);
+    const res = await tournamentService.withdrawTournamentRegistration(targetTourneyId, currentUser.id);
+    setWithdrawBusy(false);
+    if (res.success) {
+      onClose();
+    } else {
+      setErrorMessage(res.error || 'Failed to withdraw registration.');
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,7 +162,6 @@ export function RegistrationModal({
 
     setIsSubmitting(true);
     try {
-      const targetTourneyId = tournamentId || 'purple-bean-test-cup';
       const userId = (currentUser && currentUser.id !== 'guest-spectator') 
         ? currentUser.id 
         : `player-${Date.now().toString(36)}`;
@@ -217,6 +272,132 @@ export function RegistrationModal({
                 >
                   Return to Tournament Details →
                 </button>
+              </div>
+            </div>
+          ) : isRegisteredThisTourney && existingRegThisTourney ? (
+            /* User already registered for THIS tournament */
+            <div className="space-y-5 py-4">
+              <div className="bg-[#FFFDE8] border-4 border-black p-5 shadow-[6px_6px_0px_0px_#000] space-y-4">
+                <div className="flex items-start justify-between gap-3 border-b-2 border-black pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-10 h-10 bg-[#70FFAF] border-2 border-black flex items-center justify-center font-black text-xl">
+                      ✓
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-black uppercase text-[#7C3AED] block font-mono">
+                        Active Tournament Registration
+                      </span>
+                      <h3 className="text-xl font-black uppercase text-black font-sans">
+                        You Are Registered
+                      </h3>
+                    </div>
+                  </div>
+                  <span className={`px-2.5 py-1 text-xs font-black uppercase border-2 border-black shadow-[2px_2px_0px_0px_#000] ${
+                    existingRegThisTourney.status === 'VERIFIED' ? 'bg-[#70FFAF] text-black' :
+                    existingRegThisTourney.status === 'UNDER_REVIEW' ? 'bg-[#FFDE59] text-black' :
+                    existingRegThisTourney.status === 'EVIDENCE_REQUESTED' ? 'bg-amber-400 text-black' :
+                    'bg-[#FFE600] text-black'
+                  }`}>
+                    {existingRegThisTourney.status}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 font-mono text-xs">
+                  <div className="p-2.5 bg-white border-2 border-black">
+                    <span className="text-[10px] text-stone-500 uppercase block font-black">IGN</span>
+                    <span className="font-black text-black">{existingRegThisTourney.ign}</span>
+                  </div>
+                  <div className="p-2.5 bg-white border-2 border-black">
+                    <span className="text-[10px] text-stone-500 uppercase block font-black">Role</span>
+                    <span className="font-black text-black truncate block">{existingRegThisTourney.primaryRole.split('—')[1] || existingRegThisTourney.primaryRole}</span>
+                  </div>
+                  <div className="p-2.5 bg-white border-2 border-black">
+                    <span className="text-[10px] text-stone-500 uppercase block font-black">MMR</span>
+                    <span className="font-black text-[#7C3AED]">{existingRegThisTourney.tournamentMmr || existingRegThisTourney.declaredMmr}</span>
+                  </div>
+                  <div className="p-2.5 bg-white border-2 border-black">
+                    <span className="text-[10px] text-stone-500 uppercase block font-black">Captaincy</span>
+                    <span className="font-black text-black">{existingRegThisTourney.interestedInCaptaincy ? 'Applied' : 'Player Pool'}</span>
+                  </div>
+                </div>
+
+                <p className="font-mono text-xs text-stone-700 leading-relaxed">
+                  Your entry is locked into <strong>{effectiveTourneyName}</strong>. If you wish to switch to another tournament or cancel your participation, you can withdraw your registration below.
+                </p>
+
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    disabled={withdrawBusy}
+                    onClick={handleWithdrawThisTourney}
+                    className="px-4 py-2.5 bg-rose-100 hover:bg-rose-200 text-rose-900 border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] cursor-pointer disabled:opacity-50"
+                  >
+                    {withdrawBusy ? 'Withdrawing...' : 'Withdraw Registration ✕'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-4 py-2.5 bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] cursor-pointer ml-auto"
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : otherActiveTourneyWithReg ? (
+            /* User already registered in ANOTHER active tournament */
+            <div className="space-y-5 py-4">
+              <div className="bg-[#FFF9E6] border-4 border-black p-5 shadow-[6px_6px_0px_0px_#000] space-y-4">
+                <div className="flex items-start gap-3 border-b-2 border-black pb-3">
+                  <div className="w-10 h-10 bg-[#FF5757] text-white border-2 border-black flex items-center justify-center font-black text-xl shrink-0">
+                    !
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-rose-700 block font-mono">
+                      Single Active Tournament Invariant
+                    </span>
+                    <h3 className="text-xl font-black uppercase text-black font-sans">
+                      Active In Another Tournament
+                    </h3>
+                  </div>
+                </div>
+
+                <p className="font-mono text-xs text-stone-800 leading-relaxed">
+                  You are already registered in active tournament <strong className="text-black bg-[#FFE600] px-1 border border-black">{otherActiveTourneyWithReg.name}</strong>.
+                </p>
+
+                <div className="p-3 bg-white border-2 border-black font-mono text-xs space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-stone-500 font-bold uppercase">Current Tournament:</span>
+                    <span className="font-black text-black">{otherActiveTourneyWithReg.name}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-stone-500 font-bold uppercase">Status:</span>
+                    <span className="font-black text-emerald-800 uppercase">{otherActiveTourneyWithReg.status}</span>
+                  </div>
+                </div>
+
+                <p className="font-mono text-[11px] text-stone-600">
+                  Under Purple Bean Gaming competitive rules, each contender can participate in <strong>only one active tournament at a time</strong>. To register for <strong>{effectiveTourneyName}</strong>, withdraw from your current tournament or wait until it concludes.
+                </p>
+
+                <div className="flex flex-wrap items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    disabled={withdrawBusy}
+                    onClick={handleWithdrawOtherTourney}
+                    className="px-4 py-2.5 bg-black hover:bg-stone-800 text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#FFE600] cursor-pointer disabled:opacity-50"
+                  >
+                    {withdrawBusy ? 'Withdrawing...' : `Withdraw from ${otherActiveTourneyWithReg.name} & Continue Here →`}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-4 py-2.5 bg-white hover:bg-stone-100 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
             </div>
           ) : (

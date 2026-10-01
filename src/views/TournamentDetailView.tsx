@@ -18,7 +18,13 @@ import {
   Gamepad2,
   Sparkles,
   UserPlus,
-  Bot
+  Bot,
+  Play,
+  Pause,
+  Trash2,
+  StopCircle,
+  RefreshCw,
+  Check
 } from 'lucide-react';
 import { AdminTournamentPlayerManagerModal } from '../components/AdminTournamentPlayerManagerModal';
 import { DoubleEliminationBracket } from '../components/DoubleEliminationBracket';
@@ -63,7 +69,16 @@ export function TournamentDetailView({
   );
 
   const [currentUser, setCurrentUser] = useState(() => tournamentService.getCurrentUser());
-  const isOrganiser = currentUser.role === 'organizer' || currentUser.isAdmin || (currentUser.email?.toLowerCase().trim() === '11106cm009@gmail.com') || Boolean(tournament && (tournament.organiserId === currentUser.id || tournament.organizer === currentUser.id));
+  const isOrganiser = 
+    currentUser.role === 'organizer' || 
+    currentUser.isAdmin || 
+    currentUser.isPrimaryAdmin || 
+    (currentUser.email?.toLowerCase().trim() === '11106cm009@gmail.com') || 
+    Boolean(tournament && (
+      tournament.organiserId === currentUser.id || 
+      tournament.organizer === currentUser.id || 
+      (tournament.organizerEmail && currentUser.email && tournament.organizerEmail.toLowerCase().trim() === currentUser.email.toLowerCase().trim())
+    ));
   const [showPlayerManagerModal, setShowPlayerManagerModal] = useState(false);
   const [playerManagerInitialTab, setPlayerManagerInitialTab] = useState<'manual' | 'upload' | 'dummy'>('manual');
   const [userRegistration, setUserRegistration] = useState(() => 
@@ -72,6 +87,8 @@ export function TournamentDetailView({
   const [tournamentRegistrations, setTournamentRegistrations] = useState<DotaTournamentRegistration[]>(() =>
     tournament ? tournamentService.getTournamentRegistrations(tournament.id) : []
   );
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
+  const [lifecycleMessage, setLifecycleMessage] = useState<string | null>(null);
 
   const [testCupState, setTestCupState] = useState(() => ({
     status: testCupEngine.getStatus(),
@@ -79,6 +96,16 @@ export function TournamentDetailView({
     players: testCupEngine.getPlayers(),
     matches: testCupEngine.getMatches()
   }));
+
+  // Immediately re-sync when tournamentId or tournament changes
+  useEffect(() => {
+    if (tournament?.id) {
+      const curId = tournament.id;
+      setTournamentRegistrations(tournamentService.getTournamentRegistrations(curId));
+      setUserRegistration(tournamentService.getUserRegistration(curId, tournamentService.getCurrentUser().id));
+      setAuctionLifecycle(tournamentConfigRegistry.getAuctionLifecycle(curId));
+    }
+  }, [tournament?.id, tournamentId]);
 
   useEffect(() => {
     const unsub = tournamentService.subscribe(() => {
@@ -158,7 +185,10 @@ export function TournamentDetailView({
 
   const effectiveTeams = mappedAuctionTeams.length > 0 
     ? mappedAuctionTeams 
-    : allTeams.filter(t => !tournament?.id || !(t as any).tournamentId || (t as any).tournamentId === tournament.id);
+    : (isTestCup 
+        ? (testCupState.teams.length > 0 ? testCupState.teams : allTeams.filter(t => (t as any).tournamentId === tournament?.id))
+        : allTeams.filter(t => (t as any).tournamentId === tournament?.id)
+      );
   const effectivePlayers = allPlayers;
 
   const isPremade = tournament?.id === 'india-dota-open-2026';
@@ -388,6 +418,185 @@ export function TournamentDetailView({
             <span className="font-black text-black text-sm truncate block">{tournament.organizer}</span>
           </div>
         </div>
+
+        {/* Organiser & Admin Lifecycle Governance Bar */}
+        {isOrganiser && (
+          <div className="mt-4 pt-4 border-t-2 border-black space-y-3 bg-[#FFFDE8] -mx-6 -mb-6 sm:-mx-8 sm:-mb-8 p-4 sm:p-6 border-b-2 border-black">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <span className="flex items-center gap-1.5 font-mono text-xs font-black uppercase text-black bg-[#FFE600] px-2 py-0.5 border border-black">
+                  <Shield className="w-3.5 h-3.5 text-black" />
+                  <span>Operations &amp; Lifecycle</span>
+                </span>
+                <span className="font-mono text-xs font-bold text-stone-700">
+                  Status:
+                </span>
+                <span className={`px-2 py-0.5 font-mono text-xs font-black uppercase border border-black shadow-[1px_1px_0px_0px_#000] ${
+                  tournament.status === 'Live' || tournament.lifecycle === 'LIVE' ? 'bg-[#38EF7D] text-black animate-pulse' :
+                  tournament.status === 'Drafting' || tournament.lifecycle === 'DRAFTING' ? 'bg-[#8B5CF6] text-white' :
+                  tournament.status === 'On Hold' || tournament.lifecycle === 'ON_HOLD' ? 'bg-amber-400 text-black' :
+                  tournament.status === 'Completed' || tournament.lifecycle === 'COMPLETED' ? 'bg-stone-300 text-stone-800' :
+                  tournament.status === 'Cancelled' || tournament.lifecycle === 'CANCELLED' ? 'bg-red-500 text-white' :
+                  'bg-[#FFE600] text-black'
+                }`}>
+                  {tournament.status}
+                </span>
+                {(tournament as any).statusReason && (
+                  <span className="font-mono text-[11px] text-stone-600 italic">
+                    ("{(tournament as any).statusReason}")
+                  </span>
+                )}
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* 1. Advance Lifecycle */}
+                {(tournament.status === 'Registration Open' || tournament.lifecycle === 'REGISTRATION_OPEN') && (
+                  <button
+                    type="button"
+                    disabled={lifecycleBusy}
+                    onClick={async () => {
+                      setLifecycleBusy(true);
+                      const res = await tournamentService.setTournamentLifecycle(tournament.id, 'DRAFTING');
+                      setLifecycleBusy(false);
+                      setLifecycleMessage(res.message || res.error || null);
+                      setTimeout(() => setLifecycleMessage(null), 4000);
+                    }}
+                    className="px-3 py-1.5 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Gavel className="w-3.5 h-3.5 text-[#FFE600]" />
+                    <span>Advance to Draft (DRAFTING) →</span>
+                  </button>
+                )}
+
+                {(tournament.status === 'Drafting' || tournament.lifecycle === 'DRAFTING') && (
+                  <button
+                    type="button"
+                    disabled={lifecycleBusy}
+                    onClick={async () => {
+                      setLifecycleBusy(true);
+                      const res = await tournamentService.setTournamentLifecycle(tournament.id, 'LIVE');
+                      setLifecycleBusy(false);
+                      setLifecycleMessage(res.message || res.error || null);
+                      setTimeout(() => setLifecycleMessage(null), 4000);
+                    }}
+                    className="px-3 py-1.5 bg-[#38EF7D] hover:bg-emerald-400 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Play className="w-3.5 h-3.5 text-black" />
+                    <span>Start Matches (LIVE) →</span>
+                  </button>
+                )}
+
+                {(tournament.status === 'Live' || tournament.lifecycle === 'LIVE') && (
+                  <button
+                    type="button"
+                    disabled={lifecycleBusy}
+                    onClick={async () => {
+                      if (!window.confirm(`Are you sure you want to conclude and finalize '${tournament.name}'?`)) return;
+                      setLifecycleBusy(true);
+                      const res = await tournamentService.setTournamentLifecycle(tournament.id, 'COMPLETED');
+                      setLifecycleBusy(false);
+                      setLifecycleMessage(res.message || res.error || null);
+                      setTimeout(() => setLifecycleMessage(null), 4000);
+                    }}
+                    className="px-3 py-1.5 bg-black hover:bg-stone-800 text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Trophy className="w-3.5 h-3.5 text-[#FFE600]" />
+                    <span>Conclude Tournament (COMPLETED)</span>
+                  </button>
+                )}
+
+                {/* 2. Hold / Continue */}
+                {(tournament.status === 'On Hold' || tournament.lifecycle === 'ON_HOLD') ? (
+                  <button
+                    type="button"
+                    disabled={lifecycleBusy}
+                    onClick={async () => {
+                      setLifecycleBusy(true);
+                      const res = await tournamentService.resumeTournament(tournament.id);
+                      setLifecycleBusy(false);
+                      setLifecycleMessage(res.message || res.error || null);
+                      setTimeout(() => setLifecycleMessage(null), 4000);
+                    }}
+                    className="px-3 py-1.5 bg-[#38EF7D] hover:bg-emerald-400 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <Play className="w-3.5 h-3.5 text-black" />
+                    <span>Resume / Continue Tournament</span>
+                  </button>
+                ) : (
+                  tournament.status !== 'Completed' && tournament.status !== 'Cancelled' && (
+                    <button
+                      type="button"
+                      disabled={lifecycleBusy}
+                      onClick={async () => {
+                        const reason = window.prompt("Enter reason for holding tournament (e.g. Technical delay, server outage, roster adjustment):", "Temporary operational hold");
+                        if (reason === null) return;
+                        setLifecycleBusy(true);
+                        const res = await tournamentService.setTournamentLifecycle(tournament.id, 'ON_HOLD', reason.trim());
+                        setLifecycleBusy(false);
+                        setLifecycleMessage(res.message || res.error || null);
+                        setTimeout(() => setLifecycleMessage(null), 4000);
+                      }}
+                      className="px-3 py-1.5 bg-amber-200 hover:bg-amber-300 text-amber-950 border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <Pause className="w-3.5 h-3.5 text-amber-950" />
+                      <span>Hold Tournament</span>
+                    </button>
+                  )
+                )}
+
+                {/* 3. Cancel Tournament */}
+                {tournament.status !== 'Cancelled' && tournament.status !== 'Completed' && (
+                  <button
+                    type="button"
+                    disabled={lifecycleBusy}
+                    onClick={async () => {
+                      if (!window.confirm(`Are you sure you want to CANCEL '${tournament.name}'? This will automatically free all registered players so they can enter other tournaments.`)) return;
+                      setLifecycleBusy(true);
+                      const res = await tournamentService.setTournamentLifecycle(tournament.id, 'CANCELLED');
+                      setLifecycleBusy(false);
+                      setLifecycleMessage(res.message || res.error || null);
+                      setTimeout(() => setLifecycleMessage(null), 4000);
+                    }}
+                    className="px-3 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-800 border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <StopCircle className="w-3.5 h-3.5 text-rose-700" />
+                    <span>Cancel Tournament</span>
+                  </button>
+                )}
+
+                {/* 4. Delete Tournament */}
+                <button
+                  type="button"
+                  disabled={lifecycleBusy}
+                  onClick={async () => {
+                    if (!window.confirm(`PERMANENT DELETION: Are you sure you want to permanently delete '${tournament.name}'? This cannot be recovered.`)) return;
+                    setLifecycleBusy(true);
+                    const res = await tournamentService.deleteTournament(tournament.id);
+                    setLifecycleBusy(false);
+                    if (res.success) {
+                      onNavigate('tournaments');
+                    } else {
+                      alert(res.error || 'Failed to delete tournament.');
+                    }
+                  }}
+                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  title="Permanently remove tournament"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-white" />
+                  <span>Delete</span>
+                </button>
+              </div>
+            </div>
+
+            {lifecycleMessage && (
+              <div className="p-2 bg-white border border-black font-mono text-xs font-bold text-black flex items-center gap-2">
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
+                <span>{lifecycleMessage}</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Navigation Tabs Bar */}
@@ -954,13 +1163,13 @@ export function TournamentDetailView({
 
       {/* 6. PLAYERS TAB */}
       {activeTab === 'players' && (() => {
-        const activeRegistrations = tournamentRegistrations.length > 0 
-          ? tournamentRegistrations 
-          : tournamentService.getTournamentRegistrations(tournament.id);
+        const activeRegistrations = tournament 
+          ? tournamentService.getTournamentRegistrations(tournament.id)
+          : [];
         const engine = getAuctionEngine(tournament.id);
         const totalCount = activeRegistrations.length > 0
           ? activeRegistrations.length
-          : (isTestCup ? testCupState.players.length : effectivePlayers.length);
+          : (isTestCup ? testCupState.players.length : 0);
 
         return (
           <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] overflow-hidden">
@@ -1191,46 +1400,26 @@ export function TournamentDetailView({
                     </tr>
                   ))
                 ) : (
-                  effectivePlayers.map((player) => (
-                    <tr
-                      key={player.id}
-                      onClick={() => onNavigate('player_profile', player.id)}
-                      className="hover:bg-[#FFFDE8] transition-colors cursor-pointer group"
-                    >
-                      <td className="p-3">
-                        <div className="flex items-center gap-2">
-                          <span className="text-lg">{player.avatar}</span>
-                          <div>
-                            <span className="font-black text-black group-hover:underline block">
-                              {player.username}
-                            </span>
-                            <span className="text-[10px] text-stone-500 font-normal">
-                              {player.realName} · {player.city || 'India'}
-                            </span>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="p-3 font-bold text-stone-800">
-                        {player.primaryRole}
-                      </td>
-                      <td className="p-3 font-bold text-stone-700">
-                        {player.teamName || 'Free Agent'}
-                      </td>
-                      <td className="p-3 text-right font-black text-black">
-                        <span className="bg-[#FFE600] px-1.5 py-0.5 border border-black inline-block">
-                          {player.mmr.toLocaleString()}
-                        </span>
-                      </td>
-                      <td className="p-3 text-center">
-                        <span className={`px-2 py-0.5 text-[10px] font-black border border-black uppercase ${
-                          player.status === 'Verified' ? 'bg-[#70FFAF] text-black' :
-                          player.status === 'Pending Review' ? 'bg-[#FFE600] text-black' : 'bg-[#FF5757] text-white'
-                        }`}>
-                          {player.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))
+                  <tr>
+                    <td colSpan={5} className="p-10 text-center bg-stone-50">
+                      <div className="space-y-3 max-w-sm mx-auto">
+                        <Users className="w-8 h-8 mx-auto text-stone-400" />
+                        <h4 className="font-mono text-sm font-black uppercase text-black">
+                          No Players Registered Yet
+                        </h4>
+                        <p className="font-mono text-xs text-stone-600">
+                          This tournament has 0 contenders registered. Contenders who register for this championship will appear here in this dedicated roster pool.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => onOpenRegister(tournament.id)}
+                          className="px-4 py-2 bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer inline-flex items-center gap-1.5"
+                        >
+                          <span>Register for This Tournament →</span>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>

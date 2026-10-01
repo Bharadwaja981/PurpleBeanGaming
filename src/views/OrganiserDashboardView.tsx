@@ -8,6 +8,9 @@ import {
   Sparkles, 
   Settings, 
   Play, 
+  Pause,
+  StopCircle,
+  Trash2,
   Calendar, 
   Plus, 
   RefreshCw,
@@ -24,18 +27,34 @@ interface OrganiserDashboardViewProps {
   onNavigate: (view: ViewType, entityId?: string) => void;
   onOpenRegister?: (tourneyId?: string) => void;
   onOpenCreateTournament?: () => void;
+  initialTournamentId?: string;
 }
 
-export function OrganiserDashboardView({ onNavigate, onOpenRegister, onOpenCreateTournament }: OrganiserDashboardViewProps) {
+export function OrganiserDashboardView({ 
+  onNavigate, 
+  onOpenRegister, 
+  onOpenCreateTournament,
+  initialTournamentId 
+}: OrganiserDashboardViewProps) {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
-  const [selectedTournamentId, setSelectedTournamentId] = useState<string>('');
+  const [selectedTournamentId, setSelectedTournamentId] = useState<string>(initialTournamentId || '');
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
+  const [actionNotice, setActionNotice] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const currentUser = tournamentService.getCurrentUser();
+
+  // Keep selected tournament in sync when initialTournamentId prop changes
+  useEffect(() => {
+    if (initialTournamentId) {
+      setSelectedTournamentId(initialTournamentId);
+    }
+  }, [initialTournamentId]);
 
   useEffect(() => {
     const list = tournamentService.getTournaments('All Games', 'All', true);
     setTournaments(list);
     if (list.length > 0 && !selectedTournamentId) {
-      setSelectedTournamentId(list[0].id);
+      const match = initialTournamentId ? list.find(t => t.id === initialTournamentId) : null;
+      setSelectedTournamentId(match ? match.id : list[0].id);
     }
 
     const unsub = tournamentService.subscribe(() => {
@@ -46,13 +65,100 @@ export function OrganiserDashboardView({ onNavigate, onOpenRegister, onOpenCreat
       }
     });
     return unsub;
-  }, [selectedTournamentId]);
+  }, [selectedTournamentId, initialTournamentId]);
 
   const activeTourney = tournaments.find(t => t.id === selectedTournamentId) || tournaments[0];
   const config = activeTourney 
     ? (tournamentConfigRegistry.getConfig(activeTourney.id) || tournamentToConfig(activeTourney))
     : null;
   const engine = config ? new GenericTournamentEngine(config) : null;
+
+  const showNotice = (message: string, type: 'success' | 'error' = 'success') => {
+    setActionNotice({ message, type });
+    setTimeout(() => setActionNotice(null), 4500);
+  };
+
+  const handleAdvanceLifecycle = async () => {
+    if (!activeTourney) return;
+    const status = activeTourney.status;
+    let nextStage: 'DRAFTING' | 'LIVE' | 'COMPLETED' = 'DRAFTING';
+    if (status === 'Registration Open' || activeTourney.lifecycle === 'REGISTRATION_OPEN') {
+      nextStage = 'DRAFTING';
+    } else if (status === 'Drafting' || activeTourney.lifecycle === 'DRAFTING') {
+      nextStage = 'LIVE';
+    } else if (status === 'Live' || activeTourney.lifecycle === 'LIVE') {
+      nextStage = 'COMPLETED';
+    }
+
+    setLifecycleBusy(true);
+    const res = await tournamentService.setTournamentLifecycle(activeTourney.id, nextStage);
+    setLifecycleBusy(false);
+    if (res.success) {
+      showNotice(res.message || `Advanced tournament to ${nextStage}!`);
+    } else {
+      showNotice(res.error || 'Failed to advance lifecycle', 'error');
+    }
+  };
+
+  const handleHoldOrResume = async () => {
+    if (!activeTourney) return;
+    const isOnHold = activeTourney.status === 'On Hold' || activeTourney.lifecycle === 'ON_HOLD';
+    setLifecycleBusy(true);
+    if (isOnHold) {
+      const res = await tournamentService.resumeTournament(activeTourney.id);
+      setLifecycleBusy(false);
+      if (res.success) {
+        showNotice(res.message || 'Resumed tournament from hold.');
+      } else {
+        showNotice(res.error || 'Failed to resume tournament.', 'error');
+      }
+    } else {
+      const reason = window.prompt('Enter reason for holding tournament (e.g. Schedule adjustment, server outage):', 'Operational delay');
+      if (reason === null) {
+        setLifecycleBusy(false);
+        return;
+      }
+      const res = await tournamentService.setTournamentLifecycle(activeTourney.id, 'ON_HOLD', reason.trim());
+      setLifecycleBusy(false);
+      if (res.success) {
+        showNotice(res.message || 'Tournament placed on hold.');
+      } else {
+        showNotice(res.error || 'Failed to hold tournament.', 'error');
+      }
+    }
+  };
+
+  const handleCancelTournament = async () => {
+    if (!activeTourney) return;
+    if (!window.confirm(`Are you sure you want to CANCEL '${activeTourney.name}'? This will free all registered players immediately.`)) {
+      return;
+    }
+    setLifecycleBusy(true);
+    const res = await tournamentService.setTournamentLifecycle(activeTourney.id, 'CANCELLED');
+    setLifecycleBusy(false);
+    if (res.success) {
+      showNotice(res.message || 'Tournament cancelled successfully.');
+    } else {
+      showNotice(res.error || 'Failed to cancel tournament.', 'error');
+    }
+  };
+
+  const handleDeleteTournament = async () => {
+    if (!activeTourney) return;
+    if (!window.confirm(`PERMANENT DELETION: Are you sure you want to permanently delete '${activeTourney.name}'? This cannot be undone.`)) {
+      return;
+    }
+    setLifecycleBusy(true);
+    const res = await tournamentService.deleteTournament(activeTourney.id);
+    setLifecycleBusy(false);
+    if (res.success) {
+      showNotice(`Tournament '${activeTourney.name}' deleted.`);
+      const remaining = tournaments.filter(t => t.id !== activeTourney.id);
+      setSelectedTournamentId(remaining[0]?.id || '');
+    } else {
+      showNotice(res.error || 'Failed to delete tournament.', 'error');
+    }
+  };
 
   return (
     <div className="space-y-8 animate-in fade-in duration-200">
@@ -132,9 +238,141 @@ export function OrganiserDashboardView({ onNavigate, onOpenRegister, onOpenCreat
         </div>
       )}
 
-      {/* Dynamic Workspace */}
+      {/* Action Notification Banner */}
+      {actionNotice && (
+        <div className={`p-4 border-[3px] border-black font-mono text-xs font-black flex items-center justify-between shadow-[4px_4px_0px_0px_#000] animate-in fade-in ${
+          actionNotice.type === 'error' ? 'bg-red-50 text-red-900 border-red-950' : 'bg-[#70FFAF] text-black'
+        }`}>
+          <span>{actionNotice.message}</span>
+          <button 
+            onClick={() => setActionNotice(null)}
+            className="px-1.5 py-0.5 border border-black hover:bg-black hover:text-white cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Organiser Lifecycle Governance Controls Bar */}
+      {activeTourney && (
+        <div className="bg-[#FFFDE8] border-[3.5px] border-black p-4 sm:p-5 shadow-[4px_4px_0px_0px_#000] flex flex-col md:flex-row md:items-center justify-between gap-4 font-mono text-xs">
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <span className="flex items-center gap-1.5 font-black uppercase text-black bg-[#FFE600] px-2 py-0.5 border border-black">
+              <Shield className="w-3.5 h-3.5 text-black" />
+              <span>Lifecycle Status:</span>
+            </span>
+            <span className={`px-2.5 py-1 font-black uppercase border-2 border-black shadow-[1px_1px_0px_0px_#000] ${
+              activeTourney.status === 'Live' || activeTourney.lifecycle === 'LIVE' ? 'bg-[#38EF7D] text-black animate-pulse' :
+              activeTourney.status === 'Drafting' || activeTourney.lifecycle === 'DRAFTING' ? 'bg-[#8B5CF6] text-white' :
+              activeTourney.status === 'On Hold' || activeTourney.lifecycle === 'ON_HOLD' ? 'bg-amber-400 text-black' :
+              activeTourney.status === 'Completed' || activeTourney.lifecycle === 'COMPLETED' ? 'bg-stone-300 text-stone-800' :
+              activeTourney.status === 'Cancelled' || activeTourney.lifecycle === 'CANCELLED' ? 'bg-red-500 text-white' :
+              'bg-[#FFE600] text-black'
+            }`}>
+              {activeTourney.status}
+            </span>
+            {(activeTourney as any).statusReason && (
+              <span className="text-stone-600 italic">
+                ("{(activeTourney as any).statusReason}")
+              </span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Advance Lifecycle */}
+            {(activeTourney.status === 'Registration Open' || activeTourney.lifecycle === 'REGISTRATION_OPEN') && (
+              <button
+                type="button"
+                disabled={lifecycleBusy}
+                onClick={handleAdvanceLifecycle}
+                className="px-3 py-1.5 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white border-2 border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Gavel className="w-3.5 h-3.5 text-[#FFE600]" />
+                <span>Advance to Draft →</span>
+              </button>
+            )}
+
+            {(activeTourney.status === 'Drafting' || activeTourney.lifecycle === 'DRAFTING') && (
+              <button
+                type="button"
+                disabled={lifecycleBusy}
+                onClick={handleAdvanceLifecycle}
+                className="px-3 py-1.5 bg-[#38EF7D] hover:bg-emerald-400 text-black border-2 border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Play className="w-3.5 h-3.5 text-black" />
+                <span>Start Matches (Live) →</span>
+              </button>
+            )}
+
+            {(activeTourney.status === 'Live' || activeTourney.lifecycle === 'LIVE') && (
+              <button
+                type="button"
+                disabled={lifecycleBusy}
+                onClick={handleAdvanceLifecycle}
+                className="px-3 py-1.5 bg-black hover:bg-stone-800 text-white border-2 border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Trophy className="w-3.5 h-3.5 text-[#FFE600]" />
+                <span>Conclude Tournament (Completed)</span>
+              </button>
+            )}
+
+            {/* Hold / Resume */}
+            {(activeTourney.status === 'On Hold' || activeTourney.lifecycle === 'ON_HOLD') ? (
+              <button
+                type="button"
+                disabled={lifecycleBusy}
+                onClick={handleHoldOrResume}
+                className="px-3 py-1.5 bg-[#38EF7D] hover:bg-emerald-400 text-black border-2 border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <Play className="w-3.5 h-3.5 text-black" />
+                <span>Continue / Resume</span>
+              </button>
+            ) : (
+              activeTourney.status !== 'Completed' && activeTourney.status !== 'Cancelled' && (
+                <button
+                  type="button"
+                  disabled={lifecycleBusy}
+                  onClick={handleHoldOrResume}
+                  className="px-3 py-1.5 bg-amber-200 hover:bg-amber-300 text-amber-950 border-2 border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Pause className="w-3.5 h-3.5 text-amber-950" />
+                  <span>Hold Tournament</span>
+                </button>
+              )
+            )}
+
+            {/* Cancel Tournament */}
+            {activeTourney.status !== 'Cancelled' && activeTourney.status !== 'Completed' && (
+              <button
+                type="button"
+                disabled={lifecycleBusy}
+                onClick={handleCancelTournament}
+                className="px-3 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-800 border-2 border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <StopCircle className="w-3.5 h-3.5 text-rose-700" />
+                <span>Cancel</span>
+              </button>
+            )}
+
+            {/* Delete Tournament */}
+            <button
+              type="button"
+              disabled={lifecycleBusy}
+              onClick={handleDeleteTournament}
+              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white border-2 border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              title="Permanently remove tournament"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-white" />
+              <span>Delete</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Dynamic Workspace with Key for Strict Tournament State Isolation */}
       {config && engine ? (
         <DynamicOrganiserWorkspace 
+          key={activeTourney?.id}
           config={config} 
           engine={engine} 
           onNavigate={onNavigate} 
