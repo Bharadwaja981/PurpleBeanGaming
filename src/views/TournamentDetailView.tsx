@@ -48,7 +48,7 @@ interface TournamentDetailViewProps {
 }
 
 export function TournamentDetailView({
-  tournamentId = 'purple-bean-india-masters-2026',
+  tournamentId = '',
   onNavigate,
   onOpenRegister
 }: TournamentDetailViewProps) {
@@ -61,7 +61,7 @@ export function TournamentDetailView({
   const [allPlayers, setAllPlayers] = useState(() => tournamentService.getPlayers());
   const [allMatches, setAllMatches] = useState(() => tournamentService.getMatches());
 
-  const tournament = tournamentService.getTournamentById(tournamentId) || allTournaments.find((t) => t.id === tournamentId) || allTournaments[0];
+  const tournament = (tournamentId ? (tournamentService.getTournamentById(tournamentId) || allTournaments.find((t) => t.id === tournamentId)) : undefined) || allTournaments[0];
   const isTestCup = tournament?.id === 'purple-bean-test-cup';
   const isAuctionSupported = tournamentConfigRegistry.isAuctionSupported(tournament?.id);
   const [auctionLifecycle, setAuctionLifecycle] = useState(() => 

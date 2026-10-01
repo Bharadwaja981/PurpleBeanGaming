@@ -57,14 +57,16 @@ export function RegistrationModal({
 }: RegistrationModalProps) {
   const currentUser = tournamentService.getCurrentUser();
   const allTournaments = tournamentService.getTournaments('All Games', 'All', true);
-  const targetTourneyId = tournamentId || allTournaments[0]?.id || 'purple-bean-test-cup';
+  const targetTourneyId = tournamentId || allTournaments[0]?.id || '';
   const currentTourneyObj = allTournaments.find(t => t.id === targetTourneyId);
   const effectiveTourneyName = tournamentName || currentTourneyObj?.name || 'Tournament';
 
   const isRegistrationClosed = Boolean(
-    currentTourneyObj && 
-    currentTourneyObj.status !== 'Registration Open' && 
-    currentTourneyObj.lifecycle !== 'REGISTRATION_OPEN'
+    !targetTourneyId || (
+      currentTourneyObj && 
+      currentTourneyObj.status !== 'Registration Open' && 
+      currentTourneyObj.lifecycle !== 'REGISTRATION_OPEN'
+    )
   );
 
   const [ign, setIgn] = useState('');

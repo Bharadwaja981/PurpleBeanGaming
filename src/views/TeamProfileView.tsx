@@ -269,32 +269,38 @@ export function TeamProfileView({ teamId, onNavigate }: TeamProfileViewProps) {
               COMPETITIVE TOURNAMENT RUNS &amp; IMMUTABLE ROSTER ARCHIVES
             </h2>
             <div className="space-y-4">
-              {effectiveTournaments.filter(t => t.id === 'purple-bean-test-cup' || t.id === 'purple-bean-india-masters-2026' || effectiveTournaments.length <= 2).map(t => (
-                <div key={t.id} className="p-4 bg-stone-50 border-2 border-black space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-200 pb-2">
-                    <div>
-                      <span className="font-black text-sm uppercase text-black">{t.name}</span>
-                      <span className="text-[10px] text-stone-500 block">{t.region} · {t.format}</span>
-                    </div>
-                    <span className="bg-[#FFE600] px-2 py-0.5 border border-black font-black uppercase text-[10px]">
-                      {t.status}
-                    </span>
-                  </div>
-
-                  <div className="pt-1">
-                    <span className="font-bold text-stone-500 uppercase text-[10px] block mb-1">
-                      Locked Tournament Roster Snapshot:
-                    </span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {teamRoster.map(p => (
-                        <span key={p.id} className="bg-white border border-black px-2 py-0.5 text-[11px] font-bold">
-                          {p.username} ({p.primaryRole})
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+              {effectiveTournaments.length === 0 ? (
+                <div className="p-6 bg-stone-50 border-2 border-black text-center text-stone-600 font-mono">
+                  No active tournament records or archives currently linked to this team.
                 </div>
-              ))}
+              ) : (
+                effectiveTournaments.map(t => (
+                  <div key={t.id} className="p-4 bg-stone-50 border-2 border-black space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-stone-200 pb-2">
+                      <div>
+                        <span className="font-black text-sm uppercase text-black">{t.name}</span>
+                        <span className="text-[10px] text-stone-500 block">{t.region} · {t.format}</span>
+                      </div>
+                      <span className="bg-[#FFE600] px-2 py-0.5 border border-black font-black uppercase text-[10px]">
+                        {t.status}
+                      </span>
+                    </div>
+
+                    <div className="pt-1">
+                      <span className="font-bold text-stone-500 uppercase text-[10px] block mb-1">
+                        Locked Tournament Roster Snapshot:
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {teamRoster.map(p => (
+                          <span key={p.id} className="bg-white border border-black px-2 py-0.5 text-[11px] font-bold">
+                            {p.username} ({p.primaryRole})
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>

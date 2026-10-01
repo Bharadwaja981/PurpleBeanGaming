@@ -538,19 +538,27 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
 
       {filteredTournaments.length === 0 && (
         <div className="bg-white border-[3.5px] border-black p-10 text-center space-y-3 shadow-[6px_6px_0px_0px_#000]">
-          <h3 className="font-sans font-black text-xl uppercase">No Tournaments Match Your Filter</h3>
-          <p className="font-mono text-xs text-stone-600">Try selecting another game title or clear your search query.</p>
-          <button
-            onClick={() => {
-              setStatusFilter('All');
-              setGameFilter('All');
-              setRegionFilter('All');
-              setSearchQuery('');
-            }}
-            className="bg-[#FFE600] border-2 border-black px-4 py-2 font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000]"
-          >
-            Reset Filters
-          </button>
+          <h3 className="font-sans font-black text-xl uppercase">
+            {tournaments.length === 0 ? 'No Active Tournaments' : 'No Tournaments Match Your Filter'}
+          </h3>
+          <p className="font-mono text-xs text-stone-600">
+            {tournaments.length === 0 
+              ? 'There are currently no active tournaments. New championships will appear here once announced.' 
+              : 'Try selecting another game title or clearing your search query.'}
+          </p>
+          {tournaments.length > 0 && (
+            <button
+              onClick={() => {
+                setStatusFilter('All');
+                setGameFilter('All');
+                setRegionFilter('All');
+                setSearchQuery('');
+              }}
+              className="bg-[#FFE600] border-2 border-black px-4 py-2 font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+            >
+              Reset Filters
+            </button>
+          )}
         </div>
       )}
     </div>

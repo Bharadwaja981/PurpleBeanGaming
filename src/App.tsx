@@ -502,7 +502,7 @@ export default function App() {
                     </p>
                   </div>
                   <DoubleEliminationBracket 
-                    tournamentId={activeEntityId || (tournamentService.getTournaments()[0]?.id || 'purple-bean-test-cup')} 
+                    tournamentId={activeEntityId || (tournamentService.getTournaments()[0]?.id || '')} 
                     onSelectMatch={(mId) => handleNavigate('match_detail', mId)} 
                   />
                 </div>
