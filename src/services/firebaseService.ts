@@ -32,6 +32,8 @@ import {
   auth, 
   googleProvider, 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   fbSignOut, 
   onAuthStateChanged,
   handleFirestoreError,
@@ -441,6 +443,36 @@ class FirebaseTournamentService {
   }
 
   private initAuthListener() {
+    // Process returning redirect credentials from mobile Google Sign-In
+    if (typeof window !== 'undefined') {
+      getRedirectResult(auth)
+        .then((result) => {
+          if (result && result.user) {
+            const firebaseUser = result.user;
+            const email = (firebaseUser.email || '').toLowerCase().trim();
+            const perms = this.computeUserPermissions(email);
+            this.currentUser = {
+              id: firebaseUser.uid,
+              email,
+              displayName: firebaseUser.displayName || email.split('@')[0],
+              avatarUrl: firebaseUser.photoURL || undefined,
+              role: perms.role,
+              isAdmin: perms.isAdmin,
+              isPrimaryAdmin: perms.isPrimaryAdmin,
+              isModerator: perms.isModerator
+            };
+            this.syncAuthListeners(firebaseUser, perms);
+            if (perms.isAdmin) {
+              this.triggerAdminBootstrap(firebaseUser.uid, email);
+            }
+            this.notify();
+          }
+        })
+        .catch((redirectErr) => {
+          console.warn('Firebase redirect sign-in note:', redirectErr);
+        });
+    }
+
     onAuthStateChanged(auth, (firebaseUser: User | null) => {
       if (firebaseUser) {
         const email = (firebaseUser.email || '').toLowerCase().trim();
@@ -1406,13 +1438,32 @@ class FirebaseTournamentService {
   }
 
   public async signInWithGoogle(): Promise<{ user: UserSession; error: any; cancelled?: boolean }> {
-    // If a popup request is already active, return the existing in-flight promise
-    // to prevent Firebase "auth/cancelled-popup-request"
+    // If a popup/redirect request is already active, return the existing in-flight promise
     if (this.activeSignInPromise) {
       return this.activeSignInPromise;
     }
 
     this.activeSignInPromise = (async () => {
+      // Check if running on a mobile device or touch-centric small viewport
+      const isMobileDevice = typeof window !== 'undefined' && (
+        /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+        (window.innerWidth <= 768 && ('ontouchstart' in window || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0)))
+      );
+
+      // On mobile devices, mobile browsers (Safari, Chrome, in-app webviews) aggressively block
+      // popups and fail window.open from touch events. Use signInWithRedirect directly on mobile!
+      if (isMobileDevice) {
+        try {
+          console.info('Initiating mobile Google Sign-In with redirect...');
+          await signInWithRedirect(auth, googleProvider);
+          return { user: this.currentUser, error: null, cancelled: false };
+        } catch (redirectErr: any) {
+          console.error('Mobile Google Sign-In with redirect error:', redirectErr);
+          return { user: this.currentUser, error: redirectErr, cancelled: false };
+        }
+      }
+
+      // On desktop, attempt signInWithPopup for uninterrupted in-page auth
       try {
         const result = await signInWithPopup(auth, googleProvider);
         const fbUser = result.user;
@@ -1439,6 +1490,22 @@ class FirebaseTournamentService {
       } catch (error: any) {
         const errorCode = error?.code || '';
         const errorMessage = error?.message || String(error || '');
+
+        // If popup was blocked or unsupported, automatically fallback to redirect!
+        if (
+          errorCode === 'auth/popup-blocked' ||
+          errorCode === 'auth/operation-not-supported-in-this-environment' ||
+          errorMessage.includes('popup-blocked')
+        ) {
+          console.warn('Popup blocked by browser, falling back to signInWithRedirect...');
+          try {
+            await signInWithRedirect(auth, googleProvider);
+            return { user: this.currentUser, error: null, cancelled: false };
+          } catch (fallbackErr: any) {
+            return { user: this.currentUser, error: fallbackErr, cancelled: false };
+          }
+        }
+
         const isCancelled = 
           errorCode === 'auth/cancelled-popup-request' ||
           errorCode === 'auth/popup-closed-by-user' ||
@@ -1447,7 +1514,6 @@ class FirebaseTournamentService {
           errorMessage.includes('popup-closed-by-user');
 
         if (isCancelled) {
-          // Graceful cancellation handling: standard user action or superseded popup
           console.info('Google Sign-In popup closed or cancelled by user.');
           return { user: this.currentUser, error: null, cancelled: true };
         }

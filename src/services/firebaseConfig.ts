@@ -1,5 +1,14 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut as fbSignOut, onAuthStateChanged, User } from 'firebase/auth';
+import { 
+  getAuth, 
+  GoogleAuthProvider, 
+  signInWithPopup, 
+  signInWithRedirect, 
+  getRedirectResult, 
+  signOut as fbSignOut, 
+  onAuthStateChanged, 
+  User 
+} from 'firebase/auth';
 import { initializeFirestore, getFirestore, doc, getDocFromServer, setLogLevel } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -177,5 +186,5 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 // Trigger initial connection check
 testFirestoreConnection().catch(console.warn);
 
-export { signInWithPopup, fbSignOut, onAuthStateChanged };
+export { signInWithPopup, signInWithRedirect, getRedirectResult, fbSignOut, onAuthStateChanged };
 export type { User };

@@ -21,7 +21,8 @@ import {
   ExternalLink,
   Key,
   Loader2,
-  Zap
+  Zap,
+  AlertCircle
 } from 'lucide-react';
 import { ViewType, CompetitiveGame, Match, Tournament } from '../types/tournament';
 import { PurpleBeanLogo } from './PurpleBeanLogo';
@@ -108,6 +109,7 @@ export function Navigation({
   }, [activeGames]);
 
   const [isSigningIn, setIsSigningIn] = useState(false);
+  const [signInError, setSignInError] = useState<string | null>(null);
 
   const handleGameSelect = (gName: string) => {
     if (onSelectGame) {
@@ -118,13 +120,25 @@ export function Navigation({
   const handleGoogleSignIn = async () => {
     if (isSigningIn) return;
     setIsSigningIn(true);
+    setSignInError(null);
     try {
       const res = await tournamentService.signInWithGoogle();
-      if (res && res.user && res.user.email) {
+      if (res && res.error) {
+        const errCode = res.error?.code || '';
+        const errMsg = res.error?.message || '';
+        if (errCode === 'auth/unauthorized-domain') {
+          setSignInError('Domain not authorized: Please add purplebeangaming.com to Firebase Console -> Authentication -> Settings -> Authorized domains.');
+        } else if (errCode === 'auth/popup-blocked') {
+          setSignInError('Popup was blocked by your browser. Retrying with mobile redirect...');
+        } else {
+          setSignInError(errMsg || 'Google Sign-In failed. Please try again.');
+        }
+      } else if (res && res.user && res.user.email) {
         setMobileDrawerOpen(false);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.warn('Sign in note:', e);
+      setSignInError(e?.message || 'Authentication encountered an unexpected error.');
     } finally {
       setIsSigningIn(false);
     }
@@ -534,12 +548,24 @@ export function Navigation({
             <MenuSeparator />
 
             {/* Auth Actions: Real Google Sign In or Real Sign Out */}
-            <div className="p-1.5">
+            <div className="p-1.5 space-y-1.5">
+              {signInError && (
+                <div className="p-2 bg-red-50 border border-red-500 text-red-700 font-mono text-[10px] leading-tight flex items-start gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0 text-red-600 mt-0.5" />
+                  <div className="flex-1 break-words">
+                    {signInError}
+                  </div>
+                </div>
+              )}
               {!isAuthenticated ? (
                 <button
                   type="button"
+                  data-no-close="true"
                   disabled={isSigningIn}
-                  onClick={handleGoogleSignIn}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleGoogleSignIn();
+                  }}
                   className={`w-full py-2 px-3 bg-white hover:bg-stone-50 text-black border-2 border-black font-mono text-xs font-black flex items-center justify-center gap-2 shadow-[2px_2px_0px_0px_#000] ${
                     isSigningIn ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
                   }`}
@@ -708,11 +734,24 @@ export function Navigation({
                     </span>
                   </div>
 
+                  {signInError && (
+                    <div className="p-2.5 bg-red-50 border-2 border-red-500 text-red-700 font-mono text-[11px] leading-tight flex items-start gap-2 shadow-[2px_2px_0px_0px_#ef4444]">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-red-600 mt-0.5" />
+                      <div className="flex-1 break-words">
+                        {signInError}
+                      </div>
+                    </div>
+                  )}
+
                   {!isAuthenticated ? (
                     <button
                       type="button"
+                      data-no-close="true"
                       disabled={isSigningIn}
-                      onClick={handleGoogleSignIn}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleGoogleSignIn();
+                      }}
                       className={`w-full py-2.5 bg-white hover:bg-stone-50 text-black border-2 border-black shadow-[2px_2px_0px_0px_#000] font-mono text-xs font-black uppercase flex items-center justify-center gap-2 ${
                         isSigningIn ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
                       }`}

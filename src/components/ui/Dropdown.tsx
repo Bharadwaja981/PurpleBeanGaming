@@ -89,7 +89,7 @@ export function SelectDropdown<T extends string | number = string>({
 
   // Close on outside click
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || isMobile) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setIsOpen(false);
@@ -97,7 +97,7 @@ export function SelectDropdown<T extends string | number = string>({
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isOpen]);
+  }, [isOpen, isMobile]);
 
   // Close on Escape
   useEffect(() => {
@@ -379,7 +379,7 @@ export function MultiSelectDropdown<T extends string = string>({
   }, [isOpen, isMobile]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || isMobile) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setIsOpen(false);
@@ -387,7 +387,7 @@ export function MultiSelectDropdown<T extends string = string>({
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isOpen]);
+  }, [isOpen, isMobile]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -602,6 +602,7 @@ export function MenuDropdown({
   const [openUpward, setOpenUpward] = useState(false);
   const [effectiveAlign, setEffectiveAlign] = useState<'left' | 'right'>(align);
   const containerRef = useRef<HTMLDivElement>(null);
+  const drawerRef = useRef<HTMLDivElement>(null);
 
   const isControlled = typeof controlledIsOpen === 'boolean';
   const open = isControlled ? controlledIsOpen : internalIsOpen;
@@ -652,15 +653,19 @@ export function MenuDropdown({
   }, [open, isMobile]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || isMobile) return;
     const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(e.target as Node) &&
+        (!drawerRef.current || !drawerRef.current.contains(e.target as Node))
+      ) {
         setOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [open, setOpen]);
+  }, [open, isMobile, setOpen]);
 
   useEffect(() => {
     if (!open) return;
@@ -679,6 +684,7 @@ export function MenuDropdown({
           onClick={() => setOpen(false)}
         />
         <div
+          ref={drawerRef}
           role="dialog"
           aria-modal="true"
           className="relative w-full max-h-[85vh] bg-white border-t-[3.5px] border-black shadow-[0_-8px_0px_0px_#000] rounded-t-2xl p-4 flex flex-col animate-in slide-in-from-bottom duration-200 z-10 pb-6"
@@ -700,7 +706,19 @@ export function MenuDropdown({
           )}
           <div
             className="overflow-y-auto max-h-[60vh] py-1 overscroll-contain"
-            onClick={() => setOpen(false)}
+            onClick={(e) => {
+              const target = e.target as HTMLElement;
+              if (
+                target.closest('[data-no-close="true"]') ||
+                target.closest('button[disabled]') ||
+                target.closest('input, textarea, select')
+              ) {
+                return;
+              }
+              if (target.closest('button, a')) {
+                setOpen(false);
+              }
+            }}
           >
             {children}
           </div>
@@ -728,6 +746,13 @@ export function MenuDropdown({
           } ${menuClassName}`}
           onClick={(e) => {
             const target = e.target as HTMLElement;
+            if (
+              target.closest('[data-no-close="true"]') ||
+              target.closest('button[disabled]') ||
+              target.closest('input, textarea, select')
+            ) {
+              return;
+            }
             if (target.closest('button, a')) {
               setOpen(false);
             }
