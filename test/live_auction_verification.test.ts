@@ -13,6 +13,7 @@ describe('Purple Bean Gaming - Live Captain Auction Verification Suite', () => {
   let organiserId = '00000000-0000-4000-8000-000000000001';
 
   beforeEach(() => {
+    dotaPlayerRegistry.clearAll();
     engine = new DotaAuctionEngine({
       startingCredits: 1000,
       creditAllocationMode: 'EQUAL',

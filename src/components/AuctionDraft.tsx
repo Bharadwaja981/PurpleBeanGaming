@@ -83,6 +83,20 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
   const [bidSuccess, setBidSuccess] = useState<string | null>(null);
   const [selectedNomineeId, setSelectedNomineeId] = useState<string>('');
   const [customBidAmount, setCustomBidAmount] = useState<string>('');
+  const [customExtendSeconds, setCustomExtendSeconds] = useState<string>('15');
+
+  // Captain team branding & customization state
+  const [showTeamCustomizerModal, setShowTeamCustomizerModal] = useState(false);
+  const [customTeamName, setCustomTeamName] = useState('');
+  const [customTeamTag, setCustomTeamTag] = useState('');
+  const [customTeamLogo, setCustomTeamLogo] = useState('🛡️');
+  const [customTeamColor, setCustomTeamColor] = useState('#7C3AED');
+  const [customTeamBanner, setCustomTeamBanner] = useState('linear-gradient(135deg, #1e1b4b 0%, #4338ca 100%)');
+  const [spectatorCheerMsg, setSpectatorCheerMsg] = useState('');
+  const [cheersList, setCheersList] = useState<{ id: string; user: string; text: string; time: string }[]>([
+    { id: 'c-1', user: 'Spectator_01', text: '🔥 Let the bidding battle begin!', time: '12:00' },
+    { id: 'c-2', user: 'DotaFanatic', text: '⚡ Big bids incoming for the mid-laners!', time: '12:01' }
+  ]);
 
   // Organiser simulated perspective: allows organisers/testers to switch to captain live bidding device
   const [simulatedCaptainTeamId, setSimulatedCaptainTeamId] = useState<string>('');
@@ -189,10 +203,23 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
   // In production, perspective switching is completely disabled and excluded
   const effectiveSimulatedCaptainTeamId = isDevMode ? simulatedCaptainTeamId : '';
 
-  // Determine active captain team strictly based on authenticated Firebase identity in THIS tournament
+  // Determine active captain team based on authenticated identity, email, or appointed registration in THIS tournament
+  const matchedUserCaptainTeam = teams.find(t => 
+    t.captainId === currentUser.id ||
+    (currentUser.email && ((t as any).captainEmail?.toLowerCase() === currentUser.email.toLowerCase() || t.captainId?.toLowerCase() === currentUser.email.toLowerCase())) ||
+    (currentUser.displayName && (t.captainIgn?.toLowerCase() === currentUser.displayName.toLowerCase() || t.captainId?.toLowerCase() === currentUser.displayName.toLowerCase())) ||
+    Boolean(tournamentService.getTournamentRegistrations(selectedTournamentId).find(r => 
+      (r.userId === currentUser.id || (currentUser.email && r.userEmail?.toLowerCase() === currentUser.email.toLowerCase()) || (currentUser.displayName && r.ign?.toLowerCase() === currentUser.displayName.toLowerCase())) &&
+      r.isCaptainApproved && (r.teamId === t.id || t.captainId === r.userId)
+    ))
+  );
+
   const effectiveCaptainTeam = (() => {
     if (effectiveSimulatedCaptainTeamId) {
       return teams.find(t => t.id === effectiveSimulatedCaptainTeamId);
+    }
+    if (matchedUserCaptainTeam) {
+      return matchedUserCaptainTeam;
     }
     if (isActualCaptain) {
       // Must be an appointed captain of a team in THIS tournament!
@@ -205,6 +232,11 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
   const canOperateThisAuction = tournamentConfigRegistry.canUserManageTournamentAuction(currentUser, selectedTournamentId);
   const isCaptainViewActive = Boolean(effectiveCaptainTeam && (!isOrganiserUser || effectiveSimulatedCaptainTeamId));
   const isOrganiserDeskActive = isOrganiserUser && canOperateThisAuction && !effectiveSimulatedCaptainTeamId;
+
+  // Inform engine whether this client acts as authoritative organiser host
+  useEffect(() => {
+    activeEngine.setOrganiserHost(Boolean(isOrganiserDeskActive));
+  }, [isOrganiserDeskActive, activeEngine]);
 
   // Active nominee & configuration from tournament engine
   const currentNominee = auctionState.nominee;
@@ -505,19 +537,21 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-[10px] uppercase font-bold text-stone-500">Perspective:</span>
-            <select
+            <span className="text-[10px] uppercase font-black text-stone-500 shrink-0">Perspective:</span>
+            <SelectDropdown
               value={effectiveSimulatedCaptainTeamId}
-              onChange={(e) => setSimulatedCaptainTeamId(e.target.value)}
-              className="bg-white border-2 border-black px-2 py-1 text-xs font-mono font-bold cursor-pointer"
-            >
-              <option value="">Organiser Desk (Controls & Telemetry)</option>
-              {teams.map(t => (
-                <option key={t.id} value={t.id}>
-                  Captain: {t.name} [{t.tag}] — {t.captainIgn} ({t.remainingCredits} Cr)
-                </option>
-              ))}
-            </select>
+              onChange={(val) => setSimulatedCaptainTeamId(val)}
+              options={[
+                { value: '', label: 'Organiser Desk (Controls & Telemetry)', subtitle: 'Full referee authority' },
+                ...teams.map(t => ({
+                  value: t.id,
+                  label: `${t.name} [${t.tag}]`,
+                  subtitle: `Captain: ${t.captainIgn} · ${t.remainingCredits} Credits`
+                }))
+              ]}
+              size="sm"
+              mobileTitle="Select Simulation Perspective"
+            />
           </div>
         </div>
       )}
@@ -642,18 +676,70 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                 <div className="flex items-center gap-2">
                   <Flame className="w-5 h-5 text-[#FF5757]" />
                   <span className="font-black text-xs uppercase tracking-tight">
-                    {isCaptainViewActive ? 'CAPTAIN LIVE BIDDING FLOOR' : 'ORGANISER AUCTION DESK'}
+                    {isCaptainViewActive 
+                      ? 'CAPTAIN LIVE BIDDING FLOOR' 
+                      : isOrganiserDeskActive 
+                      ? 'ORGANISER AUCTION DESK' 
+                      : 'LIVE SPECTATOR BROADCAST'}
                   </span>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 flex-wrap justify-end">
                   <div className={`flex items-center gap-1.5 text-xs font-black px-2 py-0.5 border border-black ${
                     auctionState.secondsRemaining <= 5 && auctionState.status === 'LIVE'
                       ? 'bg-[#FF5757] text-white animate-pulse'
                       : 'bg-[#F3E8FF] text-[#7C3AED]'
                   }`}>
                     <Clock className="w-4 h-4" />
-                    <span>Time Remaining: {auctionState.secondsRemaining}s</span>
+                    <span>Time: {auctionState.secondsRemaining}s</span>
                   </div>
+                  {isOrganiserDeskActive && auctionState.status === 'LIVE' && (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => {
+                          activeEngine.addTime(10, currentUser.id);
+                          setBidSuccess('+10s added to clock');
+                          setTimeout(() => setBidSuccess(null), 2000);
+                        }}
+                        className="bg-[#FFE600] hover:bg-yellow-400 text-black border border-black px-1.5 py-0.5 text-[10px] font-black uppercase cursor-pointer"
+                        title="Add 10 seconds to auction clock"
+                      >
+                        +10s
+                      </button>
+                      <button
+                        onClick={() => {
+                          activeEngine.addTime(15, currentUser.id);
+                          setBidSuccess('+15s added to clock');
+                          setTimeout(() => setBidSuccess(null), 2000);
+                        }}
+                        className="bg-[#FFE600] hover:bg-yellow-400 text-black border border-black px-1.5 py-0.5 text-[10px] font-black uppercase cursor-pointer"
+                        title="Add 15 seconds to auction clock"
+                      >
+                        +15s
+                      </button>
+                      <button
+                        onClick={() => {
+                          activeEngine.addTime(30, currentUser.id);
+                          setBidSuccess('+30s added to clock');
+                          setTimeout(() => setBidSuccess(null), 2000);
+                        }}
+                        className="bg-[#FFE600] hover:bg-yellow-400 text-black border border-black px-1.5 py-0.5 text-[10px] font-black uppercase cursor-pointer"
+                        title="Add 30 seconds to auction clock"
+                      >
+                        +30s
+                      </button>
+                      <button
+                        onClick={() => {
+                          activeEngine.addTime(60, currentUser.id);
+                          setBidSuccess('+60s added to clock');
+                          setTimeout(() => setBidSuccess(null), 2000);
+                        }}
+                        className="bg-[#FFE600] hover:bg-yellow-400 text-black border border-black px-1.5 py-0.5 text-[10px] font-black uppercase cursor-pointer"
+                        title="Add 60 seconds to auction clock"
+                      >
+                        +60s
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -774,9 +860,25 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                   {isCaptainViewActive && effectiveCaptainTeam && (
                     <div className="bg-stone-50 border-2 border-black p-5 space-y-4">
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-black/10 pb-2">
-                        <div>
-                          <span className="text-[10px] uppercase font-black text-stone-500 block">My Team:</span>
-                          <span className="font-black text-black text-base">{effectiveCaptainTeam.name} [{effectiveCaptainTeam.tag}]</span>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <div>
+                            <span className="text-[10px] uppercase font-black text-stone-500 block">My Team:</span>
+                            <span className="font-black text-black text-base">{effectiveCaptainTeam.name} [{effectiveCaptainTeam.tag}]</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomTeamName(effectiveCaptainTeam.name);
+                              setCustomTeamTag(effectiveCaptainTeam.tag);
+                              setCustomTeamLogo(effectiveCaptainTeam.logo || '🛡️');
+                              setCustomTeamColor(effectiveCaptainTeam.color || '#7C3AED');
+                              setCustomTeamBanner((effectiveCaptainTeam as any).bannerUrl || 'linear-gradient(135deg, #1e1b4b 0%, #4338ca 100%)');
+                              setShowTeamCustomizerModal(true);
+                            }}
+                            className="ml-2 bg-white hover:bg-[#FFE600] text-black border-2 border-black px-2.5 py-1 text-[10px] font-black uppercase cursor-pointer shadow-[2px_2px_0px_0px_#000] inline-flex items-center gap-1"
+                          >
+                            🎨 Customize Name & Banner
+                          </button>
                         </div>
                         <div className="text-right">
                           <span className="text-[10px] uppercase font-black text-stone-500 block">Credits Remaining:</span>
@@ -806,9 +908,40 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                         </div>
                       </div>
 
-                      <div className="text-[11px] text-stone-600 bg-[#E0F2FE] border border-blue-300 p-2">
-                        <strong>Reserve Invariant:</strong> Must retain at least <strong>{captainMandatoryReserveNeeded} Cr</strong> ({config.reservePerSlot} Cr × {captainRemainingMandatorySlots} unfilled mandatory primary slots).
-                      </div>
+                      {/* Roster Complete Banner with Name & Banner Submission */}
+                      {captainPrimaryCount >= 5 ? (
+                        <div className="bg-[#70FFAF] border-2 border-black p-4 space-y-2 shadow-[2px_2px_0px_0px_#000]">
+                          <div className="flex items-start gap-2.5">
+                            <span className="text-2xl">🎉</span>
+                            <div>
+                              <span className="font-black text-xs uppercase text-black block">ROSTER ASSEMBLED (5/5 Players Drafted)</span>
+                              <span className="text-[11px] text-stone-800 block mt-0.5 leading-relaxed">
+                                Your full franchise squad is drafted! Submit your official team name, 3-4 letter tag, custom banner, and logo so the Organiser can seed your team into group stages and upper/lower brackets.
+                              </span>
+                            </div>
+                          </div>
+                          <div className="pt-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCustomTeamName(effectiveCaptainTeam.name);
+                                setCustomTeamTag(effectiveCaptainTeam.tag);
+                                setCustomTeamLogo(effectiveCaptainTeam.logo || '🛡️');
+                                setCustomTeamColor(effectiveCaptainTeam.color || '#7C3AED');
+                                setCustomTeamBanner((effectiveCaptainTeam as any).bannerUrl || 'linear-gradient(135deg, #1e1b4b 0%, #4338ca 100%)');
+                                setShowTeamCustomizerModal(true);
+                              }}
+                              className="bg-black hover:bg-stone-800 text-white border-2 border-black px-4 py-2 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#FFE600] flex items-center gap-1.5 cursor-pointer"
+                            >
+                              🎨 Submit Team Name, Banner &amp; Identity →
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-stone-600 bg-[#E0F2FE] border border-blue-300 p-2">
+                          <strong>Reserve Invariant:</strong> Must retain at least <strong>{captainMandatoryReserveNeeded} Cr</strong> ({config.reservePerSlot} Cr × {captainRemainingMandatorySlots} unfilled mandatory primary slots).
+                        </div>
+                      )}
 
                       {/* Quick Bid Increment Buttons */}
                       <div className="space-y-1.5">
@@ -861,19 +994,61 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
 
                   {/* SPECTATOR READ-ONLY BROADCAST NOTICE */}
                   {!isCaptainViewActive && !isOrganiserDeskActive && (
-                    <div className="bg-[#F8FAFC] border-2 border-black p-4 flex items-center justify-between gap-3 text-xs">
-                      <div className="flex items-center gap-2.5">
-                        <Users className="w-5 h-5 text-sky-700 shrink-0" />
-                        <div>
-                          <span className="font-black uppercase text-black block">Live Spectator Broadcast</span>
-                          <span className="text-stone-600 text-[11px] block">
-                            Real-time synchronized floor feed (read-only mode). Captain bidding is in progress.
-                          </span>
+                    <div className="bg-[#F8FAFC] border-2 border-black p-4 space-y-3 text-xs">
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex items-center gap-2.5">
+                          <Users className="w-5 h-5 text-sky-700 shrink-0" />
+                          <div>
+                            <span className="font-black uppercase text-black block">Live Spectator Broadcast</span>
+                            <span className="text-stone-600 text-[11px] block">
+                              Real-time synchronized floor feed (read-only mode). Captain bidding is in progress.
+                            </span>
+                          </div>
+                        </div>
+                        <span className="px-2.5 py-1 bg-sky-100 border border-black text-[10px] font-black uppercase text-sky-800 shrink-0">
+                          Spectator Mode
+                        </span>
+                      </div>
+
+                      {/* Interactive Cheer & Reaction Bar */}
+                      <div className="pt-2 border-t border-stone-200 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-black uppercase text-stone-500">Live Cheers:</span>
+                          {[
+                            { emoji: '🔥', text: 'Hype!' },
+                            { emoji: '👏', text: 'Well Bid!' },
+                            { emoji: '⚡', text: 'Steal!' },
+                            { emoji: '🤯', text: 'Big Bid!' },
+                            { emoji: '👑', text: 'Captain Move!' }
+                          ].map(c => (
+                            <button
+                              key={c.text}
+                              type="button"
+                              onClick={() => {
+                                setCheersList(prev => [
+                                  { id: `cheer-${Date.now()}-${Math.random()}`, user: currentUser.displayName || 'Spectator', text: `${c.emoji} ${c.text}`, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
+                                  ...prev.slice(0, 15)
+                                ]);
+                              }}
+                              className="px-2 py-0.5 bg-white hover:bg-[#FFE600] border border-black text-[10px] font-bold cursor-pointer transition-all shadow-[1px_1px_0px_0px_#000]"
+                            >
+                              {c.emoji} {c.text}
+                            </button>
+                          ))}
                         </div>
                       </div>
-                      <span className="px-2.5 py-1 bg-sky-100 border border-black text-[10px] font-black uppercase text-sky-800 shrink-0">
-                        Spectator View
-                      </span>
+
+                      {/* Live Cheer Ticker */}
+                      {cheersList.length > 0 && (
+                        <div className="bg-white border border-black p-2 max-h-20 overflow-y-auto space-y-1 text-[11px] font-mono">
+                          {cheersList.slice(0, 4).map(ch => (
+                            <div key={ch.id} className="flex items-center justify-between text-stone-700">
+                              <span><strong>{ch.user}:</strong> {ch.text}</span>
+                              <span className="text-[9px] text-stone-400">{ch.time}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -881,7 +1056,7 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                   {/* ORGANISER AUCTION DESK (Organiser Bid Controls Removed)    */}
                   {/* --------------------------------------------------------- */}
                   {isOrganiserDeskActive && (
-                    <div className="bg-[#FFFBEB] border-2 border-black p-5 space-y-4">
+                    <div className="bg-[#FFFBEB] border-2 border-black p-5 space-y-4 shadow-[3px_3px_0px_0px_#000]">
                       <div className="flex items-center justify-between border-b border-black/10 pb-2">
                         <div className="flex items-center gap-2">
                           <Shield className="w-4 h-4 text-amber-700" />
@@ -890,12 +1065,12 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                           </span>
                         </div>
                         <span className="text-[10px] font-bold bg-[#FFE600] border border-black px-2 py-0.5">
-                          Organiser Bidding Strictly Prohibited
+                          Referee &amp; Timer Authority
                         </span>
                       </div>
 
                       <p className="text-xs text-stone-600 leading-relaxed">
-                        Captains bid simultaneously from their own devices. As the tournament organiser, you referee this lot and execute floor certification when the countdown expires.
+                        Captains bid simultaneously from their own devices. As the tournament organiser, you control the clock, extend bidding time, and execute floor certification when bidding concludes.
                       </p>
 
                       {/* Organiser Floor Certification Buttons */}
@@ -905,7 +1080,7 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                           disabled={!auctionState.leadingTeamId}
                           className="flex-1 py-3 px-4 bg-[#70FFAF] hover:bg-emerald-400 disabled:opacity-40 text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer disabled:cursor-not-allowed"
                         >
-                          End Nomination & Sell to {auctionState.leadingTeamName || 'Leading Bidder'}
+                          End Nomination &amp; Sell to {auctionState.leadingTeamName || 'Leading Bidder'}
                         </button>
                         <button
                           onClick={handlePassUnsold}
@@ -930,6 +1105,113 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                             Resume
                           </button>
                         )}
+                      </div>
+
+                      {/* PROMINENT ORGANISER EXTEND AUCTION TIME SECTION */}
+                      <div className="p-3.5 bg-white border-2 border-black space-y-3 shadow-[2px_2px_0px_0px_#000]">
+                        <div className="flex items-center justify-between border-b border-black/10 pb-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <Clock className="w-4 h-4 text-[#7C3AED]" />
+                            <strong className="text-xs font-black uppercase text-black">
+                              Extend Auction Time &amp; Clock Controls
+                            </strong>
+                          </div>
+                          <span className="text-[11px] font-mono font-black text-[#7C3AED] bg-[#F3E8FF] px-2 py-0.5 border border-black">
+                            {auctionState.secondsRemaining}s remaining
+                          </span>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-black uppercase text-stone-700">
+                              ⚡ Extend Active Auction Time:
+                            </span>
+                            <span className="text-[10px] text-stone-500 font-mono">
+                              Instantly adds seconds to clock for all captains
+                            </span>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {[10, 15, 30, 45, 60].map((sec) => (
+                              <button
+                                key={sec}
+                                type="button"
+                                onClick={() => {
+                                  activeEngine.addTime(sec, currentUser.id);
+                                  setBidSuccess(`✓ Extended auction time by +${sec}s!`);
+                                  setTimeout(() => setBidSuccess(null), 2500);
+                                }}
+                                className="px-3 py-1.5 bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                              >
+                                +{sec}s
+                              </button>
+                            ))}
+
+                            <div className="flex items-center gap-1.5 ml-auto">
+                              <input
+                                type="number"
+                                min="5"
+                                max="300"
+                                step="5"
+                                value={customExtendSeconds}
+                                onChange={(e) => setCustomExtendSeconds(e.target.value)}
+                                className="w-16 bg-stone-50 border-2 border-black px-2 py-1 text-xs font-mono font-bold text-center"
+                                placeholder="sec"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const sec = parseInt(customExtendSeconds, 10);
+                                  if (!isNaN(sec) && sec > 0) {
+                                    activeEngine.addTime(sec, currentUser.id);
+                                    setBidSuccess(`✓ Extended auction time by +${sec}s!`);
+                                    setTimeout(() => setBidSuccess(null), 2500);
+                                  }
+                                }}
+                                className="px-3 py-1.5 bg-black hover:bg-stone-800 text-white border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#FFE600] cursor-pointer"
+                              >
+                                Extend Time
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Reset Exact Seconds */}
+                        <div className="flex items-center justify-between flex-wrap gap-2 pt-2 border-t border-black/10">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-[10px] font-black uppercase text-amber-900">Set Exact Clock:</span>
+                            {[15, 30, 45, 60, 90].map((sec) => (
+                              <button
+                                key={sec}
+                                type="button"
+                                onClick={() => {
+                                  activeEngine.adjustTimer(sec, currentUser.id);
+                                  setBidSuccess(`✓ Reset auction clock to ${sec}s.`);
+                                  setTimeout(() => setBidSuccess(null), 2500);
+                                }}
+                                className="px-2 py-0.5 bg-stone-50 hover:bg-stone-100 border border-black text-[10px] font-bold cursor-pointer"
+                              >
+                                {sec}s
+                              </button>
+                            ))}
+                          </div>
+
+                          {unsoldPlayers.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const res = activeEngine.startUnsoldSecondPass(currentUser.id);
+                                if (res.success) {
+                                  setBidSuccess(`✓ Re-auction started! ${res.reauctionCount} unsold contenders returned to pool.`);
+                                } else {
+                                  setBidError(res.error || 'Failed to start second pass.');
+                                }
+                              }}
+                              className="bg-[#BAE6FD] hover:bg-sky-200 text-black border border-black px-2 py-1 text-[10px] font-black uppercase shadow-[1px_1px_0px_0px_#000] cursor-pointer"
+                            >
+                              ⚡ Re-Auction Unsold ({unsoldPlayers.length})
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1167,6 +1449,36 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                           </div>
                         </div>
                       )}
+
+                      {/* Default Lot Nomination Duration */}
+                      <div className="p-3 bg-white border-2 border-black text-xs space-y-2 shadow-[2px_2px_0px_0px_#000]">
+                        <div className="flex items-center justify-between">
+                          <strong className="block text-black font-black uppercase">Default Lot Nomination Duration:</strong>
+                          <span className="font-mono text-[10px] font-black bg-[#FFE600] px-2 py-0.5 border border-black">
+                            Current: {config.nominationTimerSeconds}s
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {[15, 20, 30, 45, 60, 90].map((sec) => (
+                            <button
+                              key={sec}
+                              type="button"
+                              onClick={() => {
+                                activeEngine.setDefaultNominationSeconds(sec, currentUser.id);
+                                setBidSuccess(`✓ Default nomination timer set to ${sec}s.`);
+                                setTimeout(() => setBidSuccess(null), 2000);
+                              }}
+                              className={`px-2.5 py-1 text-xs font-black uppercase border border-black cursor-pointer ${
+                                config.nominationTimerSeconds === sec
+                                  ? 'bg-[#7C3AED] text-white shadow-[1px_1px_0px_0px_#000]'
+                                  : 'bg-stone-50 hover:bg-stone-100 text-black'
+                              }`}
+                            >
+                              {sec}s
+                            </button>
+                          ))}
+                        </div>
+                      </div>
 
                       {/* Anti-snipe toggle setting */}
                       <div className="flex items-center justify-between p-3 bg-stone-50 border border-black text-xs">
@@ -1680,6 +1992,165 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                   className="px-4 py-2 bg-[#70FFAF] text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer disabled:opacity-40"
                 >
                   Confirm Stand-in
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* CAPTAIN TEAM BRANDING & BANNER CUSTOMIZATION MODAL */}
+      {showTeamCustomizerModal && effectiveCaptainTeam && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div className="w-full max-w-lg bg-white border-[3.5px] border-black shadow-[8px_8px_0px_0px_#000] p-6 space-y-4 font-mono">
+            <div className="flex justify-between items-center border-b-2 border-black pb-2">
+              <div className="flex items-center gap-2">
+                <Crown className="w-5 h-5 text-[#FFE600] shrink-0" />
+                <h3 className="font-black text-base uppercase text-black font-sans">
+                  Submit Team Branding & Banner
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowTeamCustomizerModal(false)}
+                className="font-black text-sm p-1 border border-black hover:bg-black hover:text-white cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <p className="text-xs text-stone-600 leading-relaxed">
+              As team captain, finalize your official team name, tag, logo, and banner. These will appear across match lobbies and tournament brackets.
+            </p>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const res = tournamentService.updateAuctionTeamIdentity(selectedTournamentId, effectiveCaptainTeam.id, {
+                  name: customTeamName.trim() || effectiveCaptainTeam.name,
+                  tag: (customTeamTag.trim().toUpperCase() || effectiveCaptainTeam.tag).slice(0, 4),
+                  logo: customTeamLogo,
+                  color: customTeamColor,
+                  bannerUrl: customTeamBanner
+                });
+                if (res.success) {
+                  setBidSuccess(`✓ Team identity updated for ${res.team?.name || 'your franchise'}!`);
+                  setShowTeamCustomizerModal(false);
+                  setTimeout(() => setBidSuccess(null), 3500);
+                } else {
+                  setBidError(res.error || 'Failed to update team identity.');
+                }
+              }}
+              className="space-y-4 text-xs"
+            >
+              <div>
+                <label className="block text-xs font-black uppercase mb-1">Official Team Name</label>
+                <input
+                  type="text"
+                  required
+                  value={customTeamName}
+                  onChange={(e) => setCustomTeamName(e.target.value)}
+                  placeholder="e.g. Phoenix Rising"
+                  className="w-full border-2 border-black p-2 font-bold text-xs"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-black uppercase mb-1">Team Tag (3-4 Chars)</label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={4}
+                    value={customTeamTag}
+                    onChange={(e) => setCustomTeamTag(e.target.value.toUpperCase())}
+                    placeholder="PHX"
+                    className="w-full border-2 border-black p-2 font-black text-xs uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black uppercase mb-1">Team Color</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={customTeamColor}
+                      onChange={(e) => setCustomTeamColor(e.target.value)}
+                      className="w-10 h-8 border border-black cursor-pointer"
+                    />
+                    <span className="font-bold text-xs">{customTeamColor}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-black uppercase mb-1">Team Logo / Icon</label>
+                <div className="flex gap-2 flex-wrap">
+                  {['🛡️', '⚡', '👑', '🐉', '🦅', '🦁', '⚔️', '🎯', '🔥', '💎'].map((em) => (
+                    <button
+                      key={em}
+                      type="button"
+                      onClick={() => setCustomTeamLogo(em)}
+                      className={`w-9 h-9 border-2 flex items-center justify-center text-lg cursor-pointer ${
+                        customTeamLogo === em ? 'bg-[#FFE600] border-black scale-110 shadow-[2px_2px_0px_0px_#000]' : 'bg-stone-50 border-stone-300 hover:bg-stone-100'
+                      }`}
+                    >
+                      {em}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-black uppercase mb-1">Franchise Banner Theme</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { label: 'Cyber Yellow', value: 'linear-gradient(135deg, #f59e0b 0%, #FFE600 100%)' },
+                    { label: 'Nebula Purple', value: 'linear-gradient(135deg, #1e1b4b 0%, #7C3AED 100%)' },
+                    { label: 'Crimson Fury', value: 'linear-gradient(135deg, #881337 0%, #FF5757 100%)' },
+                    { label: 'Emerald Pulse', value: 'linear-gradient(135deg, #064e3b 0%, #70FFAF 100%)' }
+                  ].map((b) => (
+                    <div
+                      key={b.label}
+                      onClick={() => setCustomTeamBanner(b.value)}
+                      className={`p-2.5 border-2 cursor-pointer transition-all ${
+                        customTeamBanner === b.value ? 'border-black ring-2 ring-black font-black' : 'border-stone-300'
+                      }`}
+                      style={{ background: b.value }}
+                    >
+                      <span className="text-[10px] font-black uppercase text-white drop-shadow-md">
+                        {b.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Preview Banner */}
+              <div
+                className="p-4 border-2 border-black text-white space-y-1 shadow-[2px_2px_0px_0px_#000]"
+                style={{ background: customTeamBanner }}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">{customTeamLogo}</span>
+                  <div>
+                    <h4 className="font-black text-sm uppercase drop-shadow">{customTeamName || 'Team Name Preview'} [{customTeamTag || 'TAG'}]</h4>
+                    <p className="text-[10px] text-white/90">Official Franchise Squad · Captain {currentUser.displayName || 'Captain'}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-stone-200">
+                <button
+                  type="button"
+                  onClick={() => setShowTeamCustomizerModal(false)}
+                  className="px-3 py-2 bg-stone-100 hover:bg-stone-200 border border-black text-xs font-bold uppercase cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-[#70FFAF] hover:bg-emerald-400 text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                >
+                  ✓ Submit Official Team Info
                 </button>
               </div>
             </form>

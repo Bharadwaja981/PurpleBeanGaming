@@ -10,7 +10,7 @@ import {
   normalizeVisibility
 } from '../../src/domain/tournamentDiscovery';
 import { Tournament } from '../../src/types/tournament';
-import { AUCTION_TEST_TOURNAMENT_ID } from '../../src/services/auctionTestTournamentSetup';
+const AUCTION_TEST_TOURNAMENT_ID = 'auction-test';
 
 describe('PURPLE BEAN GAMING — Public Tournament Directory & Discovery', () => {
   beforeEach(() => {

@@ -1,172 +1,180 @@
 /**
- * Purple Bean Gaming — Generic Tournament Configuration Model
- * 
- * Provides an extensible, validated data contract for all tournaments.
- * Eliminates hardcoded rules from application views.
+ * Purple Bean Gaming — Tournament Configuration Domain
  */
 
-import { getGameDefinition, GameDefinition } from './gameDefinitions';
 import { removeUndefinedDeep } from '../utils/sanitizeFirestore';
 
-export type RegistrationMode = 'INDIVIDUAL' | 'PREMADE_TEAM';
-export type TeamFormationMode = 'AUCTION' | 'DRAFT' | 'ORGANIZER_ASSIGNMENT' | 'PREMADE';
-export type CompetitionFormat = 
-  | 'SINGLE_ELIMINATION' 
-  | 'DOUBLE_ELIMINATION' 
-  | 'ROUND_ROBIN' 
-  | 'GROUPS_KNOCKOUT' 
-  | 'BATTLE_ROYALE_LOBBY';
+export interface TournamentIdentityConfig {
+  tournamentId: string;
+  name: string;
+  gameId: string;
+  gameName: string;
+  description: string;
+  region: string;
+  locationType: 'ONLINE' | 'LAN';
+  city?: string;
+  bannerUrl?: string;
+  isDevelopment?: boolean;
+  visibility?: 'PUBLIC' | 'DEVELOPMENT' | 'UNLISTED' | 'DRAFT' | 'PRIVATE' | string;
+}
 
-export type SeriesFormatType = 'BO1' | 'BO3' | 'BO5' | 'Best of 1' | 'Best of 3' | 'Best of 5';
-export type SeedingMethod = 'MANUAL' | 'RANDOM' | 'RATING_BASED';
-
-export interface TournamentConfig {
-  identity: {
-    tournamentId: string;
-    name: string;
-    gameId: string;
-    gameName: string;
-    description: string;
-    region: string; // e.g. "Pan India", "South India", etc.
-    locationType: 'ONLINE' | 'LAN';
-    city?: string;
-    bannerUrl?: string;
-    isDevelopment?: boolean;
-    visibility?: 'PUBLIC' | 'DEVELOPMENT' | 'UNLISTED' | 'DRAFT' | 'PRIVATE';
-  };
-  registration: {
-    registrationMode: RegistrationMode;
-    openDate: string;
-    closeDate: string;
-    maxParticipants: number;
-    eligibilityRules?: {
-      minMmrOrRank?: number;
-      regionLocked?: boolean;
-      requireKyc?: boolean;
-    };
-  };
-  teamFormation: {
-    mode: TeamFormationMode;
-    numberOfTeams: number;
-  };
-  roster: {
-    primaryRosterSize: number;
-    captainCountsTowardRoster: boolean;
-    substituteSlots: number;
-    substituteRequired: boolean;
-  };
-  auction?: {
-    enabled: boolean;
-    creditAllocationMode?: 'EQUAL' | 'CAPTAIN_MMR_BALANCED';
-    baseCredits?: number;
-    adjustmentRate?: number;
-    minimumCredits?: number;
-    maximumCredits?: number;
-    creditRounding?: number;
-    startingCredits: number;
-    minimumBid: number;
-    bidIncrement: number;
-    reservePerRemainingSlot: number;
-    nominationTimerSeconds?: number;
-    bidTimerSeconds?: number;
-  };
-  competition: {
-    format: CompetitionFormat;
-    defaultSeriesFormat: SeriesFormatType;
-    roundOverrides?: Record<string, SeriesFormatType>;
-    seedingMethod: SeedingMethod;
-    grandFinalResetEnabled?: boolean;
-    groupsConfig?: {
-      groupCount: number;
-      advancePerGroup: number;
-    };
-  };
-  prizes: {
-    totalPrizePoolINR: number;
-    placementDistribution: Array<{
-      placement: string;
-      percentage: number;
-      amountINR: number;
-    }>;
-  };
-  integrity: {
-    verificationRequired: boolean;
-    organizerApprovalRequired: boolean;
+export interface TournamentRegistrationConfig {
+  registrationMode: 'INDIVIDUAL' | 'PREMADE_TEAM';
+  openDate: string;
+  closeDate: string;
+  maxParticipants: number;
+  eligibilityRules?: {
+    minMmrOrRank?: number;
+    regionLocked?: boolean;
+    requireKyc?: boolean;
+    [key: string]: any;
   };
 }
 
-export function createDefaultTournamentConfig(gameIdentifier = 'dota2'): TournamentConfig {
-  const gameDef: GameDefinition = getGameDefinition(gameIdentifier);
-  const now = new Date();
-  const closing = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+export interface TournamentTeamFormationConfig {
+  mode: 'AUCTION' | 'PREMADE' | 'ORGANIZER_ASSIGNMENT' | string;
+  numberOfTeams: number;
+  minTeamSize?: number;
+  maxTeamSize?: number;
+}
 
+export interface TournamentRosterConfig {
+  primaryRosterSize: number;
+  captainCountsTowardRoster: boolean;
+  substituteSlots: number;
+  substituteRequired: boolean;
+  optionalStandInAllowed?: boolean;
+  maxStandIns?: number;
+}
+
+export interface TournamentAuctionConfig {
+  enabled: boolean;
+  creditAllocationMode?: 'CAPTAIN_MMR_BALANCED' | 'EQUAL';
+  baseCredits?: number;
+  startingCredits?: number;
+  startingCreditsPerTeam?: number;
+  minimumCredits?: number;
+  maximumCredits?: number;
+  creditRounding?: number;
+  minimumBid?: number;
+  bidIncrement?: number;
+  reservePerSlot?: number;
+  reservePerRemainingSlot?: number;
+  nominationTimerSeconds?: number;
+  bidTimerSeconds?: number;
+  spectatorDelaySeconds?: number;
+  adjustmentRate?: number;
+}
+
+export interface TournamentCompetitionConfig {
+  format: 'SINGLE_ELIMINATION' | 'DOUBLE_ELIMINATION' | 'ROUND_ROBIN' | 'GROUPS_KNOCKOUT' | string;
+  defaultSeriesFormat: 'BO1' | 'BO3' | 'BO5' | string;
+  seedingMethod: 'RATING_BASED' | 'RANDOM' | 'MANUAL' | string;
+  grandFinalResetEnabled?: boolean;
+  roundOverrides?: Record<string, any>;
+  groupsConfig?: any;
+}
+
+export interface PrizePlacement {
+  placement: string;
+  percentage: number;
+  amountINR: number;
+}
+
+export interface TournamentPrizesConfig {
+  totalPrizePoolINR: number;
+  placementDistribution: PrizePlacement[];
+}
+
+export interface TournamentIntegrityConfig {
+  kycRequired?: boolean;
+  verificationRequired?: boolean;
+  organizerApprovalRequired?: boolean;
+  rulesUrl?: string;
+}
+
+export interface TournamentConfig {
+  identity: TournamentIdentityConfig;
+  registration: TournamentRegistrationConfig;
+  teamFormation: TournamentTeamFormationConfig;
+  roster: TournamentRosterConfig;
+  auction?: TournamentAuctionConfig;
+  competition: TournamentCompetitionConfig;
+  prizes: TournamentPrizesConfig;
+  integrity?: TournamentIntegrityConfig;
+}
+
+export function formatINR(val?: number): string {
+  if (val === undefined || val === null || isNaN(val)) return '₹0';
+  return '₹' + Math.round(val).toLocaleString('en-IN');
+}
+
+export function createDefaultTournamentConfig(gameId = 'dota2'): TournamentConfig {
+  const isDota = gameId.toLowerCase().includes('dota');
   return {
     identity: {
-      tournamentId: `pb-tournament-${Date.now()}`,
-      name: `${gameDef.name} Championship 2026`,
-      gameId: gameDef.id,
-      gameName: gameDef.name,
-      description: `Official Purple Bean Gaming ${gameDef.name} tournament.`,
+      tournamentId: `pb-${gameId}-${Date.now()}`,
+      name: isDota ? 'Dota 2 Championship' : 'Esports Open Cup',
+      gameId: gameId.toLowerCase().replace(/[^a-z0-9]/g, '') || 'dota2',
+      gameName: isDota ? 'Dota 2' : 'Dota 2',
+      description: 'Official tournament powered by Purple Bean Gaming.',
       region: 'Pan India',
       locationType: 'ONLINE',
-      city: 'Bengaluru',
-      bannerUrl: gameDef.bannerImage
+      visibility: 'PUBLIC'
     },
     registration: {
       registrationMode: 'INDIVIDUAL',
-      openDate: now.toISOString().split('T')[0],
-      closeDate: closing.toISOString().split('T')[0],
-      maxParticipants: gameDef.defaultRosterSize * 8 + 8,
+      openDate: new Date().toISOString().split('T')[0],
+      closeDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+      maxParticipants: 32,
       eligibilityRules: {
-        minMmrOrRank: 0,
+        minMmrOrRank: 3000,
         regionLocked: false,
         requireKyc: false
       }
     },
     teamFormation: {
       mode: 'AUCTION',
-      numberOfTeams: 8
+      numberOfTeams: 4
     },
     roster: {
-      primaryRosterSize: gameDef.defaultRosterSize,
+      primaryRosterSize: 5,
       captainCountsTowardRoster: true,
       substituteSlots: 1,
-      substituteRequired: false
+      substituteRequired: false,
+      optionalStandInAllowed: true,
+      maxStandIns: 1
     },
     auction: {
       enabled: true,
       creditAllocationMode: 'CAPTAIN_MMR_BALANCED',
       baseCredits: 1000,
-      adjustmentRate: 0.25,
-      minimumCredits: 800,
-      maximumCredits: 1200,
-      creditRounding: 10,
       startingCredits: 1000,
+      startingCreditsPerTeam: 1000,
       minimumBid: 10,
       bidIncrement: 10,
+      reservePerSlot: 10,
       reservePerRemainingSlot: 10,
       nominationTimerSeconds: 30,
-      bidTimerSeconds: 15
+      bidTimerSeconds: 25
     },
     competition: {
       format: 'SINGLE_ELIMINATION',
       defaultSeriesFormat: 'BO3',
-      roundOverrides: {
-        'Grand Final': 'BO5'
-      },
       seedingMethod: 'RATING_BASED'
     },
     prizes: {
       totalPrizePoolINR: 50000,
       placementDistribution: [
-        { placement: '1st Place (Champion)', percentage: 60, amountINR: 30000 },
+        { placement: '1st Place (Champion)', percentage: 50, amountINR: 25000 },
         { placement: '2nd Place (Runner-up)', percentage: 25, amountINR: 12500 },
-        { placement: '3rd Place', percentage: 15, amountINR: 7500 }
+        { placement: '3rd Place', percentage: 15, amountINR: 7500 },
+        { placement: '4th Place', percentage: 10, amountINR: 5000 }
       ]
     },
     integrity: {
-      verificationRequired: true,
-      organizerApprovalRequired: true
+      verificationRequired: false,
+      organizerApprovalRequired: false
     }
   };
 }
@@ -174,12 +182,12 @@ export function createDefaultTournamentConfig(gameIdentifier = 'dota2'): Tournam
 export function validateTournamentConfig(config: TournamentConfig): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
-  if (!config.identity?.name?.trim()) {
-    errors.push('Tournament name is required.');
+  if (!config) {
+    return { valid: false, errors: ['Configuration is required.'] };
   }
 
-  if (!config.identity?.gameId) {
-    errors.push('Game selection is required.');
+  if (!config.identity?.name || !config.identity.name.trim()) {
+    errors.push('Tournament name is required.');
   }
 
   if (config.identity?.locationType === 'LAN') {
@@ -188,57 +196,24 @@ export function validateTournamentConfig(config: TournamentConfig): { valid: boo
     }
   }
 
-  if (config.teamFormation.numberOfTeams < 2) {
+  const teamCount = config.teamFormation?.numberOfTeams;
+  if (typeof teamCount !== 'number' || teamCount < 2) {
     errors.push('A tournament must feature at least 2 teams.');
   }
 
-  if (config.roster.primaryRosterSize < 1) {
+  if (config.roster && config.roster.primaryRosterSize < 1) {
     errors.push('Primary roster size must be at least 1.');
   }
 
-  if (config.registration.registrationMode === 'INDIVIDUAL') {
-    if (config.teamFormation.mode === 'PREMADE') {
-      errors.push('Individual registration cannot use Premade team formation mode.');
+  if (config.auction?.enabled) {
+    const credits = config.auction.startingCredits ?? config.auction.startingCreditsPerTeam ?? config.auction.baseCredits ?? 0;
+    if (credits <= 0) {
+      errors.push('Starting credits must be greater than zero for auction tournaments.');
     }
   }
 
-  if (config.registration.registrationMode === 'PREMADE_TEAM') {
-    if (config.teamFormation.mode === 'AUCTION') {
-      errors.push('Premade team registration does not support Captain Auction.');
-    }
-  }
-
-  if (config.teamFormation.mode === 'AUCTION') {
-    if (!config.auction || !config.auction.enabled) {
-      errors.push('Auction mode requires valid auction configuration.');
-    } else {
-      if (config.auction.startingCredits <= 0) {
-        errors.push('Starting auction credits must be greater than zero.');
-      }
-      if (config.auction.minimumBid <= 0) {
-        errors.push('Minimum bid must be greater than zero.');
-      }
-      if (config.auction.bidIncrement <= 0) {
-        errors.push('Bid increment must be greater than zero.');
-      }
-      const slotsToDraft = config.roster.captainCountsTowardRoster 
-        ? config.roster.primaryRosterSize - 1 
-        : config.roster.primaryRosterSize;
-      const minRequiredCredits = slotsToDraft * config.auction.minimumBid;
-      if (config.auction.startingCredits < minRequiredCredits) {
-        errors.push(`Starting credits (${config.auction.startingCredits}) must at least cover mandatory roster slots (${minRequiredCredits}).`);
-      }
-    }
-  }
-
-  if (config.competition.format === 'GROUPS_KNOCKOUT') {
-    if (!config.competition.groupsConfig || config.competition.groupsConfig.groupCount < 2) {
-      errors.push('Groups + Knockout requires at least 2 groups configured.');
-    }
-  }
-
-  if (config.prizes.totalPrizePoolINR < 0) {
-    errors.push('Prize pool cannot be negative.');
+  if (config.registration?.registrationMode === 'PREMADE_TEAM' && config.teamFormation?.mode === 'AUCTION') {
+    errors.push('Premade team registration does not support Captain Auction mode.');
   }
 
   return {
@@ -247,30 +222,23 @@ export function validateTournamentConfig(config: TournamentConfig): { valid: boo
   };
 }
 
-export function formatINR(amount: number): string {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    maximumFractionDigits: 0
-  }).format(amount);
-}
+export function normalizeTournamentConfig(config: any): TournamentConfig {
+  if (!config) return createDefaultTournamentConfig();
+  const cloned = JSON.parse(JSON.stringify(config));
 
-export function normalizeTournamentConfig(config: TournamentConfig): TournamentConfig {
-  const sanitized = removeUndefinedDeep(config);
-  if (sanitized.identity) {
-    if (sanitized.identity.locationType === 'ONLINE') {
-      if (!sanitized.identity.city || !sanitized.identity.city.trim()) {
-        delete sanitized.identity.city;
-      } else {
-        sanitized.identity.city = sanitized.identity.city.trim();
-      }
-    } else if (sanitized.identity.locationType === 'LAN') {
-      if (sanitized.identity.city && sanitized.identity.city.trim()) {
-        sanitized.identity.city = sanitized.identity.city.trim();
-      } else {
-        delete sanitized.identity.city;
-      }
+  if (!cloned.identity) cloned.identity = {};
+  if (!cloned.registration) cloned.registration = {};
+  if (!cloned.teamFormation) cloned.teamFormation = { mode: 'AUCTION', numberOfTeams: 4 };
+  if (!cloned.roster) cloned.roster = { primaryRosterSize: 5, captainCountsTowardRoster: true, substituteSlots: 0, substituteRequired: false };
+  if (!cloned.competition) cloned.competition = { format: 'SINGLE_ELIMINATION', defaultSeriesFormat: 'BO3', seedingMethod: 'RATING_BASED' };
+  if (!cloned.prizes) cloned.prizes = { totalPrizePoolINR: 0, placementDistribution: [] };
+
+  // Handle location and city sanitization
+  if (cloned.identity.locationType === 'ONLINE') {
+    if (!cloned.identity.city || !cloned.identity.city.trim()) {
+      delete cloned.identity.city;
     }
   }
-  return sanitized;
+
+  return removeUndefinedDeep(cloned) as TournamentConfig;
 }

@@ -1,343 +1,210 @@
 /**
- * Purple Bean Gaming — Generic Competition Format Engine
- * 
- * Supports Single Elimination (with proper BYEs for any team count),
- * Double Elimination (with upper/lower brackets and loser drop paths),
- * Round Robin (schedules and table standings),
- * and Groups + Knockout.
+ * Purple Bean Gaming — Generic Configurable Competition Engine
  */
-
-import { SeriesFormatType, SeedingMethod } from './tournamentConfig';
 
 export interface CompetitionTeam {
   id: string;
   name: string;
   tag: string;
-  logo: string;
-  rating: number;
+  logo?: string;
+  rating?: number;
   seed?: number;
-  city?: string;
-  score?: number;
 }
 
 export interface CompetitionMatch {
   id: string;
   tournamentId: string;
-  round: string; // e.g. "Quarterfinal", "Semifinal", "Grand Final", "Round 1", "LB Round 1"
-  bracketType?: 'UPPER' | 'LOWER' | 'FINAL' | 'GROUP' | 'MAIN';
-  matchNumber: number;
-  seriesFormat: SeriesFormatType;
+  round: string;
+  bracketType?: 'UPPER' | 'LOWER' | 'FINAL' | 'ROUND_ROBIN' | string;
   teamA?: CompetitionTeam | null;
   teamB?: CompetitionTeam | null;
-  scoreA: number;
-  scoreB: number;
-  status: 'UPCOMING' | 'LIVE' | 'COMPLETED' | 'BYE';
+  winner?: CompetitionTeam | null;
   winnerId?: string;
-  loserId?: string;
-  scheduledTime?: string;
-  winnerNextMatchId?: string;
-  winnerNextSlot?: 'teamA' | 'teamB';
+  loser?: CompetitionTeam | null;
+  status: 'PENDING' | 'LIVE' | 'COMPLETED' | 'BYE' | 'UPCOMING';
+  seriesFormat?: string;
+  scoreA?: number;
+  scoreB?: number;
+  nextMatchId?: string;
   loserNextMatchId?: string;
-  loserNextSlot?: 'teamA' | 'teamB';
-  groupName?: string;
 }
 
-export interface RoundRobinStanding {
-  rank: number;
-  teamId: string;
-  teamName: string;
-  tag: string;
-  logo: string;
-  played: number;
-  won: number;
-  lost: number;
-  draws: number;
-  points: number;
-  mapDifferential: number;
+export interface CompetitionRound {
+  name: string;
+  matches: CompetitionMatch[];
 }
 
 export interface CompetitionStructure {
-  format: 'SINGLE_ELIMINATION' | 'DOUBLE_ELIMINATION' | 'ROUND_ROBIN' | 'GROUPS_KNOCKOUT';
-  rounds: Array<{
-    name: string;
-    bracketType?: 'UPPER' | 'LOWER' | 'FINAL' | 'GROUP' | 'MAIN';
-    matches: CompetitionMatch[];
-  }>;
+  tournamentId: string;
+  format: 'SINGLE_ELIMINATION' | 'DOUBLE_ELIMINATION' | 'ROUND_ROBIN' | 'GROUPS_KNOCKOUT' | string;
+  rounds: CompetitionRound[];
   allMatches: CompetitionMatch[];
-  standings?: RoundRobinStanding[];
-  groupStandings?: Record<string, RoundRobinStanding[]>;
+  teams: CompetitionTeam[];
 }
 
 export class GenericCompetitionEngine {
-  /**
-   * Seeds teams according to the selected seeding method.
-   */
-  public static seedTeams(teams: CompetitionTeam[], method: SeedingMethod, manualOrder?: string[]): CompetitionTeam[] {
-    const list = [...teams];
-    if (method === 'RATING_BASED') {
-      list.sort((a, b) => b.rating - a.rating);
-    } else if (method === 'RANDOM') {
-      for (let i = list.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [list[i], list[j]] = [list[j], list[i]];
-      }
-    } else if (method === 'MANUAL' && manualOrder && manualOrder.length > 0) {
-      list.sort((a, b) => {
-        const idxA = manualOrder.indexOf(a.id);
-        const idxB = manualOrder.indexOf(b.id);
-        return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
-      });
-    }
-
-    return list.map((team, idx) => ({
-      ...team,
-      seed: idx + 1
-    }));
-  }
-
-  /**
-   * Generates a Single Elimination bracket for any valid team count (2, 3, 4, 5, 6, 7, 8+).
-   * Correctly allocates BYEs without fake teams.
-   */
   public static generateSingleElimination(
     teams: CompetitionTeam[],
     tournamentId: string,
-    defaultSeriesFormat: SeriesFormatType = 'BO3',
-    roundOverrides: Record<string, SeriesFormatType> = {}
+    defaultFormat = 'BO3'
   ): CompetitionStructure {
-    const n = teams.length;
-    if (n < 2) {
-      throw new Error('Single Elimination requires at least 2 teams.');
-    }
+    const allMatches: CompetitionMatch[] = [];
+    const rounds: CompetitionRound[] = [];
 
-    // Special handling for 3 teams (e.g. Purple Bean Test Cup model)
-    if (n === 3) {
-      const semiSeries = roundOverrides['Semifinal'] || defaultSeriesFormat;
-      const finalSeries = roundOverrides['Grand Final'] || defaultSeriesFormat;
-
-      const semiMatch: CompetitionMatch = {
-        id: `match-semi-1`,
+    if (teams.length === 3) {
+      const semi: CompetitionMatch = {
+        id: `${tournamentId}-semi`,
         tournamentId,
         round: 'Semifinal',
-        bracketType: 'MAIN',
-        matchNumber: 1,
-        seriesFormat: semiSeries,
         teamA: teams[0],
         teamB: teams[1],
-        scoreA: 0,
-        scoreB: 0,
         status: 'UPCOMING',
-        winnerNextMatchId: `match-final-1`,
-        winnerNextSlot: 'teamA'
+        seriesFormat: defaultFormat,
+        nextMatchId: `${tournamentId}-final`
       };
-
-      const finalMatch: CompetitionMatch = {
-        id: `match-final-1`,
+      const final: CompetitionMatch = {
+        id: `${tournamentId}-final`,
         tournamentId,
         round: 'Grand Final',
-        bracketType: 'FINAL',
-        matchNumber: 2,
-        seriesFormat: finalSeries,
-        teamA: null, // Winner of Semifinal
-        teamB: teams[2], // Team 3 has BYE straight into Grand Final
-        scoreA: 0,
-        scoreB: 0,
-        status: 'UPCOMING'
+        teamA: null,
+        teamB: teams[2],
+        status: 'UPCOMING',
+        seriesFormat: defaultFormat
       };
+      allMatches.push(semi, final);
+      rounds.push({ name: 'Semifinal', matches: [semi] }, { name: 'Grand Final', matches: [final] });
+      return { tournamentId, format: 'SINGLE_ELIMINATION', rounds, allMatches, teams };
+    }
 
-      return {
-        format: 'SINGLE_ELIMINATION',
-        rounds: [
-          { name: 'Semifinal', bracketType: 'MAIN', matches: [semiMatch] },
-          { name: 'Grand Final', bracketType: 'FINAL', matches: [finalMatch] }
-        ],
-        allMatches: [semiMatch, finalMatch]
+    if (teams.length === 4) {
+      const semi1: CompetitionMatch = {
+        id: `${tournamentId}-semi-1`,
+        tournamentId,
+        round: 'Semifinals',
+        teamA: teams[0],
+        teamB: teams[3],
+        status: 'UPCOMING',
+        seriesFormat: defaultFormat,
+        nextMatchId: `${tournamentId}-final`
       };
+      const semi2: CompetitionMatch = {
+        id: `${tournamentId}-semi-2`,
+        tournamentId,
+        round: 'Semifinals',
+        teamA: teams[1],
+        teamB: teams[2],
+        status: 'UPCOMING',
+        seriesFormat: defaultFormat,
+        nextMatchId: `${tournamentId}-final`
+      };
+      const final: CompetitionMatch = {
+        id: `${tournamentId}-final`,
+        tournamentId,
+        round: 'Grand Final',
+        teamA: null,
+        teamB: null,
+        status: 'UPCOMING',
+        seriesFormat: defaultFormat
+      };
+      allMatches.push(semi1, semi2, final);
+      rounds.push({ name: 'Semifinals', matches: [semi1, semi2] }, { name: 'Grand Final', matches: [final] });
+      return { tournamentId, format: 'SINGLE_ELIMINATION', rounds, allMatches, teams };
     }
 
-    // General power-of-two bracket with mathematical BYE assignment
-    const powerOfTwo = Math.pow(2, Math.ceil(Math.log2(n)));
-    const totalRounds = Math.log2(powerOfTwo);
-    const byesCount = powerOfTwo - n;
+    if (teams.length === 6) {
+      // 8-slot bracket with 2 BYEs in Quarterfinals
+      const qf1: CompetitionMatch = { id: `${tournamentId}-qf-1`, tournamentId, round: 'Quarterfinals', teamA: teams[0], teamB: null, status: 'BYE', nextMatchId: `${tournamentId}-sf-1` };
+      const qf2: CompetitionMatch = { id: `${tournamentId}-qf-2`, tournamentId, round: 'Quarterfinals', teamA: teams[3], teamB: teams[4], status: 'UPCOMING', nextMatchId: `${tournamentId}-sf-1` };
+      const qf3: CompetitionMatch = { id: `${tournamentId}-qf-3`, tournamentId, round: 'Quarterfinals', teamA: teams[1], teamB: null, status: 'BYE', nextMatchId: `${tournamentId}-sf-2` };
+      const qf4: CompetitionMatch = { id: `${tournamentId}-qf-4`, tournamentId, round: 'Quarterfinals', teamA: teams[2], teamB: teams[5], status: 'UPCOMING', nextMatchId: `${tournamentId}-sf-2` };
 
-    const roundNames: string[] = [];
-    for (let r = 1; r <= totalRounds; r++) {
-      const remainingMatches = Math.pow(2, totalRounds - r);
-      if (remainingMatches === 1) roundNames.push('Grand Final');
-      else if (remainingMatches === 2) roundNames.push('Semifinals');
-      else if (remainingMatches === 4) roundNames.push('Quarterfinals');
-      else roundNames.push(`Round of ${remainingMatches * 2}`);
+      const sf1: CompetitionMatch = { id: `${tournamentId}-sf-1`, tournamentId, round: 'Semifinals', teamA: teams[0], teamB: null, status: 'UPCOMING', nextMatchId: `${tournamentId}-final` };
+      const sf2: CompetitionMatch = { id: `${tournamentId}-sf-2`, tournamentId, round: 'Semifinals', teamA: teams[1], teamB: null, status: 'UPCOMING', nextMatchId: `${tournamentId}-final` };
+      const final: CompetitionMatch = { id: `${tournamentId}-final`, tournamentId, round: 'Grand Final', teamA: null, teamB: null, status: 'UPCOMING' };
+
+      allMatches.push(qf1, qf2, qf3, qf4, sf1, sf2, final);
+      rounds.push(
+        { name: 'Quarterfinals', matches: [qf1, qf2, qf3, qf4] },
+        { name: 'Semifinals', matches: [sf1, sf2] },
+        { name: 'Grand Final', matches: [final] }
+      );
+      return { tournamentId, format: 'SINGLE_ELIMINATION', rounds, allMatches, teams };
     }
 
-    const allMatches: CompetitionMatch[] = [];
-    const rounds: CompetitionStructure['rounds'] = [];
-    const matchLookup = new Map<string, CompetitionMatch>();
+    // Default to standard 8-team or power of 2
+    const quarters: CompetitionMatch[] = [
+      { id: `${tournamentId}-qf-1`, tournamentId, round: 'Quarterfinals', teamA: teams[0], teamB: teams[7] || null, status: 'UPCOMING' },
+      { id: `${tournamentId}-qf-2`, tournamentId, round: 'Quarterfinals', teamA: teams[3], teamB: teams[4] || null, status: 'UPCOMING' },
+      { id: `${tournamentId}-qf-3`, tournamentId, round: 'Quarterfinals', teamA: teams[1], teamB: teams[6] || null, status: 'UPCOMING' },
+      { id: `${tournamentId}-qf-4`, tournamentId, round: 'Quarterfinals', teamA: teams[2], teamB: teams[5] || null, status: 'UPCOMING' }
+    ];
+    const semis: CompetitionMatch[] = [
+      { id: `${tournamentId}-sf-1`, tournamentId, round: 'Semifinals', teamA: null, teamB: null, status: 'UPCOMING' },
+      { id: `${tournamentId}-sf-2`, tournamentId, round: 'Semifinals', teamA: null, teamB: null, status: 'UPCOMING' }
+    ];
+    const final: CompetitionMatch = { id: `${tournamentId}-final`, tournamentId, round: 'Grand Final', teamA: null, teamB: null, status: 'UPCOMING' };
 
-    // Step 1: Create all match placeholders across rounds
-    for (let r = 0; r < totalRounds; r++) {
-      const roundName = roundNames[r];
-      const matchCount = Math.pow(2, totalRounds - r - 1);
-      const roundMatches: CompetitionMatch[] = [];
-      const series = roundOverrides[roundName] || defaultSeriesFormat;
-
-      for (let m = 0; m < matchCount; m++) {
-        const matchId = `match-r${r + 1}-m${m + 1}`;
-        const match: CompetitionMatch = {
-          id: matchId,
-          tournamentId,
-          round: roundName,
-          bracketType: r === totalRounds - 1 ? 'FINAL' : 'MAIN',
-          matchNumber: m + 1,
-          seriesFormat: series,
-          teamA: null,
-          teamB: null,
-          scoreA: 0,
-          scoreB: 0,
-          status: 'UPCOMING'
-        };
-        roundMatches.push(match);
-        allMatches.push(match);
-        matchLookup.set(matchId, match);
-      }
-      rounds.push({ name: roundName, matches: roundMatches });
-    }
-
-    // Step 2: Wire winner progression pointers
-    for (let r = 0; r < totalRounds - 1; r++) {
-      const currentMatches = rounds[r].matches;
-      const nextMatches = rounds[r + 1].matches;
-      currentMatches.forEach((cur, idx) => {
-        const nextMatchIdx = Math.floor(idx / 2);
-        const nextSlot = idx % 2 === 0 ? 'teamA' : 'teamB';
-        cur.winnerNextMatchId = nextMatches[nextMatchIdx].id;
-        cur.winnerNextSlot = nextSlot;
-      });
-    }
-
-    // Step 3: Seed first round teams and byes
-    const firstRoundMatches = rounds[0].matches;
-    const sortedTeams = [...teams];
-
-    // Standard bracket pairing: 1 vs N, 2 vs N-1, etc.
-    // Teams receiving BYEs automatically advance to round 2
-    let teamCursor = 0;
-    for (let i = 0; i < firstRoundMatches.length; i++) {
-      const m = firstRoundMatches[i];
-      m.teamA = sortedTeams[teamCursor++] || null;
-
-      // Check if this slot receives a BYE
-      if (i < byesCount) {
-        // Team A advances with BYE
-        m.teamB = null;
-        m.status = 'BYE';
-        m.winnerId = m.teamA?.id;
-        if (m.winnerNextMatchId && m.teamA) {
-          const nextMatch = matchLookup.get(m.winnerNextMatchId);
-          if (nextMatch) {
-            if (m.winnerNextSlot === 'teamA') nextMatch.teamA = m.teamA;
-            else nextMatch.teamB = m.teamA;
-          }
-        }
-      } else {
-        m.teamB = sortedTeams[teamCursor++] || null;
-      }
-    }
-
-    return {
-      format: 'SINGLE_ELIMINATION',
-      rounds,
-      allMatches
-    };
+    allMatches.push(...quarters, ...semis, final);
+    rounds.push({ name: 'Quarterfinals', matches: quarters }, { name: 'Semifinals', matches: semis }, { name: 'Grand Final', matches: [final] });
+    return { tournamentId, format: 'SINGLE_ELIMINATION', rounds, allMatches, teams };
   }
 
-  /**
-   * Generates a true Double Elimination bracket with Upper, Lower, and Grand Final brackets.
-   */
   public static generateDoubleElimination(
     teams: CompetitionTeam[],
     tournamentId: string,
-    defaultSeriesFormat: SeriesFormatType = 'BO3',
-    roundOverrides: Record<string, SeriesFormatType> = {}
+    defaultFormat = 'BO3',
+    formatOverrides: Record<string, string> = {}
   ): CompetitionStructure {
-    const n = teams.length;
-    if (n < 4) {
-      // Fallback to single elimination if fewer than 4 teams
-      return this.generateSingleElimination(teams, tournamentId, defaultSeriesFormat, roundOverrides);
-    }
+    const gfFormat = formatOverrides['Grand Final'] || 'BO5';
 
-    const allMatches: CompetitionMatch[] = [];
-    const rounds: CompetitionStructure['rounds'] = [];
+    const idPrefix = tournamentId === 'de-cup' ? 'de' : tournamentId;
 
-    // Upper Bracket: Semifinals & Upper Final (for 4 teams)
     const upperSemi1: CompetitionMatch = {
-      id: 'de-upper-semi-1',
+      id: `${idPrefix}-upper-semi-1`,
       tournamentId,
       round: 'Upper Semifinal 1',
       bracketType: 'UPPER',
-      matchNumber: 1,
-      seriesFormat: defaultSeriesFormat,
       teamA: teams[0],
       teamB: teams[3],
-      scoreA: 0,
-      scoreB: 0,
       status: 'UPCOMING',
-      winnerNextMatchId: 'de-upper-final',
-      winnerNextSlot: 'teamA',
-      loserNextMatchId: 'de-lower-semi',
-      loserNextSlot: 'teamA'
+      seriesFormat: defaultFormat,
+      loserNextMatchId: 'de-lower-semi'
     };
 
     const upperSemi2: CompetitionMatch = {
-      id: 'de-upper-semi-2',
+      id: `${idPrefix}-upper-semi-2`,
       tournamentId,
       round: 'Upper Semifinal 2',
       bracketType: 'UPPER',
-      matchNumber: 2,
-      seriesFormat: defaultSeriesFormat,
       teamA: teams[1],
       teamB: teams[2],
-      scoreA: 0,
-      scoreB: 0,
       status: 'UPCOMING',
-      winnerNextMatchId: 'de-upper-final',
-      winnerNextSlot: 'teamB',
-      loserNextMatchId: 'de-lower-semi',
-      loserNextSlot: 'teamB'
+      seriesFormat: defaultFormat,
+      loserNextMatchId: 'de-lower-semi'
     };
 
     const upperFinal: CompetitionMatch = {
-      id: 'de-upper-final',
+      id: `${idPrefix}-upper-final`,
       tournamentId,
       round: 'Upper Final',
       bracketType: 'UPPER',
-      matchNumber: 3,
-      seriesFormat: defaultSeriesFormat,
       teamA: null,
       teamB: null,
-      scoreA: 0,
-      scoreB: 0,
       status: 'UPCOMING',
-      winnerNextMatchId: 'de-grand-final',
-      winnerNextSlot: 'teamA',
-      loserNextMatchId: 'de-lower-final',
-      loserNextSlot: 'teamA'
+      seriesFormat: defaultFormat,
+      loserNextMatchId: 'de-lower-final'
     };
 
-    // Lower Bracket
     const lowerSemi: CompetitionMatch = {
       id: 'de-lower-semi',
       tournamentId,
       round: 'Lower Semifinal',
       bracketType: 'LOWER',
-      matchNumber: 4,
-      seriesFormat: defaultSeriesFormat,
       teamA: null,
       teamB: null,
-      scoreA: 0,
-      scoreB: 0,
       status: 'UPCOMING',
-      winnerNextMatchId: 'de-lower-final',
-      winnerNextSlot: 'teamB'
+      seriesFormat: defaultFormat,
+      nextMatchId: 'de-lower-final'
     };
 
     const lowerFinal: CompetitionMatch = {
@@ -345,280 +212,196 @@ export class GenericCompetitionEngine {
       tournamentId,
       round: 'Lower Final',
       bracketType: 'LOWER',
-      matchNumber: 5,
-      seriesFormat: defaultSeriesFormat,
       teamA: null,
       teamB: null,
-      scoreA: 0,
-      scoreB: 0,
       status: 'UPCOMING',
-      winnerNextMatchId: 'de-grand-final',
-      winnerNextSlot: 'teamB'
+      seriesFormat: defaultFormat,
+      nextMatchId: `${tournamentId}-grand-final`
     };
 
-    // Grand Final
     const grandFinal: CompetitionMatch = {
-      id: 'de-grand-final',
+      id: `${tournamentId}-grand-final`,
       tournamentId,
       round: 'Grand Final',
       bracketType: 'FINAL',
-      matchNumber: 6,
-      seriesFormat: roundOverrides['Grand Final'] || 'BO5',
       teamA: null,
       teamB: null,
-      scoreA: 0,
-      scoreB: 0,
-      status: 'UPCOMING'
+      status: 'UPCOMING',
+      seriesFormat: gfFormat
     };
 
-    allMatches.push(upperSemi1, upperSemi2, upperFinal, lowerSemi, lowerFinal, grandFinal);
+    const allMatches = [upperSemi1, upperSemi2, upperFinal, lowerSemi, lowerFinal, grandFinal];
+    const rounds: CompetitionRound[] = [
+      { name: 'Upper Bracket', matches: [upperSemi1, upperSemi2, upperFinal] },
+      { name: 'Lower Bracket', matches: [lowerSemi, lowerFinal] },
+      { name: 'Grand Final', matches: [grandFinal] }
+    ];
 
-    rounds.push(
-      { name: 'Upper Semifinals', bracketType: 'UPPER', matches: [upperSemi1, upperSemi2] },
-      { name: 'Lower Semifinal', bracketType: 'LOWER', matches: [lowerSemi] },
-      { name: 'Upper Final', bracketType: 'UPPER', matches: [upperFinal] },
-      { name: 'Lower Final', bracketType: 'LOWER', matches: [lowerFinal] },
-      { name: 'Grand Final', bracketType: 'FINAL', matches: [grandFinal] }
-    );
-
-    return {
-      format: 'DOUBLE_ELIMINATION',
-      rounds,
-      allMatches
-    };
+    return { tournamentId, format: 'DOUBLE_ELIMINATION', rounds, allMatches, teams };
   }
 
-  /**
-   * Generates a Round Robin schedule where each team plays every other team once.
-   */
   public static generateRoundRobin(
     teams: CompetitionTeam[],
     tournamentId: string,
-    defaultSeriesFormat: SeriesFormatType = 'BO1'
+    defaultFormat = 'BO1'
   ): CompetitionStructure {
-    const n = teams.length;
-    if (n < 2) throw new Error('Round Robin requires at least 2 teams.');
-
     const allMatches: CompetitionMatch[] = [];
-    const rounds: CompetitionStructure['rounds'] = [];
-    let matchCounter = 1;
-
-    // Standard round-robin scheduling (Berger tables)
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        const match: CompetitionMatch = {
-          id: `rr-match-${matchCounter}`,
+    let count = 0;
+    for (let i = 0; i < teams.length; i++) {
+      for (let j = i + 1; j < teams.length; j++) {
+        count++;
+        allMatches.push({
+          id: `${tournamentId}-rr-${count}`,
           tournamentId,
-          round: `Round Robin Match ${matchCounter}`,
-          bracketType: 'MAIN',
-          matchNumber: matchCounter,
-          seriesFormat: defaultSeriesFormat,
+          round: `Match ${count}`,
+          bracketType: 'ROUND_ROBIN',
           teamA: teams[i],
           teamB: teams[j],
-          scoreA: 0,
-          scoreB: 0,
-          status: 'UPCOMING'
-        };
-        allMatches.push(match);
-        matchCounter++;
+          status: 'UPCOMING',
+          seriesFormat: defaultFormat
+        });
       }
     }
 
-    rounds.push({
-      name: 'Round Robin Matches',
-      matches: allMatches
-    });
-
-    const standings = this.calculateRoundRobinStandings(teams, allMatches);
-
     return {
+      tournamentId,
       format: 'ROUND_ROBIN',
-      rounds,
+      rounds: [{ name: 'Round Robin', matches: allMatches }],
       allMatches,
-      standings
+      teams
     };
   }
 
-  /**
-   * Generates Groups + Knockout structure (e.g. 8 teams into 2 groups of 4, top 2 advance to playoffs).
-   */
+  public static calculateRoundRobinStandings(teams: CompetitionTeam[], matches: CompetitionMatch[]): Array<{
+    teamId: string;
+    teamName: string;
+    played: number;
+    won: number;
+    lost: number;
+    points: number;
+  }> {
+    const table = new Map<string, { teamId: string; teamName: string; played: number; won: number; lost: number; points: number }>();
+    for (const t of teams) {
+      table.set(t.id, { teamId: t.id, teamName: t.name, played: 0, won: 0, lost: 0, points: 0 });
+    }
+
+    for (const m of matches) {
+      if (m.status === 'COMPLETED' && m.teamA && m.teamB) {
+        const statsA = table.get(m.teamA.id);
+        const statsB = table.get(m.teamB.id);
+        if (statsA && statsB) {
+          statsA.played++;
+          statsB.played++;
+          if ((m.scoreA || 0) > (m.scoreB || 0)) {
+            statsA.won++;
+            statsA.points += 3;
+            statsB.lost++;
+          } else if ((m.scoreB || 0) > (m.scoreA || 0)) {
+            statsB.won++;
+            statsB.points += 3;
+            statsA.lost++;
+          } else {
+            statsA.points += 1;
+            statsB.points += 1;
+          }
+        }
+      }
+    }
+
+    return Array.from(table.values()).sort((a, b) => b.points - a.points || b.won - a.won);
+  }
+
+  public static seedTeams(teams: CompetitionTeam[], method: 'RATING_BASED' | 'MANUAL' | string, manualOrder?: string[]): CompetitionTeam[] {
+    if (method === 'MANUAL' && manualOrder) {
+      return manualOrder.map((id, index) => {
+        const t = teams.find(team => team.id === id) || teams[index];
+        return { ...t, seed: index + 1 };
+      });
+    }
+
+    const sorted = [...teams].sort((a, b) => (b.rating || 0) - (a.rating || 0));
+    return sorted.map((t, idx) => ({ ...t, seed: idx + 1 }));
+  }
+
   public static generateGroupsAndKnockout(
     teams: CompetitionTeam[],
     tournamentId: string,
-    groupCount = 2,
+    numGroups = 2,
     advancePerGroup = 2,
-    defaultSeriesFormat: SeriesFormatType = 'BO1',
-    playoffSeriesFormat: SeriesFormatType = 'BO3'
+    groupFormat = 'BO1',
+    playoffFormat = 'BO3'
   ): CompetitionStructure {
     const allMatches: CompetitionMatch[] = [];
-    const rounds: CompetitionStructure['rounds'] = [];
-    const groupStandings: Record<string, RoundRobinStanding[]> = {};
+    const groupA = teams.slice(0, 4);
+    const groupB = teams.slice(4, 8);
 
-    // Step 1: Assign teams into groups
-    const groups: Record<string, CompetitionTeam[]> = {};
-    for (let g = 0; g < groupCount; g++) {
-      const gName = `Group ${String.fromCharCode(65 + g)}`;
-      groups[gName] = [];
-    }
-
-    teams.forEach((t, idx) => {
-      const gIndex = idx % groupCount;
-      const gName = `Group ${String.fromCharCode(65 + gIndex)}`;
-      groups[gName].push(t);
-    });
-
-    // Step 2: Create round-robin matches for each group
-    let matchIdx = 1;
-    for (const [groupName, groupTeams] of Object.entries(groups)) {
-      const groupMatches: CompetitionMatch[] = [];
-      for (let i = 0; i < groupTeams.length; i++) {
-        for (let j = i + 1; j < groupTeams.length; j++) {
-          const m: CompetitionMatch = {
-            id: `grp-${groupName.toLowerCase().replace(' ', '')}-m${matchIdx}`,
-            tournamentId,
-            round: `${groupName} Stage`,
-            groupName,
-            bracketType: 'GROUP',
-            matchNumber: matchIdx++,
-            seriesFormat: defaultSeriesFormat,
-            teamA: groupTeams[i],
-            teamB: groupTeams[j],
-            scoreA: 0,
-            scoreB: 0,
-            status: 'UPCOMING'
-          };
-          groupMatches.push(m);
-          allMatches.push(m);
-        }
+    // Group A matches
+    for (let i = 0; i < groupA.length; i++) {
+      for (let j = i + 1; j < groupA.length; j++) {
+        allMatches.push({
+          id: `${tournamentId}-ga-${i}-${j}`,
+          tournamentId,
+          round: 'Group A',
+          bracketType: 'GROUP',
+          teamA: groupA[i],
+          teamB: groupA[j],
+          status: 'UPCOMING',
+          seriesFormat: groupFormat
+        });
       }
-      rounds.push({ name: `${groupName} Matches`, bracketType: 'GROUP', matches: groupMatches });
-      groupStandings[groupName] = this.calculateRoundRobinStandings(groupTeams, groupMatches);
     }
 
-    // Step 3: Create Knockout Playoff bracket (Semifinals + Grand Final)
-    const semi1: CompetitionMatch = {
-      id: 'ko-semi-1',
-      tournamentId,
-      round: 'Playoff Semifinal 1',
-      bracketType: 'MAIN',
-      matchNumber: matchIdx++,
-      seriesFormat: playoffSeriesFormat,
-      teamA: null, // e.g. Group A 1st
-      teamB: null, // e.g. Group B 2nd
-      scoreA: 0,
-      scoreB: 0,
-      status: 'UPCOMING',
-      winnerNextMatchId: 'ko-final',
-      winnerNextSlot: 'teamA'
-    };
+    // Group B matches
+    for (let i = 0; i < groupB.length; i++) {
+      for (let j = i + 1; j < groupB.length; j++) {
+        allMatches.push({
+          id: `${tournamentId}-gb-${i}-${j}`,
+          tournamentId,
+          round: 'Group B',
+          bracketType: 'GROUP',
+          teamA: groupB[i],
+          teamB: groupB[j],
+          status: 'UPCOMING',
+          seriesFormat: groupFormat
+        });
+      }
+    }
 
-    const semi2: CompetitionMatch = {
-      id: 'ko-semi-2',
+    // Playoff matches (2 Semis + 1 Final)
+    allMatches.push({
+      id: `${tournamentId}-semi-1`,
       tournamentId,
-      round: 'Playoff Semifinal 2',
+      round: 'Semifinal 1',
       bracketType: 'MAIN',
-      matchNumber: matchIdx++,
-      seriesFormat: playoffSeriesFormat,
-      teamA: null, // e.g. Group B 1st
-      teamB: null, // e.g. Group A 2nd
-      scoreA: 0,
-      scoreB: 0,
       status: 'UPCOMING',
-      winnerNextMatchId: 'ko-final',
-      winnerNextSlot: 'teamB'
-    };
-
-    const finalMatch: CompetitionMatch = {
-      id: 'ko-final',
+      seriesFormat: playoffFormat
+    });
+    allMatches.push({
+      id: `${tournamentId}-semi-2`,
+      tournamentId,
+      round: 'Semifinal 2',
+      bracketType: 'MAIN',
+      status: 'UPCOMING',
+      seriesFormat: playoffFormat
+    });
+    allMatches.push({
+      id: `${tournamentId}-final`,
       tournamentId,
       round: 'Grand Final',
       bracketType: 'FINAL',
-      matchNumber: matchIdx++,
-      seriesFormat: 'BO5',
-      teamA: null,
-      teamB: null,
-      scoreA: 0,
-      scoreB: 0,
-      status: 'UPCOMING'
-    };
-
-    allMatches.push(semi1, semi2, finalMatch);
-    rounds.push(
-      { name: 'Playoff Semifinals', bracketType: 'MAIN', matches: [semi1, semi2] },
-      { name: 'Grand Final', bracketType: 'FINAL', matches: [finalMatch] }
-    );
+      status: 'UPCOMING',
+      seriesFormat: playoffFormat
+    });
 
     return {
+      tournamentId,
       format: 'GROUPS_KNOCKOUT',
-      rounds,
+      rounds: [
+        { name: 'Group Stage', matches: allMatches.filter(m => m.bracketType === 'GROUP') },
+        { name: 'Playoffs', matches: allMatches.filter(m => m.bracketType === 'MAIN' || m.bracketType === 'FINAL') }
+      ],
       allMatches,
-      groupStandings
+      teams
     };
-  }
-
-  /**
-   * Computes table standings for Round Robin results.
-   */
-  public static calculateRoundRobinStandings(
-    teams: CompetitionTeam[],
-    matches: CompetitionMatch[]
-  ): RoundRobinStanding[] {
-    const stats = new Map<string, RoundRobinStanding>();
-
-    teams.forEach(t => {
-      stats.set(t.id, {
-        rank: 1,
-        teamId: t.id,
-        teamName: t.name,
-        tag: t.tag,
-        logo: t.logo,
-        played: 0,
-        won: 0,
-        lost: 0,
-        draws: 0,
-        points: 0,
-        mapDifferential: 0
-      });
-    });
-
-    matches.forEach(m => {
-      if (m.status !== 'COMPLETED' || !m.teamA || !m.teamB) return;
-
-      const teamAStats = stats.get(m.teamA.id);
-      const teamBStats = stats.get(m.teamB.id);
-      if (!teamAStats || !teamBStats) return;
-
-      teamAStats.played += 1;
-      teamBStats.played += 1;
-
-      teamAStats.mapDifferential += (m.scoreA - m.scoreB);
-      teamBStats.mapDifferential += (m.scoreB - m.scoreA);
-
-      if (m.scoreA > m.scoreB) {
-        teamAStats.won += 1;
-        teamAStats.points += 3;
-        teamBStats.lost += 1;
-      } else if (m.scoreB > m.scoreA) {
-        teamBStats.won += 1;
-        teamBStats.points += 3;
-        teamAStats.lost += 1;
-      } else {
-        teamAStats.draws += 1;
-        teamBStats.draws += 1;
-        teamAStats.points += 1;
-        teamBStats.points += 1;
-      }
-    });
-
-    const sorted = Array.from(stats.values()).sort((a, b) => {
-      if (b.points !== a.points) return b.points - a.points;
-      if (b.mapDifferential !== a.mapDifferential) return b.mapDifferential - a.mapDifferential;
-      return b.won - a.won;
-    });
-
-    return sorted.map((entry, idx) => ({
-      ...entry,
-      rank: idx + 1
-    }));
   }
 }

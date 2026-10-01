@@ -12,12 +12,14 @@ import { TournamentConfig } from './tournamentConfig';
 import { INITIAL_SEED_TOURNAMENTS } from '../data/seedTournaments';
 import { Tournament } from '../types/tournament';
 import { getAuctionEngine } from './dotaAuctionEngine';
+import { dotaPlayerRegistry } from './dotaPlayerEngine';
 
 const PRIMARY_PROJECT_ADMIN_EMAIL = '11106cm009@gmail.com';
 
 class TournamentConfigRegistry {
   private configs = new Map<string, TournamentConfig>();
   private listeners: Array<() => void> = [];
+  private teamProvider: ((tournamentId: string) => any[]) | null = null;
 
   constructor() {
     const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
@@ -26,6 +28,10 @@ class TournamentConfigRegistry {
         this.configs.set(cfg.identity.tournamentId, cfg);
       });
     }
+  }
+
+  public setTeamProvider(provider: (tournamentId: string) => any[]) {
+    this.teamProvider = provider;
   }
 
   public clearConfigs() {
@@ -45,7 +51,81 @@ class TournamentConfigRegistry {
 
   public getConfig(tournamentId: string): TournamentConfig | undefined {
     if (!tournamentId) return undefined;
-    return this.configs.get(tournamentId);
+    const found = this.configs.get(tournamentId);
+    if (found) return found;
+    const seed = INITIAL_SEED_TOURNAMENTS.find(s => s.identity.tournamentId === tournamentId);
+    if (seed) {
+      this.configs.set(tournamentId, seed);
+      return seed;
+    }
+    if (tournamentId === 'purple-bean-test-cup') {
+      const testCupConfig: TournamentConfig = {
+        identity: {
+          tournamentId: 'purple-bean-test-cup',
+          name: 'Purple Bean Test Cup',
+          gameId: 'dota2',
+          gameName: 'Dota 2',
+          description: 'Official Dota 2 Pan India test championship. 3 franchise teams with live captain auction.',
+          city: 'Mumbai',
+          region: 'Pan India',
+          locationType: 'ONLINE',
+          visibility: 'PUBLIC'
+        },
+        teamFormation: {
+          mode: 'AUCTION',
+          numberOfTeams: 3
+        },
+        auction: {
+          enabled: true,
+          startingCredits: 1000,
+          minimumBid: 10,
+          bidIncrement: 10,
+          reservePerRemainingSlot: 10,
+          nominationTimerSeconds: 30,
+          bidTimerSeconds: 15,
+          creditAllocationMode: 'CAPTAIN_MMR_BALANCED'
+        },
+        roster: {
+          primaryRosterSize: 5,
+          captainCountsTowardRoster: true,
+          substituteSlots: 1,
+          substituteRequired: false
+        },
+        competition: {
+          format: 'SINGLE_ELIMINATION',
+          defaultSeriesFormat: 'BO3',
+          seedingMethod: 'RATING_BASED',
+          roundOverrides: {}
+        },
+        registration: {
+          registrationMode: 'INDIVIDUAL',
+          openDate: '2026-10-01',
+          closeDate: '2026-10-14',
+          maxParticipants: 18,
+          eligibilityRules: { minMmrOrRank: 0, requireKyc: false, regionLocked: false }
+        },
+        prizes: {
+          totalPrizePoolINR: 25000,
+          placementDistribution: []
+        },
+        integrity: {
+          verificationRequired: true,
+          organizerApprovalRequired: true
+        }
+      };
+      this.configs.set(tournamentId, testCupConfig);
+      return testCupConfig;
+    }
+    return undefined;
+  }
+
+  public updateTeamCount(tournamentId: string, numberOfTeams: number) {
+    const config = this.getConfig(tournamentId);
+    if (config) {
+      config.teamFormation.numberOfTeams = Math.max(2, numberOfTeams);
+      this.configs.set(tournamentId, config);
+      this.notify();
+    }
   }
 
   public getAllConfigs(): TournamentConfig[] {
@@ -120,7 +200,6 @@ class TournamentConfigRegistry {
 
     const engine = getAuctionEngine(tournamentId);
     const state = engine.getState();
-    const teams = engine.getTeams();
     const config = engine.getConfig();
 
     if (state.isCompleted || state.status === 'COMPLETED') {
@@ -145,6 +224,46 @@ class TournamentConfigRegistry {
 
     // Check if teams and captains are formed
     const minTeamsRequired = config.primaryRosterSize > 0 ? 2 : 1;
+    let teams = engine.getTeams();
+
+    // Cross-source sync: If engine has fewer than minTeamsRequired teams,
+    // immediately hydrate from external team provider or verified registrations
+    if (teams.length < minTeamsRequired) {
+      try {
+        if (this.teamProvider) {
+          const externalTeams = this.teamProvider(tournamentId);
+          if (Array.isArray(externalTeams) && externalTeams.length > 0) {
+            for (const extTeam of externalTeams) {
+              if (!engine.hasTeam(extTeam.id)) {
+                engine.hydrateTeamFromExternal(extTeam);
+              }
+            }
+            teams = engine.getTeams();
+          }
+        }
+
+        if (teams.length < minTeamsRequired) {
+          const approvedRegs = dotaPlayerRegistry.getTournamentRegistrations(tournamentId)
+            .filter(r => Boolean(r.isCaptainApproved));
+          for (const reg of approvedRegs) {
+            const expTeamId = reg.teamId || `team-${reg.userId}`;
+            if (!engine.hasTeam(expTeamId)) {
+              engine.hydrateTeamFromExternal({
+                id: expTeamId,
+                name: reg.teamName || `${reg.ign}'s Squad`,
+                tag: (reg.ign.replace(/[^a-zA-Z]/g, '').slice(0, 3) || 'TM').toUpperCase(),
+                captainId: reg.userId,
+                captainIgn: reg.ign,
+                startingCredits: config.startingCredits,
+                tournamentId
+              });
+            }
+          }
+          teams = engine.getTeams();
+        }
+      } catch {}
+    }
+
     const hasCaptains = teams.length >= minTeamsRequired && teams.every(t => Boolean(t.captainId));
 
     if (hasCaptains) {

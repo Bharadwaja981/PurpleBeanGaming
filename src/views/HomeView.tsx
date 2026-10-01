@@ -19,12 +19,17 @@ import {
   Play
 } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
+import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
 import { Tournament, Match, Player, Team, ViewType, CompetitiveGame } from '../types/tournament';
 import { PurpleBeanLogo } from '../components/PurpleBeanLogo';
 import { gameManagementEngine } from '../domain/gameManagementEngine';
 import {
   isPubliclyDiscoverable,
   normalizeTournamentRecord,
+  normalizeTeamRecord,
+  normalizePlayerRecord,
+  isTestPlayer,
+  isTestTeam,
   normalizeStatus,
   matchesGameFilter
 } from '../domain/tournamentDiscovery';
@@ -51,13 +56,18 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
   }, []);
 
   useEffect(() => {
-    const unsub = tournamentService.subscribe(() => {
+    const sync = () => {
       setTournaments(tournamentService.getTournaments());
       setMatches(tournamentService.getMatches());
       setPlayers(tournamentService.getPlayers());
       setTeams(tournamentService.getTeams());
-    });
-    return unsub;
+    };
+    const unsubService = tournamentService.subscribe(sync);
+    const unsubRegistry = tournamentConfigRegistry.subscribe(sync);
+    return () => {
+      unsubService();
+      unsubRegistry();
+    };
   }, []);
 
   const hasMultipleGames = activeGames.length > 1;
@@ -93,13 +103,17 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
     m.status === 'UPCOMING' && (selectedGame === 'All Games' || m.game === selectedGame)
   );
 
-  const topPlayers = players.filter((p) => 
-    selectedGame === 'All Games' || p.primaryGame === selectedGame
-  ).slice(0, 8);
+  const topPlayers = players
+    .map(normalizePlayerRecord)
+    .filter((p) => 
+      !isTestPlayer(p) && (selectedGame === 'All Games' || p.primaryGame === selectedGame)
+    ).slice(0, 8);
 
-  const topTeams = teams.filter((t) => 
-    selectedGame === 'All Games' || t.primaryGame === selectedGame
-  ).slice(0, 8);
+  const topTeams = teams
+    .map(normalizeTeamRecord)
+    .filter((t) => 
+      !isTestTeam(t) && (selectedGame === 'All Games' || t.primaryGame === selectedGame)
+    ).slice(0, 8);
 
   return (
     <div className="space-y-12 pb-16">
@@ -621,7 +635,7 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
                           {player.username}
                         </span>
                         <span className="font-mono text-[10px] text-stone-500">
-                          ({player.realName.split(' ')[0]})
+                          ({(player.realName || player.username || '').split(' ')[0]})
                         </span>
                       </div>
                       <span className="font-mono text-[10px] text-stone-600 block mt-0.5">
@@ -632,10 +646,10 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
 
                   <div className="text-right">
                     <span className="font-mono font-black text-sm text-black block">
-                      {player.mmr.toLocaleString()} MMR
+                      {player.mmr?.toLocaleString() ?? 5000} MMR
                     </span>
                     <span className="font-mono text-[10px] font-bold text-stone-500">
-                      Rating {player.platformRating}
+                      Rating {player.platformRating ?? 1500}
                     </span>
                   </div>
                 </div>
@@ -685,17 +699,17 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
                       {team.name}
                     </span>
                     <span className="font-mono text-[10px] text-stone-600 block mt-0.5">
-                      {team.city} · {team.tournamentWins} Tourneys Won
+                      {team.city || 'India'} · {team.tournamentWins ?? 0} Tourneys Won
                     </span>
                   </div>
                 </div>
 
                 <div className="text-right">
                   <span className="font-mono font-black text-sm text-[#7C3AED] block">
-                    {team.rating} PTS
+                    {team.rating ?? 1500} PTS
                   </span>
                   <span className="font-mono text-[10px] font-bold text-stone-600">
-                    {team.record.wins}W - {team.record.losses}L
+                    {(team.record?.wins ?? 0)}W - {(team.record?.losses ?? 0)}L
                   </span>
                 </div>
               </div>

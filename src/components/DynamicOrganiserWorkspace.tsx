@@ -7,7 +7,7 @@
  * - Auction Tournaments: Full auction console, captain nomination, and bidding.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Trophy, 
   Users, 
@@ -23,7 +23,10 @@ import {
   BarChart3,
   Award,
   ArrowRight,
-  Plus
+  Plus,
+  UserPlus,
+  Bot,
+  Crown
 } from 'lucide-react';
 import { TournamentConfig, formatINR } from '../domain/tournamentConfig';
 import { GenericTournamentEngine } from '../domain/genericTournamentEngine';
@@ -34,6 +37,9 @@ import { TestCupLifecycleConsole } from './TestCupLifecycleConsole';
 import { OrganiserRegistrationReview } from './OrganiserRegistrationReview';
 import { AuctionDraft } from './AuctionDraft';
 import { SelectDropdown, DropdownOption } from './ui/Dropdown';
+import { tournamentService } from '../services/firebaseService';
+import { AdminTournamentPlayerManagerModal } from './AdminTournamentPlayerManagerModal';
+import { DotaTournamentRegistration } from '../domain/dotaPlayerEngine';
 
 interface DynamicOrganiserWorkspaceProps {
   config: TournamentConfig;
@@ -74,12 +80,89 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
   const [newTeamCity, setNewTeamCity] = useState('Mumbai');
   const [newCaptainName, setNewCaptainName] = useState('');
 
+  // Player Manager Modal State
+  const [showPlayerModal, setShowPlayerModal] = useState(false);
+  const [playerModalInitialTab, setPlayerModalInitialTab] = useState<'manual' | 'upload' | 'dummy'>('manual');
+  const [tournamentRegs, setTournamentRegs] = useState(() => 
+    tournamentService.getTournamentRegistrations(config.identity.tournamentId)
+  );
+
+  // Captain Appointment Modal & Auction Setup State
+  const [appointModalContender, setAppointModalContender] = useState<DotaTournamentRegistration | null>(null);
+  const [appointTeamName, setAppointTeamName] = useState('');
+  const [appointTeamTag, setAppointTeamTag] = useState('');
+  const [appointTeamColor, setAppointTeamColor] = useState('#7C3AED');
+  const [appointTeamLogo, setAppointTeamLogo] = useState('🛡️');
+  const [appointError, setAppointError] = useState<string | null>(null);
+  const [actionSuccessNotice, setActionSuccessNotice] = useState<string | null>(null);
+  const [playerFilter, setPlayerFilter] = useState<'all' | 'applicants' | 'captains' | 'pool'>('all');
+  const [targetTeamCount, setTargetTeamCount] = useState<number>(() => config.teamFormation?.numberOfTeams || 4);
+
+  const handleOpenAppointModal = (reg: DotaTournamentRegistration) => {
+    setAppointModalContender(reg);
+    setAppointTeamName(`${reg.ign}'s Squad`);
+    const defaultTag = (reg.ign.replace(/[^a-zA-Z]/g, '').slice(0, 3) || 'TM').toUpperCase();
+    setAppointTeamTag(defaultTag);
+    setAppointTeamColor('#7C3AED');
+    setAppointTeamLogo('🛡️');
+    setAppointError(null);
+  };
+
+  const handleConfirmAppointCaptain = () => {
+    if (!appointModalContender) return;
+    if (!appointTeamName.trim()) {
+      setAppointError('Team name is required.');
+      return;
+    }
+    const cleanTag = (appointTeamTag.trim() || 'TM').slice(0, 4).toUpperCase();
+    const res = tournamentService.appointDotaCaptain(
+      appointModalContender.userId,
+      {
+        teamName: appointTeamName.trim(),
+        tag: cleanTag,
+        color: appointTeamColor,
+        logo: appointTeamLogo
+      },
+      config.identity.tournamentId
+    );
+
+    if (res.success) {
+      setActionSuccessNotice(`✓ Successfully appointed ${appointModalContender.ign} as Captain of ${appointTeamName.trim()}! Notification with Auction Room call-to-action sent.`);
+      setTimeout(() => setActionSuccessNotice(null), 5000);
+      setAppointModalContender(null);
+      setAppointError(null);
+      refreshState();
+    } else {
+      setAppointError(res.error || 'Failed to appoint captain.');
+    }
+  };
+
+  const handleUnassignCaptain = (reg: DotaTournamentRegistration) => {
+    const res = tournamentService.resetDotaCaptain(reg.userId, config.identity.tournamentId);
+    if (res.success) {
+      setActionSuccessNotice(`✓ Unassigned captain status for ${reg.ign}. Team dissolved and player returned to auction pool.`);
+      setTimeout(() => setActionSuccessNotice(null), 4000);
+      refreshState();
+    } else {
+      setActionSuccessNotice(`⚠️ ${res.error || 'Failed to unassign captain.'}`);
+      setTimeout(() => setActionSuccessNotice(null), 4000);
+    }
+  };
+
+  useEffect(() => {
+    const unsub = tournamentService.subscribe(() => {
+      setTournamentRegs(tournamentService.getTournamentRegistrations(config.identity.tournamentId));
+    });
+    return unsub;
+  }, [config.identity.tournamentId]);
+
   const refreshState = () => {
     setTeams(engine.getTeams());
     setPremadeApps(engine.getPremadeApplications());
     setMatches(engine.getMatches());
     setAuditLogs(engine.getAuditTrail());
     setCurrentStage(engine.getCurrentStage());
+    setTournamentRegs(tournamentService.getTournamentRegistrations(config.identity.tournamentId));
   };
 
   // Premade review actions
@@ -426,7 +509,7 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
                 )}
 
                 {/* Review Controls */}
-                {app.status === 'PENDING_REVIEW' && (
+                {((app.status as any) === 'SUBMITTED' || (app.status as any) === 'PENDING_REVIEW') && (
                   <div className="pt-2 border-t-2 border-stone-200 flex gap-2">
                     <button
                       onClick={() => handleApprove(app.id)}
@@ -447,6 +530,330 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
           </div>
         </div>
       )}
+
+      {/* REGISTERED CONTENDERS / PLAYERS TAB */}
+      {!isPremade && activeTab === 'players' && (() => {
+        const auctionEngine = tournamentService.getDotaAuctionEngine(config.identity.tournamentId);
+        const auctionTeams = auctionEngine.getTeams();
+        const assignedCaptainCount = auctionTeams.length;
+        const captainApplicantsCount = tournamentRegs.filter(r => r.interestedInCaptaincy || r.applyingAsCaptain).length;
+        const auctionPoolCount = tournamentRegs.filter(r => {
+          const isCap = auctionTeams.some(t => t.captainId === r.userId || (r.teamId && t.id === r.teamId));
+          return !isCap && !r.isCaptainApproved;
+        }).length;
+
+        const filteredRegs = tournamentRegs.filter(reg => {
+          const isCap = Boolean(reg.isCaptainApproved || auctionTeams.some(t => t.captainId === reg.userId));
+          const isApplicant = Boolean(reg.interestedInCaptaincy || reg.applyingAsCaptain);
+          if (playerFilter === 'applicants') return isApplicant && !isCap;
+          if (playerFilter === 'captains') return isCap;
+          if (playerFilter === 'pool') return !isCap;
+          return true;
+        });
+
+        return (
+          <div className="space-y-4">
+            {/* Action Success Toast Notice */}
+            {actionSuccessNotice && (
+              <div className="bg-[#70FFAF] text-black border-[3px] border-black p-3.5 shadow-[4px_4px_0px_0px_#000] font-mono text-xs font-black flex items-center justify-between gap-3 animate-in fade-in duration-150">
+                <div className="flex items-center gap-2">
+                  <Crown className="w-4 h-4 fill-black" />
+                  <span>{actionSuccessNotice}</span>
+                </div>
+                <button
+                  onClick={() => setActionSuccessNotice(null)}
+                  className="px-1.5 py-0.5 border border-black hover:bg-black hover:text-white cursor-pointer text-[10px]"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* Auction Setup & Team Slots Summary Card */}
+            {isAuction && (
+              <div className="bg-[#FFF9E6] border-4 border-black p-4 shadow-[4px_4px_0px_0px_#000] font-mono text-xs space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b-2 border-black pb-3">
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-[#7C3AED] block">
+                      AUCTION ROSTER DRAFT SETUP · ORGANISER CONTROLS
+                    </span>
+                    <h4 className="font-sans font-black text-base sm:text-lg uppercase text-black">
+                      Franchise Captains &amp; Auction Pool Management
+                    </h4>
+                    <p className="text-[11px] text-stone-600 mt-0.5">
+                      Select captains from contenders who applied for captaincy. Unchosen players remain in the live auction pool for captains to bid on.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black uppercase text-stone-700 shrink-0">Target Teams:</span>
+                    <SelectDropdown
+                      value={targetTeamCount}
+                      onChange={(val) => setTargetTeamCount(Number(val))}
+                      options={[
+                        { value: 2, label: '2 Teams (10 Players)' },
+                        { value: 3, label: '3 Teams (15 Players)' },
+                        { value: 4, label: '4 Teams (20 Players)' },
+                        { value: 6, label: '6 Teams (30 Players)' },
+                        { value: 8, label: '8 Teams (40 Players)' },
+                        { value: 10, label: '10 Teams (50 Players)' },
+                        { value: 12, label: '12 Teams (60 Players)' },
+                        { value: 16, label: '16 Teams (80 Players)' }
+                      ]}
+                      size="sm"
+                      mobileTitle="Select Target Teams"
+                      className="min-w-[170px]"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="bg-white border-2 border-black p-3 shadow-[2px_2px_0px_0px_#000]">
+                    <span className="text-[10px] font-bold text-stone-500 uppercase block">Appointed Captains</span>
+                    <span className="font-black text-lg text-[#7C3AED]">
+                      {assignedCaptainCount} / {targetTeamCount} Slots
+                    </span>
+                  </div>
+                  <div className="bg-white border-2 border-black p-3 shadow-[2px_2px_0px_0px_#000]">
+                    <span className="text-[10px] font-bold text-stone-500 uppercase block">Captain Applicants</span>
+                    <span className="font-black text-lg text-black">
+                      {captainApplicantsCount} Interested
+                    </span>
+                  </div>
+                  <div className="bg-white border-2 border-black p-3 shadow-[2px_2px_0px_0px_#000]">
+                    <span className="text-[10px] font-bold text-stone-500 uppercase block">Auction Pool Size</span>
+                    <span className="font-black text-lg text-emerald-700">
+                      {auctionPoolCount} Contenders
+                    </span>
+                  </div>
+                  <div className="bg-white border-2 border-black p-3 shadow-[2px_2px_0px_0px_#000] flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] font-bold text-stone-500 uppercase block">Live Auction Room</span>
+                      <span className="text-xs font-black text-stone-800">
+                        {assignedCaptainCount >= 2 ? 'Lobby Ready' : 'Needs 2+ Captains'}
+                      </span>
+                    </div>
+                    {onNavigate && (
+                      <button
+                        onClick={() => onNavigate('auction', config.identity.tournamentId)}
+                        className="bg-[#7C3AED] hover:bg-purple-700 text-white border border-black px-2 py-1 text-[10px] font-black uppercase cursor-pointer"
+                      >
+                        Enter ↗
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Contender Actions & Filter Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-white border-4 border-black p-4 shadow-[4px_4px_0px_0px_#000]">
+              <div className="flex flex-wrap items-center gap-1.5 font-mono text-xs">
+                <button
+                  onClick={() => setPlayerFilter('all')}
+                  className={`px-3 py-1.5 border-2 border-black font-black uppercase text-xs transition-all cursor-pointer ${
+                    playerFilter === 'all'
+                      ? 'bg-[#FFE600] text-black shadow-[2px_2px_0px_0px_#000]'
+                      : 'bg-stone-100 hover:bg-stone-200 text-stone-800'
+                  }`}
+                >
+                  All ({tournamentRegs.length})
+                </button>
+                <button
+                  onClick={() => setPlayerFilter('applicants')}
+                  className={`px-3 py-1.5 border-2 border-black font-black uppercase text-xs transition-all cursor-pointer flex items-center gap-1 ${
+                    playerFilter === 'applicants'
+                      ? 'bg-[#FFE600] text-black shadow-[2px_2px_0px_0px_#000]'
+                      : 'bg-stone-100 hover:bg-stone-200 text-stone-800'
+                  }`}
+                >
+                  <span>👑 Applicants ({captainApplicantsCount})</span>
+                </button>
+                <button
+                  onClick={() => setPlayerFilter('captains')}
+                  className={`px-3 py-1.5 border-2 border-black font-black uppercase text-xs transition-all cursor-pointer flex items-center gap-1 ${
+                    playerFilter === 'captains'
+                      ? 'bg-[#70FFAF] text-black shadow-[2px_2px_0px_0px_#000]'
+                      : 'bg-stone-100 hover:bg-stone-200 text-stone-800'
+                  }`}
+                >
+                  <span>⭐ Captains ({assignedCaptainCount})</span>
+                </button>
+                <button
+                  onClick={() => setPlayerFilter('pool')}
+                  className={`px-3 py-1.5 border-2 border-black font-black uppercase text-xs transition-all cursor-pointer ${
+                    playerFilter === 'pool'
+                      ? 'bg-[#BAE6FD] text-black shadow-[2px_2px_0px_0px_#000]'
+                      : 'bg-stone-100 hover:bg-stone-200 text-stone-800'
+                  }`}
+                >
+                  Auction Pool ({auctionPoolCount})
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap font-mono text-xs">
+                <button
+                  onClick={() => {
+                    setPlayerModalInitialTab('manual');
+                    setShowPlayerModal(true);
+                  }}
+                  className="bg-white hover:bg-stone-100 text-black border-2 border-black px-3 py-1.5 font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  + Enter Player / Upload File
+                </button>
+                <button
+                  onClick={() => {
+                    setPlayerModalInitialTab('dummy');
+                    setShowPlayerModal(true);
+                  }}
+                  className="bg-[#70FFAF] hover:bg-[#52e896] text-black border-2 border-black px-3 py-1.5 font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer font-bold"
+                >
+                  <Bot className="w-4 h-4" />
+                  ⚡ Add Dummy Players
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-white border-4 border-black shadow-[4px_4px_0px_0px_#000] overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left font-mono text-xs">
+                  <thead className="bg-stone-100 border-b-2 border-black uppercase text-[10px] font-black text-black">
+                    <tr>
+                      <th className="p-3">#</th>
+                      <th className="p-3">Player IGN</th>
+                      <th className="p-3">Primary Role</th>
+                      <th className="p-3">Secondary Role</th>
+                      <th className="p-3 text-right">MMR</th>
+                      <th className="p-3">Hometown</th>
+                      <th className="p-3 text-center">Captaincy</th>
+                      <th className="p-3 text-center">Status</th>
+                      <th className="p-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y border-stone-200">
+                    {filteredRegs.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="p-8 text-center bg-stone-50 font-mono">
+                          <div className="max-w-md mx-auto space-y-2">
+                            <p className="font-black text-sm text-black uppercase">No contenders match this filter</p>
+                            <p className="text-xs text-stone-600">
+                              {playerFilter === 'applicants'
+                                ? 'No contenders currently have active captain applications for this tournament.'
+                                : 'Try switching the filter tab above or adding new players.'}
+                            </p>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredRegs.map((reg, idx) => {
+                        const assignedTeam = auctionTeams.find(t => t.captainId === reg.userId || (reg.teamId && t.id === reg.teamId));
+                        const isAssignedCaptain = Boolean(reg.isCaptainApproved || assignedTeam);
+                        const isCaptainApplicant = Boolean(reg.interestedInCaptaincy || reg.applyingAsCaptain);
+                        const isVerified = reg.status === 'VERIFIED';
+                        const mmrVal = reg.tournamentMmr || reg.declaredMmr || 0;
+
+                        return (
+                          <tr key={reg.id} className="hover:bg-[#FFFDE8] transition-colors">
+                            <td className="p-3 font-bold text-stone-500">{idx + 1}</td>
+                            <td className="p-3 font-black text-black">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span>{reg.ign}</span>
+                                {isAssignedCaptain ? (
+                                  <span className="bg-[#70FFAF] border border-black text-[9px] px-1 font-bold uppercase inline-flex items-center gap-0.5">
+                                    <Crown className="w-2.5 h-2.5" /> Captain
+                                  </span>
+                                ) : isCaptainApplicant ? (
+                                  <span className="bg-[#FFE600] border border-black text-[9px] px-1 font-bold uppercase">
+                                    Applicant
+                                  </span>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td className="p-3 font-bold text-stone-800">{reg.primaryRole}</td>
+                            <td className="p-3 text-stone-500">{reg.secondaryRole || '—'}</td>
+                            <td className="p-3 text-right font-black text-black">
+                              <span className="bg-[#FFE600] px-1.5 py-0.5 border border-black inline-block">
+                                {mmrVal.toLocaleString()}
+                              </span>
+                            </td>
+                            <td className="p-3 text-stone-600">{reg.city || 'India'}</td>
+                            <td className="p-3 text-center">
+                              {isAssignedCaptain ? (
+                                <span className="text-[10px] font-black uppercase bg-[#70FFAF] text-black px-1.5 py-0.5 border border-black inline-flex items-center gap-1">
+                                  <Crown className="w-3 h-3 text-black shrink-0" />
+                                  <span>{assignedTeam ? assignedTeam.name : 'Captain'}</span>
+                                </span>
+                              ) : isCaptainApplicant ? (
+                                <span className="text-[10px] font-black uppercase bg-[#FFE600] text-black px-1.5 py-0.5 border border-black">
+                                  ★ Applicant
+                                </span>
+                              ) : (
+                                <span className="text-stone-400 text-[10px]">No</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-center">
+                              <span className={`px-2 py-0.5 text-[10px] font-black border border-black uppercase ${
+                                isVerified ? 'bg-[#70FFAF] text-black' :
+                                reg.status === 'UNDER_REVIEW' ? 'bg-[#BAE6FD] text-black' :
+                                'bg-[#FFE600] text-black'
+                              }`}>
+                                {reg.status}
+                              </span>
+                            </td>
+                            <td className="p-3 text-right">
+                              <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                                {isAuction && !isAssignedCaptain && (
+                                  <button
+                                    onClick={() => handleOpenAppointModal(reg)}
+                                    title="Appoint as Franchise Captain"
+                                    className="bg-[#FFE600] hover:bg-yellow-400 text-black border border-black px-2 py-1 text-[10px] font-black uppercase cursor-pointer shadow-[1px_1px_0px_0px_#000] flex items-center gap-1"
+                                  >
+                                    <Crown className="w-3 h-3" /> Appoint
+                                  </button>
+                                )}
+                                {isAuction && isAssignedCaptain && (
+                                  <button
+                                    onClick={() => handleUnassignCaptain(reg)}
+                                    title="Unassign Captain"
+                                    className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-black px-1.5 py-1 text-[10px] font-black uppercase cursor-pointer"
+                                  >
+                                    Unassign
+                                  </button>
+                                )}
+                                {!isVerified && (
+                                  <button
+                                    onClick={async () => {
+                                      await tournamentService.verifyRegistration(config.identity.tournamentId, reg.userId, mmrVal);
+                                      refreshState();
+                                    }}
+                                    className="bg-[#7C3AED] hover:bg-[#6D28D9] text-white border border-black px-2 py-1 text-[10px] font-black uppercase cursor-pointer shadow-[1px_1px_0px_0px_#000]"
+                                  >
+                                    Verify
+                                  </button>
+                                )}
+                                <button
+                                  onClick={async () => {
+                                    await tournamentService.removeTournamentRegistration(config.identity.tournamentId, reg.userId);
+                                    refreshState();
+                                  }}
+                                  title="Remove contender"
+                                  className="bg-red-50 hover:bg-red-200 text-red-700 border border-black px-1.5 py-1 text-[10px] font-black uppercase cursor-pointer"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* COMPETITION & MATCHES TAB */}
       {activeTab === 'competition' && (
@@ -678,6 +1085,150 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
             </form>
           </div>
         </div>
+      )}
+
+      {/* Appoint Captain Modal */}
+      {appointModalContender && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-mono">
+          <div className="bg-white border-4 border-black shadow-[8px_8px_0px_0px_#000] max-w-md w-full p-6 space-y-4 animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center justify-between border-b-2 border-black pb-3">
+              <div className="flex items-center gap-2">
+                <Crown className="w-5 h-5 text-[#FFE600] fill-black" />
+                <h3 className="font-sans font-black text-lg uppercase text-black">
+                  Appoint Franchise Captain
+                </h3>
+              </div>
+              <button
+                onClick={() => {
+                  setAppointModalContender(null);
+                  setAppointError(null);
+                }}
+                className="p-1 hover:bg-black hover:text-white border border-black cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="bg-[#FFF9E6] border-2 border-black p-3 space-y-1 text-xs">
+              <div className="font-black text-black text-sm">{appointModalContender.ign}</div>
+              <div className="text-stone-600">
+                Role: <strong className="text-black">{appointModalContender.primaryRole}</strong> · MMR: <strong className="text-black">{appointModalContender.tournamentMmr || appointModalContender.declaredMmr}</strong>
+              </div>
+              {appointModalContender.captainNotes && (
+                <div className="text-[11px] text-stone-500 italic pt-1 border-t border-black/10">
+                  "{appointModalContender.captainNotes}"
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-black uppercase text-[10px] text-stone-600 mb-1">
+                  Team / Franchise Name *
+                </label>
+                <input
+                  type="text"
+                  value={appointTeamName}
+                  onChange={(e) => setAppointTeamName(e.target.value)}
+                  placeholder="e.g. Mumbai Cobras"
+                  className="w-full bg-white border-2 border-black px-3 py-2 font-bold text-xs"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-black uppercase text-[10px] text-stone-600 mb-1">
+                    Team Tag (3-4 Letters) *
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    value={appointTeamTag}
+                    onChange={(e) => setAppointTeamTag(e.target.value.toUpperCase())}
+                    placeholder="e.g. COB"
+                    className="w-full bg-white border-2 border-black px-3 py-2 font-bold text-xs uppercase"
+                  />
+                </div>
+                <div>
+                  <label className="block font-black uppercase text-[10px] text-stone-600 mb-1">
+                    Team Logo Emoji
+                  </label>
+                  <div className="flex gap-1 flex-wrap">
+                    {['🛡️', '⚔️', '⚡', '🐉', '🦅', '🔥', '👑'].map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => setAppointTeamLogo(emoji)}
+                        className={`p-1 border border-black text-xs cursor-pointer ${
+                          appointTeamLogo === emoji ? 'bg-[#FFE600]' : 'bg-white hover:bg-stone-100'
+                        }`}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-black uppercase text-[10px] text-stone-600 mb-1">
+                  Franchise Primary Color
+                </label>
+                <div className="flex items-center gap-2">
+                  {['#7C3AED', '#FF5757', '#FFE600', '#70FFAF', '#3B82F6', '#EC4899'].map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setAppointTeamColor(c)}
+                      style={{ backgroundColor: c }}
+                      className={`w-7 h-7 border-2 border-black cursor-pointer ${
+                        appointTeamColor === c ? 'ring-2 ring-black scale-110' : ''
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {appointError && (
+                <div className="p-2.5 bg-red-100 border-2 border-red-600 text-red-900 text-xs font-bold">
+                  {appointError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 pt-2 border-t-2 border-black">
+              <button
+                type="button"
+                onClick={() => {
+                  setAppointModalContender(null);
+                  setAppointError(null);
+                }}
+                className="flex-1 py-2 bg-white hover:bg-stone-100 border-2 border-black font-black uppercase text-xs cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmAppointCaptain}
+                className="flex-1 py-2 bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black font-black uppercase text-xs shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+              >
+                Appoint &amp; Dispatch CTA
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin / Organiser Contender Studio Modal */}
+      {showPlayerModal && (
+        <AdminTournamentPlayerManagerModal
+          isOpen={showPlayerModal}
+          onClose={() => setShowPlayerModal(false)}
+          tournamentId={config.identity.tournamentId}
+          tournamentName={config.identity.name}
+          initialTab={playerModalInitialTab}
+          onPlayersUpdated={refreshState}
+        />
       )}
     </div>
   );

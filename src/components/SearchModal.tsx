@@ -182,7 +182,7 @@ export function SearchModal({ isOpen, onClose, onNavigate }: SearchModalProps) {
                       </div>
                     </div>
                     <span className="text-[10px] font-black bg-black text-white px-1.5 py-0.5">
-                      {team.record.wins}W-{team.record.losses}L
+                      {(team.record?.wins ?? 0)}W-{(team.record?.losses ?? 0)}L
                     </span>
                   </button>
                 ))}

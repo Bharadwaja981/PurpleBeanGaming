@@ -115,7 +115,7 @@ export function TeamProfileView({ teamId, onNavigate }: TeamProfileViewProps) {
             </div>
             <div className="bg-[#FFF9E6] border-2 border-black p-2.5 sm:p-3 text-center font-mono shadow-[2px_2px_0px_0px_#000]">
               <span className="text-[10px] text-stone-500 uppercase font-black block">Series</span>
-              <span className="text-lg sm:text-2xl font-black text-black">{team.record.wins}W - {team.record.losses}L</span>
+              <span className="text-lg sm:text-2xl font-black text-black">{(team.record?.wins ?? 0)}W - {(team.record?.losses ?? 0)}L</span>
             </div>
             <div className="bg-[#FFF9E6] border-2 border-black p-2.5 sm:p-3 text-center font-mono shadow-[2px_2px_0px_0px_#000]">
               <span className="text-[10px] text-stone-500 uppercase font-black block">Earnings</span>
@@ -310,18 +310,18 @@ export function TeamProfileView({ teamId, onNavigate }: TeamProfileViewProps) {
             <div className="p-3 bg-stone-50 border border-black">
               <span className="text-stone-500 block">Win Rate</span>
               <span className="text-2xl font-black text-emerald-700">
-                {((team.record.wins / (team.record.wins + team.record.losses)) * 100).toFixed(1)}%
+                {((((team.record?.wins ?? 0) / Math.max(1, (team.record?.wins ?? 0) + (team.record?.losses ?? 0)))) * 100).toFixed(1)}%
               </span>
             </div>
             <div className="p-3 bg-stone-50 border border-black">
               <span className="text-stone-500 block">Maps Won / Lost</span>
               <span className="text-2xl font-black text-black">
-                {team.mapsRecord.won} - {team.mapsRecord.lost}
+                {team.mapsRecord?.won ?? 0} - {team.mapsRecord?.lost ?? 0}
               </span>
             </div>
             <div className="p-3 bg-stone-50 border border-black">
               <span className="text-stone-500 block">Tournament Titles</span>
-              <span className="text-2xl font-black text-amber-600">{team.tournamentWins}</span>
+              <span className="text-2xl font-black text-amber-600">{team.tournamentWins ?? 0}</span>
             </div>
             <div className="p-3 bg-stone-50 border border-black">
               <span className="text-stone-500 block">Total INR Won</span>

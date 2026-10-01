@@ -40,6 +40,23 @@ export type EsportsRole =
 
 export type DotaRole = EsportsRole;
 
+export type TournamentRole = 'organizer' | 'captain' | 'team_captain' | 'player' | 'tournament_player' | 'spectator';
+
+export interface UserSession {
+  id: string;
+  email: string;
+  displayName: string;
+  role: TournamentRole;
+  isAdmin?: boolean;
+  isPrimaryAdmin?: boolean;
+  isModerator?: boolean;
+  teamId?: string;
+  teamName?: string;
+  avatarUrl?: string;
+  ign?: string;
+  gamerTag?: string;
+}
+
 export interface Player {
   id: string;
   username: string;
@@ -66,7 +83,7 @@ export interface Player {
   tournamentWins: number;
   mvps: number;
   experienceYears: number;
-  previousCaptainRecord: string;
+  previousCaptainRecord?: string;
   bio: string;
   heroPool: Array<{ hero: string; games: number; winRate: number }>;
 }
@@ -84,7 +101,7 @@ export interface Team {
   region?: IndianRegion | string;
   primaryGame?: CompetitiveGame | string;
   rating: number;
-  record: { wins: number; losses: number };
+  record?: { wins: number; losses: number };
   tournamentWins: number;
   captainId: string;
   captainName: string;
@@ -123,8 +140,13 @@ export interface Tournament {
   format: string;
   organizer: string;
   organiserId?: string;
+  organizerId?: string;
   organizerEmail?: string;
   organizerName?: string;
+  tournamentType?: TournamentType;
+  bracketFormat?: BracketFormat | string;
+  startingCredits?: number;
+  bidTimerSeconds?: number;
   city?: IndianCity | string;
   region: IndianRegion | string;
   description: string;
@@ -147,8 +169,118 @@ export interface Tournament {
   competition?: any;
   prizes?: any;
   integrity?: any;
+  teams?: any[];
   createdAt?: string;
   updatedAt?: string;
+}
+
+export type TournamentType = 'auction' | 'pre_made';
+export type BracketFormat = 'single_elimination' | 'double_elimination' | 'round_robin';
+export type TournamentStatus =
+  | 'DRAFT'
+  | 'REGISTRATION'
+  | 'REGISTRATION_OPEN'
+  | 'REGISTRATION_CLOSED'
+  | 'CAPTAINS'
+  | 'AUCTION'
+  | 'MATCHES'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | string;
+
+export type DotaRolePosition =
+  | 'Position 1 — Carry'
+  | 'Position 2 — Mid'
+  | 'Position 3 — Offlane'
+  | 'Position 4 — Soft Support'
+  | 'Position 5 — Hard Support';
+
+export interface PreMadeSquadMember {
+  userId: string;
+  ign: string;
+  email?: string;
+  role: DotaRolePosition | string;
+  mmr: number;
+  isCaptain?: boolean;
+}
+
+export interface PreMadeSquad {
+  id: string;
+  name: string;
+  tag: string;
+  logo: string;
+  color: string;
+  captainUserId: string;
+  captainIgn: string;
+  captainRole: DotaRolePosition | string;
+  roster: PreMadeSquadMember[];
+  registeredTournamentId?: string;
+  registeredTournamentName?: string;
+  inviteCode?: string;
+  status: 'FORMING' | 'READY' | 'REGISTERED' | string;
+  averageMmr?: number;
+  createdAt: string;
+}
+
+export interface FranchiseTeam {
+  id: string;
+  tournamentId?: string;
+  name: string;
+  tag: string;
+  color?: string;
+  logo?: string;
+  captainId?: string;
+  captainUserId?: string;
+  captainIgn?: string;
+  startingCredits?: number;
+  remainingCredits?: number;
+  creditsRemaining?: number;
+  bannerUrl?: string;
+  roster: any[];
+}
+
+export interface TournamentRegistration {
+  userId: string;
+  tournamentId?: string;
+  ign: string;
+  primaryRole?: string;
+  secondaryRole?: string;
+  declaredMmr?: number;
+  tournamentMmr?: number;
+  mmr?: number;
+  isCaptainAppointed?: boolean;
+  status?: string;
+}
+
+export interface AuctionState {
+  currentBid: number;
+  highBidderTeamId?: string;
+  status?: string;
+  currentNominee?: any;
+  bidHistory?: any[];
+  unsoldPlayers?: any[];
+  unselectedPlayers?: any[];
+  soldPlayerIds?: string[];
+  unsoldPlayerIds?: string[];
+  leadingTeamId?: string;
+  leadingTeamName?: string;
+  leadingCaptainIgn?: string;
+  timerDeadline?: number;
+  secondsRemaining?: number;
+}
+
+export interface TournamentMatch {
+  id: string;
+  tournamentId: string;
+  round: string;
+  bracketType?: 'upper' | 'lower' | 'grand_finals' | 'finals' | string;
+  teamA?: { id: string; name: string; tag?: string; score?: number; logo?: string };
+  teamB?: { id: string; name: string; tag?: string; score?: number; logo?: string };
+  status: 'PENDING' | 'LIVE' | 'COMPLETED' | 'UPCOMING';
+  winnerTeamId?: string;
+  scheduledTime?: string;
+  scoreA?: number;
+  scoreB?: number;
 }
 
 export interface MatchScoreTeam {
@@ -310,8 +442,10 @@ export type ViewType =
   | 'matches'
   | 'match_detail'
   | 'bracket'
+  | 'bracket_matches'
   | 'standings'
   | 'teams'
+  | 'teams_hub'
   | 'team_profile'
   | 'players'
   | 'player_profile'
@@ -320,6 +454,7 @@ export type ViewType =
   | 'registered_players'
   | 'captain_selection'
   | 'auction'
+  | 'live_auction'
   | 'draft'
   | 'draft_results'
   | 'organiser_dashboard'

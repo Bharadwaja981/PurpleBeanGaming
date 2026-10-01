@@ -68,7 +68,7 @@ export function NotificationsModal({
     switch (item.type) {
       case 'CAPTAIN_SELECTED':
       case 'captain':
-        onNavigate('captain_selection', tId);
+        onNavigate('auction', tId);
         break;
       case 'AUCTION_STARTING':
       case 'auction':
@@ -94,7 +94,7 @@ export function NotificationsModal({
     switch (item.type) {
       case 'CAPTAIN_SELECTED':
       case 'captain':
-        return 'View Captain & Team Desk →';
+        return 'Enter Auction Room ↗';
       case 'AUCTION_STARTING':
       case 'auction':
         return 'Join Live Auction Lobby →';

@@ -16,8 +16,11 @@ import {
   TrendingUp,
   Gavel,
   Gamepad2,
-  Sparkles
+  Sparkles,
+  UserPlus,
+  Bot
 } from 'lucide-react';
+import { AdminTournamentPlayerManagerModal } from '../components/AdminTournamentPlayerManagerModal';
 import { DoubleEliminationBracket } from '../components/DoubleEliminationBracket';
 import { DraftReplayViewer } from '../components/DraftReplayViewer';
 import { PremadeTeamManagement } from '../components/PremadeTeamManagement';
@@ -55,10 +58,14 @@ export function TournamentDetailView({
   const tournament = tournamentService.getTournamentById(tournamentId) || allTournaments.find((t) => t.id === tournamentId) || allTournaments[0];
   const isTestCup = tournament?.id === 'purple-bean-test-cup';
   const isAuctionSupported = tournamentConfigRegistry.isAuctionSupported(tournament?.id);
-  const auctionLifecycle = tournamentConfigRegistry.getAuctionLifecycle(tournament?.id || '');
+  const [auctionLifecycle, setAuctionLifecycle] = useState(() => 
+    tournamentConfigRegistry.getAuctionLifecycle(tournament?.id || '')
+  );
 
   const [currentUser, setCurrentUser] = useState(() => tournamentService.getCurrentUser());
-  const isOrganiser = currentUser.role === 'organizer';
+  const isOrganiser = currentUser.role === 'organizer' || currentUser.isAdmin || (currentUser.email?.toLowerCase().trim() === '11106cm009@gmail.com') || Boolean(tournament && (tournament.organiserId === currentUser.id || tournament.organizer === currentUser.id));
+  const [showPlayerManagerModal, setShowPlayerManagerModal] = useState(false);
+  const [playerManagerInitialTab, setPlayerManagerInitialTab] = useState<'manual' | 'upload' | 'dummy'>('manual');
   const [userRegistration, setUserRegistration] = useState(() => 
     tournament ? tournamentService.getUserRegistration(tournament.id, tournamentService.getCurrentUser().id) : undefined
   );
@@ -84,6 +91,7 @@ export function TournamentDetailView({
       if (tournament) {
         setUserRegistration(tournamentService.getUserRegistration(tournament.id, user.id));
         setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
+        setAuctionLifecycle(tournamentConfigRegistry.getAuctionLifecycle(tournament.id));
       }
     });
     return unsub;
@@ -92,10 +100,12 @@ export function TournamentDetailView({
   useEffect(() => {
     if (tournament?.id) {
       setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
+      setAuctionLifecycle(tournamentConfigRegistry.getAuctionLifecycle(tournament.id));
       const engine = getAuctionEngine(tournament.id);
       const unsubAuction = engine.subscribe(() => {
         setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
         setAllTeams(tournamentService.getTeams());
+        setAuctionLifecycle(tournamentConfigRegistry.getAuctionLifecycle(tournament.id));
       });
       return unsubAuction;
     }
@@ -285,6 +295,64 @@ export function TournamentDetailView({
           </div>
         )}
 
+        {/* User Appointed Captain Notification Card */}
+        {Boolean(
+          userRegistration?.isCaptainApproved || 
+          currentUser.role === 'captain' ||
+          effectiveTeams.some(t => 
+            t.captainId === currentUser.id || 
+            (currentUser.email && (t as any).captainEmail?.toLowerCase() === currentUser.email.toLowerCase()) ||
+            (t.captainName && currentUser.displayName && t.captainName.toLowerCase() === currentUser.displayName.toLowerCase())
+          ) ||
+          auctionEngineTeams.some(t => 
+            t.captainId === currentUser.id || 
+            (currentUser.email && (t as any).captainEmail?.toLowerCase() === currentUser.email.toLowerCase()) ||
+            (t.captainIgn && currentUser.displayName && t.captainIgn.toLowerCase() === currentUser.displayName.toLowerCase())
+          )
+        ) && (
+          <div className="bg-[#70FFAF] text-black border-2 border-black p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 font-mono text-xs shadow-[3px_3px_0px_0px_#000] animate-in fade-in duration-200">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-[#FFE600] border-2 border-black flex items-center justify-center text-xl shrink-0 shadow-[2px_2px_0px_0px_#000]">
+                👑
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-sans font-black text-sm uppercase text-black">
+                    You Are Appointed Franchise Captain
+                  </span>
+                  <span className="bg-[#FFE600] border border-black text-[9px] px-1.5 py-0.2 font-black uppercase">
+                    Captain Slot Confirmed
+                  </span>
+                </div>
+                <p className="text-[11px] text-stone-800 mt-0.5">
+                  You are leading{' '}
+                  <strong>
+                    {effectiveTeams.find(t => 
+                      t.captainId === currentUser.id || 
+                      (currentUser.email && (t as any).captainEmail?.toLowerCase() === currentUser.email.toLowerCase()) ||
+                      (t.captainName && currentUser.displayName && t.captainName.toLowerCase() === currentUser.displayName.toLowerCase())
+                    )?.name || 
+                    auctionEngineTeams.find(t => 
+                      t.captainId === currentUser.id || 
+                      (currentUser.email && (t as any).captainEmail?.toLowerCase() === currentUser.email.toLowerCase()) ||
+                      (t.captainIgn && currentUser.displayName && t.captainIgn.toLowerCase() === currentUser.displayName.toLowerCase())
+                    )?.name || 
+                    userRegistration?.teamName || currentUser.teamName || 'Your Franchise'}
+                  </strong>{' '}
+                  in the Live Captain Auction. Head to the Auction Room to bid on contenders and form your roster!
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => onNavigate('auction', tournament.id)}
+              className="bg-[#7C3AED] hover:bg-purple-700 text-white border-2 border-black px-4 py-2 font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer shrink-0"
+            >
+              <Gavel className="w-3.5 h-3.5 text-[#FFE600]" />
+              <span>Enter Captain Auction Room ↗</span>
+            </button>
+          </div>
+        )}
+
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-xs font-mono font-black text-[#7C3AED] uppercase">
             <span>OFFICIAL PURPLE BEAN GAMING TOURNAMENT</span>
@@ -362,19 +430,22 @@ export function TournamentDetailView({
                   <span className="text-xs font-bold text-stone-600">Status:</span>
                   <span className={`px-2.5 py-0.5 border-2 border-black text-xs font-black uppercase ${
                     auctionLifecycle.status === 'LIVE' ? 'bg-[#FF5757] text-white animate-pulse' :
-                    auctionLifecycle.status === 'READY' ? 'bg-[#FFE600] text-black' :
+                    (auctionLifecycle.status === 'READY' || effectiveTeams.length >= 2 || auctionEngineTeams.length >= 2) ? 'bg-[#FFE600] text-black' :
                     auctionLifecycle.status === 'COMPLETED' ? 'bg-[#70FFAF] text-black' :
                     'bg-stone-200 text-stone-700'
                   }`}>
                     {auctionLifecycle.status === 'LIVE' ? 'Live Auction' :
-                     auctionLifecycle.status === 'READY' ? 'Lobby Ready' :
-                     auctionLifecycle.status === 'COMPLETED' ? 'Completed' : 'Waiting for Captain Selection'}
+                     (auctionLifecycle.status === 'READY' || effectiveTeams.length >= 2 || auctionEngineTeams.length >= 2) ? 'Lobby Ready' :
+                     auctionLifecycle.status === 'COMPLETED' ? 'Completed' :
+                     (auctionLifecycle.label || 'Waiting for Captain Selection')}
                   </span>
                 </div>
               </div>
 
               <p className="text-xs text-stone-700 leading-relaxed">
-                {auctionLifecycle.description}
+                {(auctionLifecycle.status === 'READY' || effectiveTeams.length >= 2 || auctionEngineTeams.length >= 2)
+                  ? 'Captains and franchise teams finalized. Ready for nomination and live bidding.'
+                  : auctionLifecycle.description}
               </p>
 
               <div className="flex flex-wrap items-center gap-3 pt-1">
@@ -382,13 +453,13 @@ export function TournamentDetailView({
                   onClick={() => onNavigate('auction', tournament.id)}
                   className={`px-5 py-2.5 text-xs font-black uppercase border-2 border-black shadow-[3px_3px_0px_0px_#000] flex items-center gap-2 cursor-pointer transition-all ${
                     auctionLifecycle.status === 'LIVE' ? 'bg-[#FF5757] hover:bg-red-600 text-white' :
-                    auctionLifecycle.status === 'READY' ? 'bg-[#FFE600] hover:bg-yellow-400 text-black' :
+                    (auctionLifecycle.status === 'READY' || effectiveTeams.length >= 2 || auctionEngineTeams.length >= 2) ? 'bg-[#FFE600] hover:bg-yellow-400 text-black' :
                     auctionLifecycle.status === 'COMPLETED' ? 'bg-[#70FFAF] hover:bg-emerald-300 text-black' :
                     'bg-stone-100 hover:bg-stone-200 text-black'
                   }`}
                 >
                   <Gavel className="w-4 h-4" />
-                  <span>{auctionLifecycle.ctaText}</span>
+                  <span>{(auctionLifecycle.status === 'READY' || effectiveTeams.length >= 2 || auctionEngineTeams.length >= 2) ? 'ENTER AUCTION LOBBY' : auctionLifecycle.ctaText}</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
@@ -410,19 +481,19 @@ export function TournamentDetailView({
                 </div>
                 <div className="p-3 bg-stone-50 border-2 border-black flex justify-between items-center">
                   <span className="text-stone-600 font-bold">Indian Dedicated Server:</span>
-                  <span className="font-black text-black">{tournament.keyInfo.server}</span>
+                  <span className="font-black text-black">{tournament.keyInfo?.server || 'Mumbai / Chennai Low-Latency Node'}</span>
                 </div>
                 <div className="p-3 bg-stone-50 border-2 border-black flex justify-between items-center">
                   <span className="text-stone-600 font-bold">Anti-Cheat Standard:</span>
-                  <span className="font-black text-black">{tournament.keyInfo.antiCheat}</span>
+                  <span className="font-black text-black">{tournament.keyInfo?.antiCheat || 'Valve VAC & PBG Integrity Audit'}</span>
                 </div>
                 <div className="p-3 bg-stone-50 border-2 border-black flex justify-between items-center">
                   <span className="text-stone-600 font-bold">Bracket Structure:</span>
-                  <span className="font-black text-black">{tournament.keyInfo.bracketFormat}</span>
+                  <span className="font-black text-black">{tournament.keyInfo?.bracketFormat || (tournament.format || 'Double Elimination')}</span>
                 </div>
                 <div className="p-3 bg-stone-50 border-2 border-black flex justify-between items-center">
                   <span className="text-stone-600 font-bold">Roster Lock Status:</span>
-                  <span className="font-black text-red-600">{tournament.keyInfo.rosterLock}</span>
+                  <span className="font-black text-red-600">{tournament.keyInfo?.rosterLock || 'Enforced at Bracket Seeding'}</span>
                 </div>
               </div>
 
@@ -446,7 +517,7 @@ export function TournamentDetailView({
               </h2>
 
               <div className="space-y-3 font-mono text-xs">
-                {tournament.prizeDistribution.map((p, idx) => (
+                {(tournament.prizeDistribution || []).map((p, idx) => (
                   <div
                     key={p.place}
                     className={`p-3 border-2 border-black flex items-center justify-between ${
@@ -483,12 +554,12 @@ export function TournamentDetailView({
                 TOURNAMENT PROGRESSION PHASES
               </h2>
               <span className="font-mono text-xs font-black bg-stone-100 border border-black px-2 py-1">
-                Phase {tournament.stages.findIndex(s => s.status === 'current') + 1 || 7} of {tournament.stages.length} Active
+                Phase {Array.isArray(tournament.stages) ? tournament.stages.findIndex(s => s.status === 'current') + 1 || 1 : 1} of {Array.isArray(tournament.stages) ? tournament.stages.length : 3} Active
               </span>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3 font-mono text-xs">
-              {tournament.stages.map((stage, idx) => (
+              {(tournament.stages || []).map((stage, idx) => (
                 <div
                   key={stage.id}
                   className={`p-3 border-2 border-black flex flex-col justify-between space-y-2 ${
@@ -731,18 +802,18 @@ export function TournamentDetailView({
                         </div>
                       </div>
                     </td>
-                    <td className="p-3 text-center font-bold">{team.record.wins + team.record.losses}</td>
-                    <td className="p-3 text-center font-black text-emerald-700">{team.record.wins}</td>
-                    <td className="p-3 text-center font-bold text-red-600">{team.record.losses}</td>
-                    <td className="p-3 text-center font-bold">{team.mapsRecord.won} - {team.mapsRecord.lost}</td>
+                    <td className="p-3 text-center font-bold">{(team.record?.wins ?? 0) + (team.record?.losses ?? 0)}</td>
+                    <td className="p-3 text-center font-black text-emerald-700">{team.record?.wins ?? 0}</td>
+                    <td className="p-3 text-center font-bold text-red-600">{team.record?.losses ?? 0}</td>
+                    <td className="p-3 text-center font-bold">{team.mapsRecord?.won ?? 0} - {team.mapsRecord?.lost ?? 0}</td>
                     <td className="p-3 text-center font-black text-black text-sm">
                       <span className="bg-black text-white px-2 py-0.5 inline-block">
-                        {team.groupPoints}
+                        {team.groupPoints ?? 0}
                       </span>
                     </td>
                     <td className="p-3 text-center">
                       <div className="flex items-center justify-center gap-1">
-                        {team.form.map((res: string, fIdx: number) => (
+                        {Array.isArray(team.form) ? team.form.map((res: string, fIdx: number) => (
                           <span
                             key={fIdx}
                             className={`w-4 h-4 text-[9px] font-black flex items-center justify-center border border-black ${
@@ -751,7 +822,7 @@ export function TournamentDetailView({
                           >
                             {res}
                           </span>
-                        ))}
+                        )) : null}
                       </div>
                     </td>
                   </tr>
@@ -813,7 +884,7 @@ export function TournamentDetailView({
                 <div className="pt-3 border-t-2 border-black font-mono text-xs space-y-2">
                   <div className="flex justify-between">
                     <span className="text-stone-500">Drafted Players:</span>
-                    <span className="font-bold">{team.primaryRoster.map(p => p.username).join(', ')}</span>
+                    <span className="font-bold">{team.primaryRoster.map((p: any) => p.username).join(', ')}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-stone-500">Competitive Rating:</span>
@@ -862,7 +933,7 @@ export function TournamentDetailView({
                   </div>
                   <div className="flex justify-between">
                     <span className="text-stone-500">Current Record:</span>
-                    <span className="font-black">{team.record.wins}W - {team.record.losses}L</span>
+                    <span className="font-black">{(team.record?.wins ?? 0)}W - {(team.record?.losses ?? 0)}L</span>
                   </div>
                   <button
                     onClick={(e) => {
@@ -893,16 +964,44 @@ export function TournamentDetailView({
 
         return (
           <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] overflow-hidden">
-            <div className="p-4 bg-[#FFE600] border-b-2 border-black font-mono text-xs font-black uppercase flex items-center justify-between">
-              <span>
-                REGISTERED ROSTER POOL ({totalCount} CONTENDERS)
-              </span>
-              <button
-                onClick={() => onNavigate(isTestCup ? 'organiser_dashboard' : 'registered_players')}
-                className="bg-black text-white px-2 py-1 hover:bg-stone-800 transition-colors cursor-pointer"
-              >
-                {isTestCup ? 'Organiser Console →' : 'Organiser Directory View →'}
-              </button>
+            <div className="p-4 bg-[#FFE600] border-b-2 border-black font-mono text-xs font-black uppercase flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-3">
+                <span>
+                  REGISTERED ROSTER POOL ({totalCount} CONTENDERS)
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                {isOrganiser && (
+                  <>
+                    <button
+                      onClick={() => {
+                        setPlayerManagerInitialTab('manual');
+                        setShowPlayerManagerModal(true);
+                      }}
+                      className="bg-white hover:bg-stone-100 text-black border-2 border-black px-2.5 py-1 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      + Enter Player / Upload File
+                    </button>
+                    <button
+                      onClick={() => {
+                        setPlayerManagerInitialTab('dummy');
+                        setShowPlayerManagerModal(true);
+                      }}
+                      className="bg-[#70FFAF] hover:bg-[#52e896] text-black border-2 border-black px-2.5 py-1 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer font-bold"
+                    >
+                      <Bot className="w-3.5 h-3.5" />
+                      ⚡ Add Dummy Players
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={() => onNavigate(isTestCup ? 'organiser_dashboard' : 'registered_players')}
+                  className="bg-black text-white px-2 py-1 hover:bg-stone-800 transition-colors cursor-pointer"
+                >
+                  {isTestCup ? 'Organiser Console →' : 'Organiser Directory View →'}
+                </button>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left font-mono text-xs">
@@ -967,15 +1066,78 @@ export function TournamentDetailView({
                               }`}>
                                 {auctionPlayer?.status || reg.status}
                               </span>
+                              {isOrganiser && isAuctionSupported && assignedTeam?.captainId !== reg.userId && (
+                                <button
+                                  onClick={async () => {
+                                    const defaultName = `${reg.ign}'s Squad`;
+                                    const teamNamePrompt = window.prompt(`Appoint ${reg.ign} as Captain? Enter Team Name:`, defaultName);
+                                    if (teamNamePrompt && teamNamePrompt.trim()) {
+                                      const defaultTag = (reg.ign.replace(/[^a-zA-Z]/g, '').slice(0, 3) || 'TM').toUpperCase();
+                                      const teamTagPrompt = (window.prompt('Enter 3-4 Letter Team Tag:', defaultTag) || defaultTag).trim().toUpperCase();
+                                      const res = tournamentService.appointDotaCaptain(
+                                        reg.userId,
+                                        {
+                                          teamName: teamNamePrompt.trim(),
+                                          tag: teamTagPrompt,
+                                          color: '#7C3AED',
+                                          logo: '🛡️'
+                                        },
+                                        tournament.id
+                                      );
+                                      if (res.success) {
+                                        setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
+                                      } else {
+                                        alert(res.error || 'Failed to appoint captain.');
+                                      }
+                                    }
+                                  }}
+                                  title="Appoint as Franchise Captain"
+                                  className="bg-[#FFE600] hover:bg-yellow-400 text-black border border-black px-1.5 py-0.5 text-[9px] font-black uppercase cursor-pointer shadow-[1px_1px_0px_0px_#000] inline-flex items-center gap-0.5"
+                                >
+                                  👑 Appoint
+                                </button>
+                              )}
+                              {isOrganiser && isAuctionSupported && assignedTeam?.captainId === reg.userId && (
+                                <button
+                                  onClick={async () => {
+                                    if (window.confirm(`Unassign captain role for ${reg.ign}? This will dissolve ${assignedTeam?.name}.`)) {
+                                      const res = tournamentService.resetDotaCaptain(reg.userId, tournament.id);
+                                      if (res.success) {
+                                        setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
+                                      } else {
+                                        alert(res.error || 'Failed to unassign captain.');
+                                      }
+                                    }
+                                  }}
+                                  title="Unassign Captain"
+                                  className="bg-amber-100 hover:bg-amber-200 text-amber-900 border border-black px-1.5 py-0.5 text-[9px] font-black uppercase cursor-pointer"
+                                >
+                                  Unassign
+                                </button>
+                              )}
                               {isOrganiser && !isVerified && (
                                 <button
                                   onClick={async () => {
                                     await tournamentService.verifyRegistration(tournament.id, reg.userId, reg.declaredMmr);
-                                    setAllTournaments(tournamentService.getTournaments());
+                                    setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
                                   }}
                                   className="bg-[#7C3AED] hover:bg-[#6D28D9] text-white border border-black px-1.5 py-0.5 text-[9px] font-black uppercase cursor-pointer shadow-[1px_1px_0px_0px_#000]"
                                 >
                                   Verify
+                                </button>
+                              )}
+                              {isOrganiser && (
+                                <button
+                                  onClick={async () => {
+                                    if (window.confirm(`Remove contender "${reg.ign}" from tournament?`)) {
+                                      await tournamentService.removeTournamentRegistration(tournament.id, reg.userId);
+                                      setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
+                                    }
+                                  }}
+                                  title="Remove contender from tournament"
+                                  className="bg-red-50 hover:bg-red-200 text-red-700 border border-black px-1.5 py-0.5 text-[9px] font-black uppercase cursor-pointer"
+                                >
+                                  ✕
                                 </button>
                               )}
                             </div>
@@ -1236,6 +1398,22 @@ export function TournamentDetailView({
             )}
           </div>
         </div>
+      )}
+
+      {/* Admin / Organiser Contender Management Modal */}
+      {showPlayerManagerModal && tournament && (
+        <AdminTournamentPlayerManagerModal
+          isOpen={showPlayerManagerModal}
+          onClose={() => setShowPlayerManagerModal(false)}
+          tournamentId={tournament.id}
+          tournamentName={tournament.name}
+          initialTab={playerManagerInitialTab}
+          onPlayersUpdated={() => {
+            setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
+            setAllTeams(tournamentService.getTeams());
+            setAllTournaments(tournamentService.getTournaments('All Games', 'All', true));
+          }}
+        />
       )}
     </div>
   );

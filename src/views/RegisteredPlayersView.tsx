@@ -128,7 +128,7 @@ export function RegisteredPlayersView({ onNavigate }: RegisteredPlayersViewProps
                   </td>
                   <td className="p-3.5 text-right font-black text-black">
                     <span className="bg-[#FFE600] px-2 py-0.5 border border-black inline-block">
-                      {player.mmr.toLocaleString()}
+                      {(player.mmr ?? player.tournamentMmr ?? 6000).toLocaleString()}
                     </span>
                   </td>
                   <td className="p-3.5 font-bold text-stone-800">

@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Trophy, Search, Filter, Calendar, Users, ArrowRight, Radio, MapPin, Gamepad2 } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
+import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
 import { Tournament, ViewType } from '../types/tournament';
 import { gameManagementEngine } from '../domain/gameManagementEngine';
 import { SelectDropdown } from '../components/ui/Dropdown';
@@ -27,10 +28,15 @@ export function TournamentsView({ onNavigate, onOpenRegister }: TournamentsViewP
   const [activeGames, setActiveGames] = useState(() => gameManagementEngine.getActiveGames());
 
   useEffect(() => {
-    const unsub = tournamentService.subscribe(() => {
+    const sync = () => {
       setTournaments(tournamentService.getTournaments());
-    });
-    return unsub;
+    };
+    const unsubService = tournamentService.subscribe(sync);
+    const unsubRegistry = tournamentConfigRegistry.subscribe(sync);
+    return () => {
+      unsubService();
+      unsubRegistry();
+    };
   }, []);
 
   useEffect(() => {

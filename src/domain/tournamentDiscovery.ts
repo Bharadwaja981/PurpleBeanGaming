@@ -12,7 +12,7 @@
  * - ALL status filter shows every publicly discoverable tournament
  */
 
-import { Tournament } from '../types/tournament';
+import { Tournament, Team, Player } from '../types/tournament';
 
 export const CANONICAL_PUBLIC_STATUSES = new Set([
   'REGISTRATION_OPEN',
@@ -27,6 +27,64 @@ export const CANONICAL_PUBLIC_STATUSES = new Set([
   'COMPLETED',
   'CANCELLED'
 ]);
+
+export const LEGACY_MOCK_TOURNAMENT_IDS = new Set([
+  '2-team-auction-test',
+  'purple-bean-auction-test',
+  'auction-test',
+  'purple-bean-test-cup',
+  'auction-basic-test-1',
+  'basic-test-1',
+  'tourney-mumnc5ax',
+  'pb-tourney-1790757456408'
+]);
+
+export function isTestTournament(tournament: any): boolean {
+  if (!tournament) return false;
+  const idLower = (tournament.id || '').toLowerCase();
+
+  if (
+    (tournament as any).isDevelopment === true ||
+    (tournament as any).isSynthetic === true ||
+    (tournament as any).isDummy === true
+  ) {
+    return true;
+  }
+
+  if (LEGACY_MOCK_TOURNAMENT_IDS.has(idLower)) {
+    return (tournament as any).visibility !== 'PUBLIC';
+  }
+
+  return false;
+}
+
+export function isTestPlayer(player: any): boolean {
+  if (!player) return false;
+  const idLower = (player.id || player.userId || '').toLowerCase();
+
+  return (
+    idLower.startsWith('dummy-') ||
+    idLower.startsWith('p-tc-') ||
+    idLower.startsWith('tc-') ||
+    (player as any).isDummy === true ||
+    (player as any).isSynthetic === true
+  );
+}
+
+export function isTestTeam(team: any): boolean {
+  if (!team) return false;
+  const idLower = (team.id || '').toLowerCase();
+  const tourneyIdLower = (team.tournamentId || '').toLowerCase();
+
+  return (
+    idLower.startsWith('tc-team') ||
+    LEGACY_MOCK_TOURNAMENT_IDS.has(tourneyIdLower) ||
+    idLower === 'team-9s8uyzbbgxz5tfgyukaoangqjpo2-2177' ||
+    idLower === 'team-s1syelw0xhwkgjenyaobvh7btjt2-197' ||
+    (team as any).isDummy === true ||
+    (team as any).isSynthetic === true
+  );
+}
 
 export function normalizeStatus(rawStatus?: string | null): string {
   if (!rawStatus) return 'DRAFT';
@@ -103,20 +161,12 @@ export function normalizeVisibility(t: any): 'PUBLIC' | 'DRAFT' | 'PRIVATE' | 'U
   }
   if (
     t.isPrivate === true || 
-    t.isDraft === true || 
-    t.config?.identity?.isPrivate === true || 
-    t.config?.identity?.isDraft === true
+    t.config?.identity?.isPrivate === true
   ) {
-    return 'DRAFT';
+    return 'PRIVATE';
   }
 
-  // If status is a known public lifecycle state and not marked private, treat as PUBLIC
-  const st = normalizeStatus(t.status || t.lifecycle);
-  if (st !== 'DRAFT' && st !== 'DELETED') {
-    return 'PUBLIC';
-  }
-
-  return 'DRAFT';
+  return 'PUBLIC';
 }
 
 export function normalizeGameId(gameOrId?: string | null): string {
@@ -135,18 +185,20 @@ export function isPubliclyDiscoverable(tournament: Tournament): boolean {
   if ((tournament as any).deleted === true || (tournament.status as any) === 'DELETED') {
     return false;
   }
+  if (isTestTournament(tournament)) {
+    return false;
+  }
 
   const visibility = normalizeVisibility(tournament);
-  if (visibility !== 'PUBLIC') {
+  if (visibility === 'PRIVATE' || visibility === 'UNLISTED' || visibility === 'DRAFT') {
+    return false;
+  }
+  const normStatus = (tournament.status || tournament.lifecycle || '').toUpperCase();
+  if (normStatus === 'DRAFT') {
     return false;
   }
 
-  const status = normalizeStatus(tournament.status || tournament.lifecycle);
-  if (status === 'DRAFT' || status === 'DELETED') {
-    return false;
-  }
-
-  return CANONICAL_PUBLIC_STATUSES.has(status);
+  return true;
 }
 
 export function matchesStatusCategory(rawStatus: string | undefined | null, filterCategory: string): boolean {
@@ -215,16 +267,41 @@ export function normalizeTournamentRecord(t: any): Tournament {
   const normStatus = normalizeStatus(rawStatus);
   const normGameId = normalizeGameId(t.gameId || t.game || t.config?.identity?.gameId);
 
-  // Existing Basic Test 1 fix
-  const isBasicTest1 =
-    (t.id && (t.id === 'auction-basic-test-1' || t.id.includes('basic-test-1'))) ||
-    (t.name && (t.name.trim().toLowerCase() === 'basic test 1' || t.name.trim().toLowerCase() === 'auction basic test 1'));
+  const finalStatus = normStatus;
+  const finalVisibility = normVisibility;
 
-  const finalStatus = isBasicTest1
-    ? (normStatus === 'DRAFT' ? 'REGISTRATION_OPEN' : normStatus)
-    : normStatus;
+  const prizePoolText = t.prizePoolINR || t.prizePool || '₹50,000 INR';
+  const totalPrizeNumber = typeof t.totalPrizeNumber === 'number' 
+    ? t.totalPrizeNumber 
+    : (typeof t.prizes?.totalPrizePoolINR === 'number' ? t.prizes.totalPrizePoolINR : 50000);
 
-  const finalVisibility = isBasicTest1 ? 'PUBLIC' : normVisibility;
+  const keyInfo = t.keyInfo ? {
+    server: t.keyInfo.server || 'Mumbai / Chennai Low-Latency Node',
+    antiCheat: t.keyInfo.antiCheat || 'Valve VAC & PBG Integrity Audit',
+    bracketFormat: t.keyInfo.bracketFormat || (t.format || 'Double Elimination (BO3 / BO5 Finals)'),
+    rosterLock: t.keyInfo.rosterLock || 'Enforced at Bracket Seeding'
+  } : {
+    server: 'Mumbai / Chennai Low-Latency Node',
+    antiCheat: 'Valve VAC & PBG Integrity Audit',
+    bracketFormat: t.format || 'Double Elimination (BO3 / BO5 Finals)',
+    rosterLock: 'Enforced at Bracket Seeding'
+  };
+
+  const prizeDistribution = Array.isArray(t.prizeDistribution) && t.prizeDistribution.length > 0
+    ? t.prizeDistribution
+    : [
+        { place: '1st Place (Champion)', amount: '₹30,000', percentage: '60%' },
+        { place: '2nd Place (Runner-up)', amount: '₹12,500', percentage: '25%' },
+        { place: '3rd Place', amount: '₹7,500', percentage: '15%' }
+      ];
+
+  const stages = Array.isArray(t.stages) && t.stages.length > 0
+    ? t.stages
+    : [
+        { id: 'reg', name: 'Open Player & Team Registration', status: 'completed', date: 'Phase 1' },
+        { id: 'auction', name: 'Live Captain Credit Auction', status: 'current', date: 'Phase 2' },
+        { id: 'bracket', name: 'Double Elimination Championship', status: 'upcoming', date: 'Phase 3' }
+      ];
 
   return {
     ...t,
@@ -236,6 +313,171 @@ export function normalizeTournamentRecord(t: any): Tournament {
     status: finalStatus,
     lifecycle: finalStatus,
     region: t.region || t.config?.identity?.region || 'Pan India',
-    city: t.city || t.config?.identity?.city || null
+    city: t.city || t.config?.identity?.city || null,
+    dates: t.dates || (t.startDate ? `${t.startDate} - ${t.endDate || ''}` : 'Upcoming 2026 Circuit'),
+    startDate: t.startDate || new Date().toISOString().split('T')[0],
+    endDate: t.endDate || new Date().toISOString().split('T')[0],
+    prizePool: prizePoolText,
+    prizePoolINR: prizePoolText,
+    totalPrizeNumber,
+    teamCount: typeof t.teamCount === 'number' ? t.teamCount : (Array.isArray(t.teams) ? t.teams.length : 8),
+    playerCount: typeof t.playerCount === 'number' ? t.playerCount : 40,
+    format: t.format || 'Double Elimination',
+    organizer: t.organizer || t.organizerName || 'Purple Bean Esports India',
+    description: t.description || 'Official Pan-India esports tournament featuring verified Indian server nodes, referee anti-cheat monitoring, and direct INR payouts.',
+    keyInfo,
+    prizeDistribution,
+    stages
+  };
+}
+
+export function normalizeTeamRecord(raw: any): Team {
+  if (!raw) {
+    return {
+      id: `team-${Date.now()}`,
+      name: 'Unknown Team',
+      tag: 'TEAM',
+      logo: '🛡️',
+      color: '#7C3AED',
+      bgHex: '#7C3AED',
+      country: 'India',
+      flag: '🇮🇳',
+      city: 'India',
+      region: 'Pan India',
+      primaryGame: 'Dota 2',
+      rating: 1500,
+      record: { wins: 0, losses: 0 },
+      tournamentWins: 0,
+      captainId: '',
+      captainName: 'Captain',
+      players: [],
+      standIn: '',
+      groupPoints: 0,
+      mapsRecord: { won: 0, lost: 0 },
+      form: [],
+      description: ''
+    };
+  }
+
+  const wins = typeof raw.record?.wins === 'number' 
+    ? raw.record.wins 
+    : (typeof raw.wins === 'number' ? raw.wins : 0);
+  const losses = typeof raw.record?.losses === 'number' 
+    ? raw.record.losses 
+    : (typeof raw.losses === 'number' ? raw.losses : 0);
+  const mapsWon = typeof raw.mapsRecord?.won === 'number' ? raw.mapsRecord.won : 0;
+  const mapsLost = typeof raw.mapsRecord?.lost === 'number' ? raw.mapsRecord.lost : 0;
+
+  return {
+    ...raw,
+    id: raw.id || `team-${Date.now()}`,
+    name: raw.name || 'Unnamed Team',
+    tag: raw.tag || raw.name?.slice(0, 4)?.toUpperCase() || 'TEAM',
+    logo: raw.logo || '🛡️',
+    color: raw.color || '#7C3AED',
+    bgHex: raw.bgHex || raw.color || '#7C3AED',
+    country: raw.country || 'India',
+    flag: raw.flag || '🇮🇳',
+    city: raw.city || 'India',
+    region: raw.region || 'Pan India',
+    primaryGame: raw.primaryGame || 'Dota 2',
+    rating: typeof raw.rating === 'number' ? raw.rating : 1500,
+    record: { wins, losses },
+    tournamentWins: typeof raw.tournamentWins === 'number' ? raw.tournamentWins : 0,
+    captainId: raw.captainId || '',
+    captainName: raw.captainName || raw.captainIgn || 'Captain',
+    players: Array.isArray(raw.players) 
+      ? raw.players 
+      : (Array.isArray(raw.primaryRoster) ? raw.primaryRoster.map((p: any) => p.userId || p.id) : []),
+    standIn: raw.standIn || '',
+    groupPoints: typeof raw.groupPoints === 'number' ? raw.groupPoints : 0,
+    mapsRecord: { won: mapsWon, lost: mapsLost },
+    form: Array.isArray(raw.form) ? raw.form : [],
+    description: raw.description || `Official team ${raw.name || ''}`,
+    earningsINR: raw.earningsINR || '₹0',
+    tournamentId: raw.tournamentId
+  };
+}
+
+export function normalizePlayerRecord(raw: any): Player {
+  if (!raw) {
+    return {
+      id: `p-${Date.now()}`,
+      username: 'Player',
+      realName: 'Player',
+      avatar: '🎮',
+      country: 'India',
+      flag: '🇮🇳',
+      city: 'India',
+      region: 'Pan India',
+      primaryGame: 'Dota 2',
+      mmr: 5000,
+      tournamentMmr: 5000,
+      platformRating: 1500,
+      primaryRole: 'Position 1 — Carry',
+      secondaryRole: 'Position 2 — Mid',
+      status: 'Verified',
+      matches: 0,
+      wins: 0,
+      losses: 0,
+      winRate: 50,
+      tournamentWins: 0,
+      mvps: 0,
+      experienceYears: 3,
+      previousCaptainRecord: '0-0',
+      bio: '',
+      heroPool: []
+    };
+  }
+
+  const wins = typeof raw.wins === 'number' 
+    ? raw.wins 
+    : (typeof raw.winsCount === 'number' ? raw.winsCount : 0);
+  const losses = typeof raw.losses === 'number' 
+    ? raw.losses 
+    : (typeof raw.lossesCount === 'number' ? raw.lossesCount : 0);
+  const matches = typeof raw.matches === 'number' 
+    ? raw.matches 
+    : (typeof raw.matchesCount === 'number' ? raw.matchesCount : wins + losses);
+  const mmr = typeof raw.mmr === 'number' 
+    ? raw.mmr 
+    : (typeof raw.tournamentMmr === 'number' ? raw.tournamentMmr : (typeof raw.declaredMmr === 'number' ? raw.declaredMmr : 5000));
+
+  return {
+    ...raw,
+    id: raw.id || raw.userId || `p-${Date.now()}`,
+    username: raw.username || raw.ign || 'Player',
+    displayName: raw.displayName || raw.username || raw.ign || 'Player',
+    realName: raw.realName || raw.username || raw.ign || 'Player',
+    avatar: raw.avatar || '🎮',
+    country: raw.country || 'India',
+    flag: raw.flag || '🇮🇳',
+    city: raw.city || 'India',
+    region: raw.region || 'Pan India',
+    primaryGame: raw.primaryGame || 'Dota 2',
+    mmr,
+    tournamentMmr: typeof raw.tournamentMmr === 'number' ? raw.tournamentMmr : mmr,
+    platformRating: typeof raw.platformRating === 'number' 
+      ? raw.platformRating 
+      : (typeof raw.competitiveRating === 'number' ? raw.competitiveRating : 1500),
+    primaryRole: raw.primaryRole || 'Position 1 — Carry',
+    secondaryRole: raw.secondaryRole || 'Position 2 — Mid',
+    teamId: raw.teamId || raw.currentTeamId,
+    teamName: raw.teamName || raw.currentTeamName,
+    status: raw.status === 'Pending Review' || raw.status === 'Flagged' ? raw.status : 'Verified',
+    matches,
+    wins,
+    losses,
+    winRate: typeof raw.winRate === 'number' 
+      ? raw.winRate 
+      : (matches > 0 ? Math.round((wins / matches) * 100) : 50),
+    tournamentWins: typeof raw.tournamentWins === 'number' 
+      ? raw.tournamentWins 
+      : (typeof raw.tournamentCount === 'number' ? raw.tournamentCount : 0),
+    mvps: typeof raw.mvps === 'number' ? raw.mvps : 0,
+    experienceYears: typeof raw.experienceYears === 'number' ? raw.experienceYears : 3,
+    previousCaptainRecord: raw.previousCaptainRecord || `${wins}-${losses}`,
+    bio: raw.bio || '',
+    heroPool: Array.isArray(raw.heroPool) ? raw.heroPool : []
   };
 }

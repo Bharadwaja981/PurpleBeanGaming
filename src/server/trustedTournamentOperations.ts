@@ -20,7 +20,8 @@ import {
 } from '../domain/tournamentStateMachine';
 import { 
   getRosterConfigForGame, 
-  validateBidRosterConstraint 
+  validateBidRosterConstraint,
+  validateStandInConstraints
 } from '../domain/rosterRules';
 import { 
   ratingLedger, 
@@ -88,10 +89,12 @@ import { normalizeDotaIdentity } from '../../lib/dota/ids';
 import { db, isQuotaExhausted, isQuotaError, setQuotaExhausted } from '../services/firebaseConfig';
 import { doc, setDoc } from 'firebase/firestore';
 
+import { TournamentRole } from '../types/tournament';
+
 export interface ServerCallerContext {
   userId: string;
   email: string;
-  role: 'organizer' | 'captain' | 'player' | 'spectator';
+  role: TournamentRole;
   teamId?: string;
   isAdmin?: boolean;
 }
@@ -230,11 +233,12 @@ export class TrustedTournamentServer {
     }
 
     // Role check: Caller must be captain of the bidding team or lead organizer
-    if (caller.role !== 'organizer' && caller.role !== 'captain') {
+    const isCaptainRole = caller.role === 'captain' || caller.role === 'team_captain';
+    if (caller.role !== 'organizer' && !isCaptainRole) {
       throw new Error('Unauthorized: Only registered team captains or lead organizers can place bids.');
     }
 
-    if (caller.role === 'captain' && caller.teamId && caller.teamId !== teamId) {
+    if (isCaptainRole && caller.teamId && caller.teamId !== teamId) {
       throw new Error(`Permission Denied: Captain cannot submit bids on behalf of rival team '${teamId}'.`);
     }
 
@@ -1141,11 +1145,12 @@ export class TrustedTournamentServer {
       expectedRevision?: number;
     }
   ): { success: boolean; currentBid: number; revision: number; leadingTeamName: string } {
-    if (caller.role !== 'organizer' && caller.role !== 'captain') {
+    const isCaptainRole = caller.role === 'captain' || caller.role === 'team_captain';
+    if (caller.role !== 'organizer' && !isCaptainRole) {
       throw new Error('Unauthorized: Only registered team captains or lead organizers can place bids.');
     }
 
-    if (caller.role === 'captain' && caller.teamId && caller.teamId !== payload.teamId) {
+    if (isCaptainRole && caller.teamId && caller.teamId !== payload.teamId) {
       throw new Error(`Permission Denied: Captain cannot submit bids on behalf of rival team '${payload.teamId}'.`);
     }
 
@@ -1204,7 +1209,7 @@ export class TrustedTournamentServer {
     payload: { tournamentId: string; teamId: string; playerId: string }
   ): { success: boolean; team: DotaAuctionTeam } {
     const isOrganiser = caller.role === 'organizer' || caller.isAdmin === true;
-    const isTeamCaptain = caller.role === 'captain' && caller.teamId === payload.teamId;
+    const isTeamCaptain = (caller.role === 'captain' || caller.role === 'team_captain') && caller.teamId === payload.teamId;
 
     if (!isOrganiser && !isTeamCaptain) {
       throw new Error('Unauthorized: Only tournament organizers or the team captain can assign stand-ins.');
@@ -1264,7 +1269,8 @@ export class TrustedTournamentServer {
       persistentClubId?: string;
     }
   ): { success: boolean; team: PremadeTeamRegistration } {
-    if (caller.role !== 'captain' && caller.role !== 'organizer' && caller.isAdmin !== true) {
+    const isCaptainRole = caller.role === 'captain' || caller.role === 'team_captain';
+    if (!isCaptainRole && caller.role !== 'organizer' && caller.isAdmin !== true) {
       throw new Error('Unauthorized: Only designated team captains or tournament organizers can register premade squads.');
     }
 

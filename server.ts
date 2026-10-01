@@ -8,7 +8,11 @@
 import { spawn } from 'node:child_process';
 import process from 'node:process';
 
-const isTsxRunning = process.execArgv.some(a => a.includes('tsx')) || process.env.__TSX_REGISTERED__ === '1';
+const isTsxRunning = 
+  process.execArgv.some(a => a.includes('tsx') || a.includes('loader.mjs') || a.includes('preflight.cjs')) || 
+  process.env.__TSX_REGISTERED__ === '1' ||
+  (process.argv[1] && process.argv[1].includes('tsx')) ||
+  Boolean(process.env.npm_lifecycle_script?.includes('tsx'));
 
 if (!isTsxRunning) {
   const child = spawn(process.execPath, ['--import', 'tsx', ...process.argv.slice(1)], {

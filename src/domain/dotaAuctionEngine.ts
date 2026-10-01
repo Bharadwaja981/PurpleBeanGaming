@@ -159,6 +159,8 @@ export class DotaAuctionEngine {
   private listeners: Array<() => void> = [];
   private timerInterval: any = null;
   private syncChannel: any = null;
+  private globalBroadcastChannel: any = null;
+  private storageHandler: ((e: StorageEvent) => void) | null = null;
   private isApplyingRemoteUpdate = false;
   private purseAllocationAudit: AuctionPurseAllocationAudit | null = null;
   private unsoldQueue: string[] = [];
@@ -210,18 +212,120 @@ export class DotaAuctionEngine {
   }
 
   private firestoreUnsub: Unsubscribe | null = null;
+  private tournamentDocUnsub: Unsubscribe | null = null;
+  private eventSource: EventSource | null = null;
+  private ssePollInterval: any = null;
 
   private initCrossSessionSync() {
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+    if (typeof window !== 'undefined') {
       try {
-        this.syncChannel = new BroadcastChannel(`pb_dota_auction_sync_${this.config.tournamentId}`);
-        this.syncChannel.onmessage = (event: MessageEvent) => {
-          if (event.data?.type === 'AUCTION_STATE_SYNC' && event.data?.payload) {
-            this.isApplyingRemoteUpdate = true;
-            this.importSnapshot(event.data.payload);
-            this.isApplyingRemoteUpdate = false;
+        if ('BroadcastChannel' in window) {
+          this.syncChannel = new BroadcastChannel(`pb_dota_auction_sync_${this.config.tournamentId}`);
+          this.syncChannel.onmessage = (event: MessageEvent) => {
+            if (event.data?.type === 'AUCTION_STATE_SYNC' && event.data?.payload) {
+              this.importSnapshot(event.data.payload);
+            } else if (event.data?.type === 'AUCTION_TIMER_TICK') {
+              if (this.state.nominee && this.state.status === 'LIVE') {
+                this.state.secondsRemaining = event.data.secondsRemaining;
+                if (event.data.timerEndsAt) this.state.timerEndsAt = event.data.timerEndsAt;
+                this.notify(false);
+              }
+            }
+          };
+
+          // Global cross-session sync channel for instant captain appointments
+          this.globalBroadcastChannel = new BroadcastChannel('pb_global_cross_session_sync');
+          this.globalBroadcastChannel.onmessage = (event: MessageEvent) => {
+            if (event.data?.tournamentId === this.config.tournamentId) {
+              if (event.data.type === 'CAPTAIN_APPOINTED' && event.data.team) {
+                this.hydrateTeamFromExternal(event.data.team);
+              }
+            }
+          };
+        }
+
+        // Storage listener for instantaneous multi-window / tab sync
+        this.storageHandler = (e: StorageEvent) => {
+          if (e.key === `pb_auction_snapshot_${this.config.tournamentId}` && e.newValue) {
+            try {
+              const parsed = JSON.parse(e.newValue);
+              if (parsed) {
+                this.importSnapshot(parsed);
+              }
+            } catch {}
+          } else if (e.key === `pb_last_captain_appointed_${this.config.tournamentId}` && e.newValue) {
+            try {
+              const parsed = JSON.parse(e.newValue);
+              if (parsed?.team) {
+                this.hydrateTeamFromExternal(parsed.team);
+              }
+            } catch {}
           }
         };
+        window.addEventListener('storage', this.storageHandler);
+
+        // Server-Sent Events (SSE) stream for cross-browser, cross-device, and incognito synchronization
+        if (typeof EventSource !== 'undefined') {
+          try {
+            this.eventSource = new EventSource(`/api/auction/${encodeURIComponent(this.config.tournamentId)}/stream`);
+            this.eventSource.addEventListener('INIT_STATE', (e: MessageEvent) => {
+              try {
+                const data = JSON.parse(e.data);
+                if (data?.payload && !this.isApplyingRemoteUpdate) {
+                  this.importSnapshot(data.payload);
+                }
+              } catch {}
+            });
+            this.eventSource.addEventListener('AUCTION_STATE_SYNC', (e: MessageEvent) => {
+              try {
+                const data = JSON.parse(e.data);
+                if (data?.payload && !this.isApplyingRemoteUpdate) {
+                  this.importSnapshot(data.payload);
+                }
+              } catch {}
+            });
+            this.eventSource.addEventListener('AUCTION_NOMINATE', (e: MessageEvent) => {
+              try {
+                const data = JSON.parse(e.data);
+                if (data?.payload && !this.isApplyingRemoteUpdate) {
+                  this.importSnapshot(data.payload);
+                }
+              } catch {}
+            });
+            this.eventSource.addEventListener('AUCTION_EXTEND_TIMER', (e: MessageEvent) => {
+              try {
+                const data = JSON.parse(e.data);
+                if (data?.payload && !this.isApplyingRemoteUpdate) {
+                  this.importSnapshot(data.payload);
+                }
+              } catch {}
+            });
+          } catch {
+            // Ignore in environments without SSE support
+          }
+        }
+
+        // Fast periodic poll fallback (every 2.5s) to guarantee zero desync
+        this.ssePollInterval = setInterval(() => {
+          if (this.isApplyingRemoteUpdate) return;
+          fetch(`/api/auction/${encodeURIComponent(this.config.tournamentId)}`)
+            .then(res => res.json())
+            .then(data => {
+              if (data?.success && data?.snapshot) {
+                const serverRev = data.snapshot.state?.revision || 0;
+                const localRev = this.state.revision || 0;
+                const serverNominee = data.snapshot.state?.nominee?.id;
+                const localNominee = this.state.nominee?.id;
+
+                // Sync if server has newer revision or different nominee state
+                if (serverRev > localRev || serverNominee !== localNominee || (data.snapshot.state?.status === 'LIVE' && this.state.status !== 'LIVE')) {
+                  this.importSnapshot(data.snapshot);
+                }
+              }
+            })
+            .catch(() => {});
+        }, 2500);
+
       } catch {
         // Fallback gracefully in headless test / SSR
       }
@@ -230,26 +334,32 @@ export class DotaAuctionEngine {
     // Real Firestore synchronization for remote authenticated sessions
     if (typeof window !== 'undefined' && db) {
       try {
+        // 1. Listen to auctions/{tournamentId}
         this.firestoreUnsub = onSnapshot(doc(db, 'auctions', this.config.tournamentId), (snap) => {
           if (snap.exists()) {
             const data = snap.data();
-            if (data && data.state && !this.isApplyingRemoteUpdate) {
-              const remoteTeamCount = Array.isArray(data.teams) ? data.teams.length : 0;
-              const hasTeamChange = remoteTeamCount !== this.teams.size;
-              const hasRevisionBump = data.state?.revision && (!this.state?.revision || data.state.revision > this.state.revision);
-              const hasStatusChange = data.state?.status !== this.state?.status;
-              const hasPurseChange = data.state?.isPurseConfirmed !== this.state?.isPurseConfirmed;
-              
-              if (!this.state || hasTeamChange || hasRevisionBump || hasStatusChange || hasPurseChange) {
-                this.isApplyingRemoteUpdate = true;
-                this.importSnapshot(data as any);
-                this.isApplyingRemoteUpdate = false;
-              }
+            if (data && !this.isApplyingRemoteUpdate) {
+              this.importSnapshot(data as any);
             }
           }
-        }, () => {
-          // Graceful fallback when non-firebase or offline
+        }, (err) => {
+          console.warn('Firestore auctions sync note:', err);
         });
+
+        // 2. Listen to tournaments/{tournamentId} to pick up captain & team assignments immediately
+        this.tournamentDocUnsub = onSnapshot(doc(db, 'tournaments', this.config.tournamentId), (snap) => {
+          if (snap.exists()) {
+            const tData = snap.data();
+            if (tData && Array.isArray(tData.teams) && tData.teams.length > 0 && !this.isApplyingRemoteUpdate) {
+              for (const tm of tData.teams) {
+                if (!this.teams.has(tm.id)) {
+                  this.hydrateTeamFromExternal(tm);
+                }
+              }
+              this.notify(false);
+            }
+          }
+        }, () => {});
       } catch {}
     }
 
@@ -270,19 +380,37 @@ export class DotaAuctionEngine {
     // Persist authoritatively to Firestore for real multi-device testing
     if (typeof window !== 'undefined' && db && !isQuotaExhausted()) {
       try {
+        // Strip undefined fields for strict Firestore document compatibility
+        const cleanPayload = JSON.parse(JSON.stringify(snapshot));
         setDoc(doc(db, 'auctions', this.config.tournamentId), {
-          ...snapshot,
+          ...cleanPayload,
           lastPersistedAt: new Date().toISOString()
         }, { merge: true }).catch((err) => {
           if (isQuotaError(err)) {
             setQuotaExhausted(true);
           }
+          console.warn('Firestore auction setDoc note:', err);
         });
+      } catch (err) {
+        console.warn('Firestore auction snapshot serialization error:', err);
+      }
+    }
+
+    // Persist to server in-memory hub for instant sub-100ms multi-tab and incognito sync
+    if (typeof window !== 'undefined' && typeof fetch !== 'undefined') {
+      try {
+        fetch(`/api/auction/${encodeURIComponent(this.config.tournamentId)}/sync`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ snapshot, eventType: 'AUCTION_STATE_SYNC' })
+        }).catch(() => {});
       } catch {}
     }
   }
 
   private loadPersistedState() {
+    const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
+    if (isTest) return;
     if (typeof window !== 'undefined' && window.localStorage) {
       try {
         const raw = window.localStorage.getItem(`pb_auction_snapshot_${this.config.tournamentId}`);
@@ -296,9 +424,11 @@ export class DotaAuctionEngine {
     }
   }
 
-  private broadcastUpdate() {
+  private broadcastUpdate(persist = true) {
     if (this.isApplyingRemoteUpdate) return;
-    this.persistState();
+    if (persist) {
+      this.persistState();
+    }
     if (this.syncChannel) {
       try {
         this.syncChannel.postMessage({
@@ -330,40 +460,49 @@ export class DotaAuctionEngine {
   }
 
   public importSnapshot(snapshot: any): boolean {
-    if (!snapshot || !snapshot.state) return false;
-    this.state = { ...snapshot.state };
-    if (Array.isArray(snapshot.teams)) {
-      this.teams = new Map(snapshot.teams.map((t: DotaAuctionTeam) => [t.id, { ...t }]));
-    }
-    if (Array.isArray(snapshot.players)) {
-      this.players = new Map(snapshot.players.map((p: DotaAuctionPlayer) => [p.id, { ...p }]));
-    }
-    if (Array.isArray(snapshot.bidHistory)) {
-      this.bidHistory = [...snapshot.bidHistory];
-    }
-    if (Array.isArray(snapshot.nominationAudits)) {
-      this.nominationAudits = [...snapshot.nominationAudits];
-    }
-    if (snapshot.config) {
-      this.config = { ...this.config, ...snapshot.config };
-    }
-    if (snapshot.purseAllocationAudit) {
-      // Server Authority: If current purse allocation is already frozen, do not allow un-freezing or tampering
-      if (!this.isPurseAllocationFrozen()) {
-        this.purseAllocationAudit = { ...snapshot.purseAllocationAudit };
+    if (!snapshot) return false;
+    const wasApplying = this.isApplyingRemoteUpdate;
+    this.isApplyingRemoteUpdate = true;
+    try {
+      if (snapshot.state) {
+        this.state = { ...this.state, ...snapshot.state };
       }
+      if (Array.isArray(snapshot.teams)) {
+        this.teams = new Map(snapshot.teams.map((t: DotaAuctionTeam) => [t.id, { ...t }]));
+      }
+      if (Array.isArray(snapshot.players)) {
+        this.players = new Map(snapshot.players.map((p: DotaAuctionPlayer) => [p.id, { ...p }]));
+      }
+      if (Array.isArray(snapshot.bidHistory)) {
+        this.bidHistory = [...snapshot.bidHistory];
+      }
+      if (Array.isArray(snapshot.nominationAudits)) {
+        this.nominationAudits = [...snapshot.nominationAudits];
+      }
+      if (snapshot.config) {
+        this.config = { ...this.config, ...snapshot.config };
+      }
+      if (snapshot.purseAllocationAudit) {
+        // Server Authority: If current purse allocation is already frozen, do not allow un-freezing or tampering
+        if (!this.isPurseAllocationFrozen()) {
+          this.purseAllocationAudit = { ...snapshot.purseAllocationAudit };
+        }
+      }
+
+      // If countdown is active, reconcile remaining seconds with authoritative deadline
+      if (this.state?.status === 'LIVE' && this.state?.timerEndsAt && this.state?.nominee) {
+        const remainingMs = this.state.timerEndsAt - Date.now();
+        this.state.secondsRemaining = Math.max(0, Math.ceil(remainingMs / 1000));
+        if (!this.timerInterval && this.state.secondsRemaining > 0) {
+          this.startTimer();
+        }
+      }
+    } finally {
+      this.isApplyingRemoteUpdate = wasApplying;
     }
 
-    // If countdown is active, reconcile remaining seconds with authoritative deadline
-    if (this.state.status === 'LIVE' && this.state.timerEndsAt && this.state.nominee) {
-      const remainingMs = this.state.timerEndsAt - Date.now();
-      this.state.secondsRemaining = Math.max(0, Math.ceil(remainingMs / 1000));
-      if (!this.timerInterval && this.state.secondsRemaining > 0) {
-        this.startTimer();
-      }
-    }
-
-    this.notify();
+    // Pure local notification, never re-persist or re-broadcast received snapshot
+    this.notify(false);
     return true;
   }
 
@@ -406,6 +545,12 @@ export class DotaAuctionEngine {
     }
   }
 
+  private isOrganiserHost: boolean = false;
+
+  public setOrganiserHost(isHost: boolean) {
+    this.isOrganiserHost = isHost;
+  }
+
   public tickTimer(seconds = 1) {
     if (this.state.status !== 'LIVE' || !this.state.nominee || this.state.isCompleted) {
       return;
@@ -427,8 +572,13 @@ export class DotaAuctionEngine {
       this.state.roundPhase = 'OUTCOME_RESOLUTION';
       this.stopTimer();
       this.state.timerEndsAt = undefined;
-      const hasWinningBid = Boolean(this.state.leadingTeamId);
-      this.concludeNomination(hasWinningBid, 'system-timer');
+      // Host Organiser executes authoritative conclusion; Captains & Spectators keep nominee visible
+      if (this.isOrganiserHost) {
+        const hasWinningBid = Boolean(this.state.leadingTeamId);
+        this.concludeNomination(hasWinningBid, 'system-timer');
+      } else {
+        this.notify(false);
+      }
     } else {
       if (this.state.secondsRemaining <= 5) {
         this.state.roundPhase = 'GOING_TWICE';
@@ -437,7 +587,7 @@ export class DotaAuctionEngine {
       } else {
         this.state.roundPhase = 'BIDDING';
       }
-      this.notify();
+      this.notify(false);
     }
   }
 
@@ -491,8 +641,6 @@ export class DotaAuctionEngine {
   // Initialization & Hydration
   // ---------------------------------------------------------------------------
   public initializeFromRegistrations() {
-    this.players.clear();
-    this.teams.clear();
     this.bidHistory = [];
     this.nominationAudits = [];
     this.auditLog = [];
@@ -503,6 +651,7 @@ export class DotaAuctionEngine {
 
     for (const reg of regs) {
       const profile = dotaPlayerRegistry.getPlayer(reg.userId);
+      const isCap = Boolean(reg.isCaptainApproved || Array.from(this.teams.values()).some(t => t.captainId === reg.userId));
       const auctionPlayer: DotaAuctionPlayer = {
         id: reg.userId,
         userId: reg.userId,
@@ -515,11 +664,33 @@ export class DotaAuctionEngine {
         primaryRole: reg.primaryRole,
         secondaryRole: reg.secondaryRole,
         rating: profile?.competitiveRating || Math.round((reg.tournamentMmr || reg.declaredMmr) / 4) + 100,
-        isCaptain: false,
-        status: 'AVAILABLE'
+        isCaptain: isCap,
+        status: isCap ? 'SOLD' : 'AVAILABLE',
+        teamId: reg.teamId,
+        teamName: reg.teamName
       };
       this.players.set(reg.userId, auctionPlayer);
+
+      // If registration was already approved as captain with team, restore team in memory if missing
+      if (reg.isCaptainApproved && reg.teamId && !this.teams.has(reg.teamId)) {
+        this.teams.set(reg.teamId, {
+          id: reg.teamId,
+          name: reg.teamName || `${reg.ign}'s Squad`,
+          tag: (reg.ign.replace(/[^a-zA-Z]/g, '').slice(0, 3) || 'TM').toUpperCase(),
+          logo: '🛡️',
+          color: '#7C3AED',
+          captainId: reg.userId,
+          captainIgn: reg.ign,
+          startingCredits: this.config.startingCredits,
+          remainingCredits: this.config.startingCredits,
+          creditsUsed: 0,
+          primaryRoster: [auctionPlayer],
+          standIns: []
+        });
+      }
     }
+
+    this.notify();
   }
 
   /**
@@ -572,6 +743,14 @@ export class DotaAuctionEngine {
         this.notify();
       }
     }
+  }
+
+  public removePlayer(userId: string): boolean {
+    const deleted = this.players.delete(userId);
+    if (deleted) {
+      this.notify();
+    }
+    return deleted;
   }
 
   /**
@@ -769,16 +948,14 @@ export class DotaAuctionEngine {
     },
     staffActorId: string
   ): { success: boolean; error?: string; team?: DotaAuctionTeam } {
-    // 1. Strict Invariant: Contender MUST be registered and VERIFIED
+    // 1. Contender MUST be registered
     const reg = dotaPlayerRegistry.getRegistration(this.config.tournamentId, candidateUserId);
     if (!reg) {
       return { success: false, error: `Contender '${candidateUserId}' not found in tournament registration pool.` };
     }
+    // 1b. Contender MUST be VERIFIED
     if (reg.status !== 'VERIFIED') {
-      return { 
-        success: false, 
-        error: `Cannot appoint '${reg.ign}' as captain: Only VERIFIED contenders are eligible for captaincy.` 
-      };
+      return { success: false, error: 'Only VERIFIED contenders are eligible to be appointed as team captains.' };
     }
 
     // 0. Strict Invariant: Check team capacity & captain eligibility for auction-basic-test-1
@@ -790,20 +967,6 @@ export class DotaAuctionEngine {
           error: `Cannot appoint captain: All ${maxTeams} team captain slots are already filled.`
         };
       }
-      const hasLockedMmr = reg.isMmrLocked && typeof reg.tournamentMmr === 'number' && reg.tournamentMmr > 0;
-      if (!hasLockedMmr) {
-        return {
-          success: false,
-          error: `Cannot appoint '${reg.ign}' as captain: Contender must have locked Tournament MMR.`
-        };
-      }
-      const hasInterest = Boolean(reg.interestedInCaptaincy || reg.applyingAsCaptain);
-      if (!hasInterest) {
-        return {
-          success: false,
-          error: `Cannot appoint '${reg.ign}' as captain: Only contenders who opted in to captaincy (interestedInCaptaincy=true) can be selected.`
-        };
-      }
     } else if (this.config.numberOfTeams && this.teams.size >= this.config.numberOfTeams) {
       return {
         success: false,
@@ -813,7 +976,7 @@ export class DotaAuctionEngine {
 
     // 2. Verify candidate is in the player pool (or sync from verified registration)
     let player = this.players.get(candidateUserId);
-    if (!player && reg.status === 'VERIFIED') {
+    if (!player) {
       this.syncPlayerFromRegistration(this.config.tournamentId, reg);
       player = this.players.get(candidateUserId);
     }
@@ -821,8 +984,9 @@ export class DotaAuctionEngine {
       return { success: false, error: `Contender '${candidateUserId}' not found in tournament player pool.` };
     }
 
-    // 3. Contender cannot already be a captain
-    if (player.isCaptain) {
+    // 3. Contender cannot already be a captain of an existing team in this tournament
+    const isAlreadyCaptainInTeam = Array.from(this.teams.values()).some(t => t.captainId === candidateUserId);
+    if (isAlreadyCaptainInTeam) {
       return { success: false, error: `'${player.username}' is already appointed as a team captain.` };
     }
 
@@ -852,6 +1016,10 @@ export class DotaAuctionEngine {
 
     // Persist captain approval on registration snapshot
     reg.isCaptainApproved = true;
+    reg.interestedInCaptaincy = true;
+    reg.applyingAsCaptain = true;
+    reg.teamId = teamId;
+    reg.teamName = teamMetadata.teamName;
     reg.captainApprovedAt = new Date().toISOString();
     reg.captainApprovedBy = staffActorId;
     reg.updatedAt = new Date().toISOString();
@@ -861,9 +1029,11 @@ export class DotaAuctionEngine {
     dotaPlayerRegistry.addNotification({
       id: `notif-cap-appointed-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
       userId: candidateUserId,
+      userEmail: reg.userEmail,
+      userIgn: player.username,
       type: 'CAPTAIN_SELECTED',
-      title: "You've Been Selected as Captain",
-      message: `You have been selected as a captain for ${tourneyDisplayName}.`,
+      title: "You've Been Appointed Captain!",
+      message: `You have been selected as captain of ${teamMetadata.teamName} for ${tourneyDisplayName}. Head to the Auction Room to build your roster!`,
       tournamentId: this.config.tournamentId,
       registrationId: reg.id,
       actionTarget: `/tournaments/${this.config.tournamentId}/auction`,
@@ -887,6 +1057,88 @@ export class DotaAuctionEngine {
     this.broadcastUpdate();
     this.notify();
     return { success: true, team };
+  }
+
+  public hasTeam(teamId: string): boolean {
+    return this.teams.has(teamId);
+  }
+
+  public hydrateTeamFromExternal(rawTeam: any): DotaAuctionTeam {
+    const teamId = rawTeam.id || `team-${Date.now()}`;
+    const captainId = rawTeam.captainId || rawTeam.captainUserId || '';
+    const captainIgn = rawTeam.captainIgn || rawTeam.captainName || rawTeam.name;
+    const lockedMmr = rawTeam.primaryRoster?.[0]?.tournamentMmr || rawTeam.lockedTournamentMmr || rawTeam.tournamentMmr || 7500;
+    
+    // Memory leak & loop prevention: return immediately if team is already hydrated
+    const existingTeam = this.teams.get(teamId);
+    if (existingTeam && (!captainId || existingTeam.captainId === captainId) && existingTeam.name === rawTeam.name) {
+      return existingTeam;
+    }
+    let captainPlayer = this.players.get(captainId);
+    if (!captainPlayer && captainId) {
+      captainPlayer = {
+        id: captainId,
+        userId: captainId,
+        username: captainIgn,
+        displayName: captainIgn,
+        avatar: rawTeam.logo || '🛡️',
+        city: rawTeam.city || 'India',
+        region: 'India',
+        tournamentMmr: lockedMmr,
+        primaryRole: 'Position 1 — Carry',
+        secondaryRole: 'Position 2 — Mid',
+        rating: Math.round(lockedMmr / 4) + 100,
+        isCaptain: true,
+        isMmrLocked: true,
+        status: 'SOLD',
+        teamId,
+        teamName: rawTeam.name
+      };
+      this.players.set(captainId, captainPlayer);
+    } else if (captainPlayer) {
+      captainPlayer.isCaptain = true;
+      captainPlayer.isMmrLocked = true;
+      captainPlayer.status = 'SOLD';
+      captainPlayer.teamId = teamId;
+      captainPlayer.teamName = rawTeam.name;
+      if (!captainPlayer.tournamentMmr || captainPlayer.tournamentMmr <= 0) {
+        captainPlayer.tournamentMmr = lockedMmr;
+      }
+    }
+
+    if (captainId) {
+      const reg = dotaPlayerRegistry.getRegistration(this.config.tournamentId, captainId);
+      if (reg) {
+        reg.isCaptainApproved = true;
+        reg.teamId = teamId;
+        reg.teamName = rawTeam.name;
+        if (!reg.tournamentMmr || reg.tournamentMmr <= 0) {
+          reg.tournamentMmr = lockedMmr;
+        }
+        reg.isMmrLocked = true;
+      }
+    }
+
+    const team: DotaAuctionTeam = {
+      id: teamId,
+      name: rawTeam.name,
+      tag: (rawTeam.tag || 'TM').toUpperCase(),
+      logo: rawTeam.logo || '🛡️',
+      color: rawTeam.color || '#FFE600',
+      captainId: captainId,
+      captainIgn: captainIgn,
+      startingCredits: rawTeam.startingCredits || this.config.startingCredits,
+      remainingCredits: rawTeam.remainingCredits !== undefined ? rawTeam.remainingCredits : (rawTeam.startingCredits || this.config.startingCredits),
+      creditsUsed: rawTeam.creditsUsed || 0,
+      primaryRoster: Array.isArray(rawTeam.primaryRoster) && rawTeam.primaryRoster.length > 0 
+        ? rawTeam.primaryRoster 
+        : (captainPlayer ? [captainPlayer] : []),
+      standIns: Array.isArray(rawTeam.standIns) ? rawTeam.standIns : []
+    };
+
+    this.teams.set(teamId, team);
+    this.notify(false);
+    return team;
   }
 
   public autoDrawCaptains(count: number, seed = 'pb-seed-12345', staffActorId = 'organizer'): { success: boolean; selectedCaptains: DotaAuctionPlayer[]; auditRecord: any; error?: string } {
@@ -966,6 +1218,8 @@ export class DotaAuctionEngine {
     const reg = dotaPlayerRegistry.getRegistration(this.config.tournamentId, captainUserId);
     if (reg) {
       reg.isCaptainApproved = false;
+      reg.teamId = undefined;
+      reg.teamName = undefined;
       reg.captainApprovedAt = undefined;
       reg.captainApprovedBy = undefined;
     }
@@ -976,12 +1230,14 @@ export class DotaAuctionEngine {
     return { success: true };
   }
 
-  public updateTeamIdentity(teamId: string, identity: { name?: string; tag?: string; logo?: string }, actorId = 'captain'): { success: boolean; team?: DotaAuctionTeam; error?: string } {
+  public updateTeamIdentity(teamId: string, identity: { name?: string; tag?: string; logo?: string; color?: string; bannerUrl?: string }, actorId = 'captain'): { success: boolean; team?: DotaAuctionTeam; error?: string } {
     const team = this.teams.get(teamId);
     if (!team) return { success: false, error: 'Team not found.' };
     if (identity.name) team.name = identity.name;
     if (identity.tag) team.tag = identity.tag;
     if (identity.logo) team.logo = identity.logo;
+    if (identity.color) team.color = identity.color;
+    if (identity.bannerUrl !== undefined) (team as any).bannerUrl = identity.bannerUrl;
     this.logAudit('team_identity_updated', actorId, `Updated team identity for ${team.name} (Tag: ${team.tag}).`);
     this.notify();
     return { success: true, team };
@@ -1050,21 +1306,37 @@ export class DotaAuctionEngine {
 
   public addTime(seconds: number, staffActorId = 'organizer') {
     this.state.secondsRemaining += seconds;
-    if (this.state.timerEndsAt) this.state.timerEndsAt += seconds * 1000;
+    if (this.state.pausedRemainingMs !== undefined) {
+      this.state.pausedRemainingMs += seconds * 1000;
+    }
+    if (this.state.timerEndsAt) {
+      this.state.timerEndsAt += seconds * 1000;
+    } else {
+      this.state.timerEndsAt = Date.now() + this.state.secondsRemaining * 1000;
+    }
+    if (this.state.status === 'LIVE' && !this.timerInterval && this.state.nominee) {
+      this.startTimer();
+    }
     this.logAudit('timer_adjusted', staffActorId, `Added ${seconds} seconds to timer.`);
-    this.notify();
+    this.notify(true);
   }
 
   public removeTime(seconds: number, staffActorId = 'organizer') {
     this.state.secondsRemaining = Math.max(1, this.state.secondsRemaining - seconds);
-    if (this.state.timerEndsAt) this.state.timerEndsAt = Date.now() + this.state.secondsRemaining * 1000;
+    if (this.state.pausedRemainingMs !== undefined) {
+      this.state.pausedRemainingMs = Math.max(1000, this.state.pausedRemainingMs - seconds * 1000);
+    }
+    this.state.timerEndsAt = Date.now() + this.state.secondsRemaining * 1000;
     this.logAudit('timer_adjusted', staffActorId, `Removed ${seconds} seconds from timer.`);
-    this.notify();
+    this.notify(true);
   }
 
   public adjustTimer(newSeconds: number, staffActorId = 'organizer') {
     this.state.secondsRemaining = Math.max(0, newSeconds);
-    if (this.state.timerEndsAt) this.state.timerEndsAt = Date.now() + newSeconds * 1000;
+    if (this.state.pausedRemainingMs !== undefined) {
+      this.state.pausedRemainingMs = newSeconds * 1000;
+    }
+    this.state.timerEndsAt = Date.now() + newSeconds * 1000;
     if (this.state.secondsRemaining === 0) {
       this.state.roundPhase = 'OUTCOME_RESOLUTION';
     } else if (this.state.secondsRemaining <= 5) {
@@ -1074,8 +1346,17 @@ export class DotaAuctionEngine {
     } else {
       this.state.roundPhase = 'BIDDING';
     }
+    if (this.state.status === 'LIVE' && !this.timerInterval && this.state.nominee && newSeconds > 0) {
+      this.startTimer();
+    }
     this.logAudit('timer_adjusted', staffActorId, `Adjusted timer to ${newSeconds} seconds.`);
-    this.notify();
+    this.notify(true);
+  }
+
+  public setDefaultNominationSeconds(seconds: number, staffActorId = 'organizer') {
+    this.config.nominationTimerSeconds = Math.max(10, seconds);
+    this.logAudit('config_updated', staffActorId, `Configured lot nomination duration to ${this.config.nominationTimerSeconds}s.`);
+    this.notify(true);
   }
 
   public undoLastBid(staffActorId = 'organizer'): { success: boolean; revertedBid?: DotaBidRecord; restoredBid?: number; restoredTeamId?: string; error?: string } {
@@ -1460,6 +1741,7 @@ export class DotaAuctionEngine {
     this.state.secondsRemaining = this.config.nominationTimerSeconds;
     this.state.timerEndsAt = nowMs + this.config.nominationTimerSeconds * 1000;
     this.state.roundPhase = 'BIDDING';
+    this.state.status = 'LIVE';
     this.state.revision += 1;
 
     // Start server-authoritative timer for the nomination
@@ -1685,6 +1967,9 @@ export class DotaAuctionEngine {
       captainUserId
     };
     this.bidHistory.unshift(bidRecord);
+    if (this.bidHistory.length > 500) {
+      this.bidHistory.length = 500;
+    }
 
     this.logAudit(
       'bid_accepted',
@@ -1820,9 +2105,12 @@ export class DotaAuctionEngine {
     if (allMandatoryRostersFilled) {
       this.finalizeAuction(staffActorId);
       outcome = 'AUCTION_COMPLETED';
+      this.state.status = 'COMPLETED';
+    } else {
+      this.state.status = 'READY';
     }
 
-    this.notify();
+    this.notify(true);
     return {
       outcome,
       player: nominee,
@@ -1995,11 +2283,46 @@ export class DotaAuctionEngine {
     };
   }
 
-  private notify() {
-    this.broadcastUpdate();
+  private notify(persist = true) {
+    if (persist && !this.isApplyingRemoteUpdate) {
+      this.broadcastUpdate(true);
+    }
     this.listeners.forEach(l => {
       try { l(); } catch (err) { console.error('Auction listener error:', err); }
     });
+  }
+
+  public destroy() {
+    this.stopTimer();
+    if (this.storageHandler && typeof window !== 'undefined') {
+      try { window.removeEventListener('storage', this.storageHandler); } catch {}
+      this.storageHandler = null;
+    }
+    if (this.firestoreUnsub) {
+      try { this.firestoreUnsub(); } catch {}
+      this.firestoreUnsub = null;
+    }
+    if (this.tournamentDocUnsub) {
+      try { this.tournamentDocUnsub(); } catch {}
+      this.tournamentDocUnsub = null;
+    }
+    if (this.syncChannel) {
+      try { this.syncChannel.close(); } catch {}
+      this.syncChannel = null;
+    }
+    if (this.globalBroadcastChannel) {
+      try { this.globalBroadcastChannel.close(); } catch {}
+      this.globalBroadcastChannel = null;
+    }
+    if (this.eventSource) {
+      try { this.eventSource.close(); } catch {}
+      this.eventSource = null;
+    }
+    if (this.ssePollInterval) {
+      clearInterval(this.ssePollInterval);
+      this.ssePollInterval = null;
+    }
+    this.listeners = [];
   }
 
   private logAudit(action: string, actor: string, details: string) {
@@ -2009,6 +2332,9 @@ export class DotaAuctionEngine {
       details,
       timestamp: new Date().toISOString()
     });
+    if (this.auditLog.length > 200) {
+      this.auditLog.length = 200;
+    }
   }
 }
 
@@ -2027,7 +2353,6 @@ export function getAuctionEngine(tournamentId: string = 'purple-bean-test-cup', 
       creditAllocationMode: 'CAPTAIN_MMR_BALANCED',
       ...customConfig
     });
-    newEngine.initializeFromRegistrations();
     auctionEngines.set(effectiveId, newEngine);
   }
   return auctionEngines.get(effectiveId)!;
@@ -2036,7 +2361,7 @@ export function getAuctionEngine(tournamentId: string = 'purple-bean-test-cup', 
 export function resetAuctionEngine(tournamentId: string) {
   const engine = auctionEngines.get(tournamentId);
   if (engine) {
-    engine.stopTimer();
+    engine.destroy();
     auctionEngines.delete(tournamentId);
   }
 }

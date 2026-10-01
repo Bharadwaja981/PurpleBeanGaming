@@ -181,7 +181,7 @@ export function PlayersView({ onNavigate }: PlayersViewProps) {
                   </td>
                   <td className="p-3.5 font-bold text-stone-900">
                     <span className="bg-stone-100 border border-black px-2 py-0.5 inline-block text-[11px]">
-                      {player.primaryRole.split(' — ')[1] || player.primaryRole}
+                      {player.primaryRole?.split(' — ')[1] || player.primaryRole || 'Flex'}
                     </span>
                   </td>
                   <td className="p-3.5 font-bold text-stone-800">
@@ -189,7 +189,7 @@ export function PlayersView({ onNavigate }: PlayersViewProps) {
                   </td>
                   <td className="p-3.5 text-right font-black text-black">
                     <span className="bg-[#FFE600] px-2 py-0.5 border border-black inline-block shadow-[1px_1px_0px_0px_#000]">
-                      {player.mmr.toLocaleString()}
+                      {(player.mmr ?? player.tournamentMmr ?? 6000).toLocaleString()}
                     </span>
                   </td>
                   <td className="p-3.5 text-right font-bold text-[#7C3AED]">

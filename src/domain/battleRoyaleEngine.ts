@@ -1,52 +1,43 @@
 /**
- * Purple Bean Gaming — Battle Royale Competition Engine (BGMI & PUBG)
- * 
- * Supports multi-team lobbies, cumulative match leaderboards,
- * standard Indian esports scoring table (placement + finish points),
- * and Winner Winner Chicken Dinner (WWCD) tiebreaks.
+ * Purple Bean Gaming — Battle Royale Points Engine (BGMI & PUBG)
  */
 
 export interface BRTeamMatchResult {
   teamId: string;
   teamName: string;
   tag: string;
-  placement: number; // 1 to 16
-  finishes: number; // Kills
+  placement: number;
+  finishes: number;
 }
 
 export interface BRLeaderboardEntry {
-  rank: number;
   teamId: string;
   teamName: string;
   tag: string;
-  matchesPlayed: number;
-  wwcdCount: number; // Chicken Dinners
+  totalPoints: number;
+  rank: number;
+  wwcdCount: number;
   placementPoints: number;
   finishPoints: number;
-  totalPoints: number;
+  matchesPlayed: number;
 }
 
-export const OFFICIAL_BR_PLACEMENT_POINTS: Record<number, number> = {
-  1: 10, // WWCD
-  2: 6,
-  3: 5,
-  4: 4,
-  5: 3,
-  6: 2,
-  7: 1,
-  8: 1,
-  9: 0,
-  10: 0,
-  11: 0,
-  12: 0,
-  13: 0,
-  14: 0,
-  15: 0,
-  16: 0
-};
+export function getPlacementPoints(placement: number): number {
+  switch (placement) {
+    case 1: return 10;
+    case 2: return 6;
+    case 3: return 5;
+    case 4: return 4;
+    case 5: return 3;
+    case 6: return 2;
+    case 7: return 1;
+    case 8: return 1;
+    default: return 0;
+  }
+}
 
 export function calculateMatchPoints(placement: number, finishes: number): { placementPts: number; finishPts: number; total: number } {
-  const placementPts = OFFICIAL_BR_PLACEMENT_POINTS[placement] ?? 0;
+  const placementPts = getPlacementPoints(placement);
   const finishPts = Math.max(0, finishes);
   return {
     placementPts,
@@ -55,43 +46,51 @@ export function calculateMatchPoints(placement: number, finishes: number): { pla
   };
 }
 
-export function compileBRLeaderboard(allMatches: Array<{ matchId: string; results: BRTeamMatchResult[] }>): BRLeaderboardEntry[] {
-  const map = new Map<string, BRLeaderboardEntry>();
+export function compileBRLeaderboard(matches: Array<{ matchId: string; results: BRTeamMatchResult[] }>): BRLeaderboardEntry[] {
+  const map = new Map<string, {
+    teamId: string;
+    teamName: string;
+    tag: string;
+    totalPoints: number;
+    wwcdCount: number;
+    placementPoints: number;
+    finishPoints: number;
+    matchesPlayed: number;
+  }>();
 
-  for (const match of allMatches) {
-    for (const res of match.results) {
-      const existing = map.get(res.teamId) || {
-        rank: 0,
-        teamId: res.teamId,
-        teamName: res.teamName,
-        tag: res.tag,
-        matchesPlayed: 0,
+  for (const m of matches) {
+    for (const r of m.results) {
+      const existing = map.get(r.teamId) || {
+        teamId: r.teamId,
+        teamName: r.teamName,
+        tag: r.tag,
+        totalPoints: 0,
         wwcdCount: 0,
         placementPoints: 0,
         finishPoints: 0,
-        totalPoints: 0
+        matchesPlayed: 0
       };
 
-      const pts = calculateMatchPoints(res.placement, res.finishes);
-      existing.matchesPlayed += 1;
-      if (res.placement === 1) {
-        existing.wwcdCount += 1;
-      }
+      const pts = calculateMatchPoints(r.placement, r.finishes);
+      existing.totalPoints += pts.total;
       existing.placementPoints += pts.placementPts;
       existing.finishPoints += pts.finishPts;
-      existing.totalPoints += pts.total;
-
-      map.set(res.teamId, existing);
+      existing.matchesPlayed += 1;
+      if (r.placement === 1) {
+        existing.wwcdCount += 1;
+      }
+      map.set(r.teamId, existing);
     }
   }
 
-  // Sort by official tiebreak: 1) Total Points, 2) WWCDs, 3) Placement Points, 4) Finish Points
-  const list = Array.from(map.values()).sort((a, b) => {
+  const sorted = Array.from(map.values()).sort((a, b) => {
     if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
     if (b.wwcdCount !== a.wwcdCount) return b.wwcdCount - a.wwcdCount;
-    if (b.placementPoints !== a.placementPoints) return b.placementPoints - a.placementPoints;
     return b.finishPoints - a.finishPoints;
   });
 
-  return list.map((entry, idx) => ({ ...entry, rank: idx + 1 }));
+  return sorted.map((entry, index) => ({
+    ...entry,
+    rank: index + 1
+  }));
 }

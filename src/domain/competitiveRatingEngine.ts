@@ -1,123 +1,107 @@
 /**
- * Purple Bean Gaming — Competitive Rating Engine (Idempotent & Auditable)
- * 
- * Preserves deterministic Elo/MMR adjustments while guaranteeing idempotency.
- * Repeated executions for the same match ID return the committed delta
- * without double-crediting ratings.
+ * Purple Bean Gaming — Competitive Elo Rating Engine & Ledger
  */
 
 export interface RatingAdjustmentRecord {
-  idempotencyKey: string;
   matchId: string;
   winnerTeamId: string;
   loserTeamId: string;
-  winnerPreviousRating: number;
-  loserPreviousRating: number;
+  delta: number;
+  winnerPreviousRating?: number;
+  loserPreviousRating?: number;
   winnerNewRating: number;
   loserNewRating: number;
-  delta: number;
-  appliedAt: string;
   isCorrection?: boolean;
+  timestamp: string;
 }
 
-export function calculateEloDelta(ratingA: number, ratingB: number, scoreA: number, kFactor = 32): number {
-  const expectedA = 1 / (1 + Math.pow(10, (ratingB - ratingA) / 400));
-  const actualA = scoreA; // 1 for win, 0 for loss
-  return Math.round(kFactor * (actualA - expectedA));
+export function calculateEloDelta(winnerRating: number, loserRating: number, kFactor = 32): number {
+  const expectedWinner = 1 / (1 + Math.pow(10, (loserRating - winnerRating) / 400));
+  return Math.max(5, Math.round(kFactor * (1 - expectedWinner)));
 }
 
 export class CompetitiveRatingLedger {
-  private appliedLedger = new Map<string, RatingAdjustmentRecord>();
+  private appliedMatches = new Map<string, RatingAdjustmentRecord>();
 
   public applyMatchResult(
     matchId: string,
     winnerTeamId: string,
     loserTeamId: string,
-    winnerRating: number,
-    loserRating: number,
-    idempotencyKey = `rating-${matchId}`
-  ): { success: boolean; record: RatingAdjustmentRecord; alreadyApplied: boolean } {
-    // Idempotency check: if this match or key was already applied, return existing record
-    if (this.appliedLedger.has(idempotencyKey)) {
+    winnerCurrentRating: number,
+    loserCurrentRating: number,
+    kFactor = 32
+  ): { success: boolean; alreadyApplied: boolean; record: RatingAdjustmentRecord } {
+    if (this.appliedMatches.has(matchId)) {
+      const existing = this.appliedMatches.get(matchId)!;
       return {
         success: true,
-        record: this.appliedLedger.get(idempotencyKey)!,
-        alreadyApplied: true
+        alreadyApplied: true,
+        record: existing
       };
     }
 
-    const delta = Math.max(10, calculateEloDelta(winnerRating, loserRating, 1));
+    const delta = calculateEloDelta(winnerCurrentRating, loserCurrentRating, kFactor);
     const record: RatingAdjustmentRecord = {
-      idempotencyKey,
       matchId,
       winnerTeamId,
       loserTeamId,
-      winnerPreviousRating: winnerRating,
-      loserPreviousRating: loserRating,
-      winnerNewRating: winnerRating + delta,
-      loserNewRating: Math.max(100, loserRating - delta),
       delta,
-      appliedAt: new Date().toISOString()
+      winnerPreviousRating: winnerCurrentRating,
+      loserPreviousRating: loserCurrentRating,
+      winnerNewRating: winnerCurrentRating + delta,
+      loserNewRating: Math.max(100, loserCurrentRating - delta),
+      isCorrection: false,
+      timestamp: new Date().toISOString()
     };
 
-    this.appliedLedger.set(idempotencyKey, record);
+    this.appliedMatches.set(matchId, record);
     return {
       success: true,
-      record,
-      alreadyApplied: false
+      alreadyApplied: false,
+      record
     };
   }
 
   public correctMatchResult(
     matchId: string,
-    originalRecord: RatingAdjustmentRecord,
+    previousRecord: RatingAdjustmentRecord,
     newWinnerTeamId: string,
     newLoserTeamId: string,
-    currentWinnerRating: number,
-    currentLoserRating: number
+    winnerRating: number,
+    loserRating: number,
+    kFactor = 32
   ): { success: boolean; record: RatingAdjustmentRecord } {
-    // Rollback original delta first
-    const rolledBackWinnerRating = currentWinnerRating - originalRecord.delta;
-    const rolledBackLoserRating = currentLoserRating + originalRecord.delta;
-
-    const correctionKey = `correction-${matchId}-${Date.now()}`;
-    const newDelta = Math.max(10, calculateEloDelta(rolledBackWinnerRating, rolledBackLoserRating, 1));
-
-    const correctionRecord: RatingAdjustmentRecord = {
-      idempotencyKey: correctionKey,
+    const delta = calculateEloDelta(winnerRating, loserRating, kFactor);
+    const record: RatingAdjustmentRecord = {
       matchId,
       winnerTeamId: newWinnerTeamId,
       loserTeamId: newLoserTeamId,
-      winnerPreviousRating: rolledBackWinnerRating,
-      loserPreviousRating: rolledBackLoserRating,
-      winnerNewRating: rolledBackWinnerRating + newDelta,
-      loserNewRating: Math.max(100, rolledBackLoserRating - newDelta),
-      delta: newDelta,
-      appliedAt: new Date().toISOString(),
-      isCorrection: true
+      delta,
+      winnerPreviousRating: winnerRating,
+      loserPreviousRating: loserRating,
+      winnerNewRating: winnerRating + delta,
+      loserNewRating: Math.max(100, loserRating - delta),
+      isCorrection: true,
+      timestamp: new Date().toISOString()
     };
 
-    this.appliedLedger.set(correctionKey, correctionRecord);
+    this.appliedMatches.set(matchId, record);
     return {
       success: true,
-      record: correctionRecord
+      record
     };
   }
 
-  public getRecord(idempotencyKey: string): RatingAdjustmentRecord | undefined {
-    return this.appliedLedger.get(idempotencyKey);
+  public getRecord(matchId: string): RatingAdjustmentRecord | undefined {
+    return this.appliedMatches.get(matchId);
   }
 
   public getAllRecords(): RatingAdjustmentRecord[] {
-    return Array.from(this.appliedLedger.values());
-  }
-
-  public getAuditHistory(): RatingAdjustmentRecord[] {
-    return this.getAllRecords();
+    return Array.from(this.appliedMatches.values());
   }
 
   public clear(): void {
-    this.appliedLedger.clear();
+    this.appliedMatches.clear();
   }
 }
 

@@ -41,7 +41,8 @@ export function CaptainSelectionView({
   const isOrganiser = currentUser.role === 'organizer' || currentUser.isAdmin;
   const activeEngine = getAuctionEngine(tournamentId);
   const tournamentConfig = tournamentConfigRegistry.getConfig(tournamentId);
-  const maxSlots = tournamentConfig?.teamFormation?.numberOfTeams ?? 2;
+  const [targetTeamsCount, setTargetTeamsCount] = useState<number>(() => tournamentConfig?.teamFormation?.numberOfTeams ?? 2);
+  const maxSlots = targetTeamsCount;
 
   const [teams, setTeams] = useState<DotaAuctionTeam[]>(() => activeEngine.getTeams());
   const [candidates, setCandidates] = useState<DotaAuctionPlayer[]>(() => activeEngine.getEligibleCaptainCandidates());
@@ -71,6 +72,22 @@ export function CaptainSelectionView({
 
   useEffect(() => {
     const engine = getAuctionEngine(tournamentId);
+
+    // Hydrate any missing external teams once on mount without recursing in the listener
+    const initialTeams = engine.getTeams();
+    if (initialTeams.length < 2) {
+      const serviceTeams = tournamentService.getTeams().filter(t => (t as any).tournamentId === tournamentId);
+      const tourney = tournamentService.getTournamentById(tournamentId);
+      const candidateTeams = (tourney as any)?.teams?.length > 0 ? (tourney as any).teams : serviceTeams;
+      if (candidateTeams && candidateTeams.length > 0) {
+        candidateTeams.forEach((ct: any) => {
+          if (!engine.hasTeam(ct.id)) {
+            engine.hydrateTeamFromExternal(ct);
+          }
+        });
+      }
+    }
+
     const syncState = () => {
       setTeams(engine.getTeams());
       setCandidates(engine.getEligibleCaptainCandidates());
@@ -274,9 +291,30 @@ export function CaptainSelectionView({
               Tournament Captain Slots ({teams.length}/{maxSlots} Confirmed)
             </h2>
           </div>
-          <span className="bg-[#FFE600] border border-black px-2 py-0.5 text-[10px] font-black uppercase">
-            {maxSlots} Real Captain Slots Required
-          </span>
+          {isOrganiser ? (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-black uppercase text-stone-700">Franchise Teams:</span>
+              <SelectDropdown
+                value={targetTeamsCount}
+                onChange={(val) => {
+                  const num = Number(val);
+                  setTargetTeamsCount(num);
+                  tournamentConfigRegistry.updateTeamCount(tournamentId, num);
+                }}
+                options={[
+                  { value: 2, label: '2 Teams (10 Players)' },
+                  { value: 4, label: '4 Teams (20 Players)' },
+                  { value: 6, label: '6 Teams (30 Players)' },
+                  { value: 8, label: '8 Teams (40 Players)' }
+                ]}
+                className="w-48"
+              />
+            </div>
+          ) : (
+            <span className="bg-[#FFE600] border border-black px-2 py-0.5 text-[10px] font-black uppercase">
+              {maxSlots} Real Captain Slots Required
+            </span>
+          )}
         </div>
 
         <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-${Math.min(4, maxSlots)} gap-4`}>
@@ -574,17 +612,20 @@ export function CaptainSelectionView({
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <span className="text-[10px] font-bold uppercase text-stone-600 block mb-1">Primary Role</span>
-                          <select
+                          <SelectDropdown
                             value={realUserRole}
-                            onChange={(e) => setRealUserRole(e.target.value as DotaRolePosition)}
-                            className="w-full bg-stone-50 border-2 border-black p-2 text-xs font-bold"
-                          >
-                            <option value="Position 1 — Carry">Position 1 — Carry</option>
-                            <option value="Position 2 — Mid">Position 2 — Mid</option>
-                            <option value="Position 3 — Offlane">Position 3 — Offlane</option>
-                            <option value="Position 4 — Soft Support">Position 4 — Soft Support</option>
-                            <option value="Position 5 — Hard Support">Position 5 — Hard Support</option>
-                          </select>
+                            onChange={(val) => setRealUserRole(val as DotaRolePosition)}
+                            options={[
+                              { value: 'Position 1 — Carry', label: 'Position 1 — Carry' },
+                              { value: 'Position 2 — Mid', label: 'Position 2 — Mid' },
+                              { value: 'Position 3 — Offlane', label: 'Position 3 — Offlane' },
+                              { value: 'Position 4 — Soft Support', label: 'Position 4 — Soft Support' },
+                              { value: 'Position 5 — Hard Support', label: 'Position 5 — Hard Support' }
+                            ]}
+                            className="w-full"
+                            size="md"
+                            mobileTitle="Select Primary Role"
+                          />
                         </div>
                         <div>
                           <span className="text-[10px] font-bold uppercase text-stone-600 block mb-1">City</span>
@@ -796,10 +837,29 @@ export function CaptainSelectionView({
           )}
         </div>
       ) : (
-        <div className="p-4 bg-white border-2 border-black text-xs flex items-center justify-between">
-          <div className="flex items-center gap-2 text-stone-600">
-            <Shield className="w-4 h-4 text-[#7C3AED]" />
-            <span>Viewing in Contender / Spectator Mode. Captain appointment is restricted to tournament directors.</span>
+        <div className="space-y-3">
+          {teams.length >= 2 && (
+            <div className="bg-[#70FFAF] border-[3px] border-black p-4 flex flex-wrap items-center justify-between gap-3 shadow-[4px_4px_0px_0px_#000]">
+              <div className="flex items-center gap-2">
+                <CheckCircle className="w-5 h-5 text-emerald-800" />
+                <span className="font-black text-sm uppercase text-black">
+                  Franchise Captains Confirmed ({teams.length}/{maxSlots}) · Ready for Live Auction Draft
+                </span>
+              </div>
+              <button
+                onClick={() => onNavigate('auction', tournamentId)}
+                className="bg-[#7C3AED] hover:bg-purple-700 text-white border-2 border-black px-4 py-2 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
+              >
+                <Gavel className="w-4 h-4 text-[#FFE600]" />
+                <span>Enter Live Auction Room →</span>
+              </button>
+            </div>
+          )}
+          <div className="p-4 bg-white border-2 border-black text-xs flex items-center justify-between">
+            <div className="flex items-center gap-2 text-stone-600">
+              <Shield className="w-4 h-4 text-[#7C3AED]" />
+              <span>Viewing in Contender / Captain Mode. Captain appointment is managed by tournament directors.</span>
+            </div>
           </div>
         </div>
       )}

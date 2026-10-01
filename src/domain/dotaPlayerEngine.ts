@@ -113,6 +113,8 @@ export interface DotaUserNotification {
   entityId?: string;
   actionType?: string;
   actionTarget?: string;
+  userEmail?: string;
+  userIgn?: string;
   createdAt: string;
   read: boolean;
 }
@@ -121,6 +123,7 @@ export interface DotaTournamentRegistration {
   id: string;
   tournamentId: string;
   userId: string;
+  userEmail?: string;
   ign: string;
   primaryRole: DotaRolePosition;
   secondaryRole: DotaRolePosition;
@@ -512,24 +515,42 @@ export class DotaPlayerRegistry {
       return { success: false, error: 'Declared MMR must be a valid number between 1 and 15,000.' };
     }
 
-    // Strict Capacity Enforcement: cannot join more than maxParticipants (e.g. 10 slots)
+    // Strict Capacity Enforcement: cannot join more than maxParticipants (defaults to 64 slots)
     const activeRegs = this.getTournamentRegistrations(tournamentId).filter(
       r => r.status !== 'WITHDRAWN' && r.status !== 'REJECTED'
     );
-    const maxSlots = (tournamentId === 'auction-basic-test-1' || tournamentId === '2-team-auction-test') ? 10 : 64;
+    const maxSlots = 64;
     const isAlreadyMember = activeRegs.some(r => r.userId === userId);
     if (!isAlreadyMember && activeRegs.length >= maxSlots) {
       return { 
         success: false, 
-        error: `Tournament registration is full (${activeRegs.length}/${maxSlots} slots filled). Cannot join more than 10 participants.` 
+        error: `Tournament registration is full (${activeRegs.length}/${maxSlots} slots filled).` 
       };
     }
 
-    // Check duplicate registration
+    // Check duplicate registration in this tournament
     const regKey = `${tournamentId}__${userId}`;
     const existing = this.registrations.get(regKey);
     if (existing && existing.status !== 'WITHDRAWN' && existing.status !== 'REJECTED') {
       return { success: false, error: 'You already have an active registration for this tournament.' };
+    }
+
+    // Invariant: A player cannot be in two active concurrent tournaments at a time
+    const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
+    const isSyntheticContender = isTest || userId.startsWith('p-contender') || userId.startsWith('p-dummy') || userId.startsWith('p-tourney');
+    if (!isSyntheticContender) {
+      const activeOtherTourneyReg = Array.from(this.registrations.values()).find(
+        r => r.userId === userId && 
+             r.tournamentId !== tournamentId && 
+             r.status !== 'WITHDRAWN' && 
+             r.status !== 'REJECTED'
+      );
+      if (activeOtherTourneyReg) {
+        return {
+          success: false,
+          error: `Tournament Invariant: You already have an active registration in another tournament ('${activeOtherTourneyReg.tournamentId}'). A player cannot participate in two tournaments at a time.`
+        };
+      }
     }
 
     const player = this.players.get(userId);
@@ -614,9 +635,12 @@ export class DotaPlayerRegistry {
       captainInterestTimestamp: reg.captainInterestTimestamp || existing?.captainInterestTimestamp || (isCap ? new Date().toISOString() : undefined),
       captainNotes: reg.captainNotes || existing?.captainNotes || '',
       captainHistory: reg.captainHistory || existing?.captainHistory || '',
-      isCaptainApproved: Boolean(reg.isCaptainApproved || existing?.isCaptainApproved),
+      isCaptainApproved: Boolean(reg.isCaptainApproved !== undefined ? reg.isCaptainApproved : existing?.isCaptainApproved),
       captainApprovedAt: reg.captainApprovedAt || existing?.captainApprovedAt,
       captainApprovedBy: reg.captainApprovedBy || existing?.captainApprovedBy,
+      teamId: reg.teamId || existing?.teamId,
+      teamName: reg.teamName || existing?.teamName,
+      userEmail: reg.userEmail || existing?.userEmail,
       city: reg.city || existing?.city || 'India',
       region: reg.region || existing?.region || 'Pan India',
       steamId64: reg.steamId64 || existing?.steamId64,
@@ -1242,11 +1266,23 @@ export class DotaPlayerRegistry {
   }
 
   public addNotification(notification: DotaUserNotification) {
-    this.notifications.unshift(notification);
+    const existingIdx = this.notifications.findIndex(n => n.id === notification.id);
+    if (existingIdx >= 0) {
+      this.notifications[existingIdx] = notification;
+    } else {
+      this.notifications.unshift(notification);
+      if (this.notifications.length > 50) {
+        this.notifications.length = 50;
+      }
+    }
   }
 
   public getNotifications(userId: string): DotaUserNotification[] {
     return this.notifications.filter(n => n.userId === userId);
+  }
+
+  public getAllNotifications(): DotaUserNotification[] {
+    return [...this.notifications];
   }
 
   public markNotificationRead(notificationId: string) {

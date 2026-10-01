@@ -3,6 +3,7 @@ import { Shield, Search, Trophy, Users, ArrowRight, MapPin, Gamepad2 } from 'luc
 import { tournamentService } from '../services/firebaseService';
 import { Team, ViewType } from '../types/tournament';
 import { SelectDropdown, DropdownOption } from '../components/ui/Dropdown';
+import { normalizeTeamRecord } from '../domain/tournamentDiscovery';
 
 interface TeamsViewProps {
   onNavigate: (view: ViewType, entityId?: string) => void;
@@ -21,7 +22,7 @@ export function TeamsView({ onNavigate }: TeamsViewProps) {
   }, []);
 
   const filteredTeams = useMemo(() => {
-    return teams.filter((t) => {
+    return teams.map(normalizeTeamRecord).filter((t) => {
       const matchesSearch = 
         t.name.toLowerCase().includes(search.toLowerCase()) ||
         t.tag.toLowerCase().includes(search.toLowerCase()) ||
@@ -132,7 +133,7 @@ export function TeamsView({ onNavigate }: TeamsViewProps) {
               </div>
               <div className="flex justify-between">
                 <span className="text-stone-500">Series Record:</span>
-                <span className="font-black text-black">{team.record.wins}W - {team.record.losses}L</span>
+                <span className="font-black text-black">{(team.record?.wins ?? 0)}W - {(team.record?.losses ?? 0)}L</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-stone-500">INR Earnings:</span>

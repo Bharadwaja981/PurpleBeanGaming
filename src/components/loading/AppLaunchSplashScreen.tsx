@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sparkles, Trophy, Users, Shield, Zap } from 'lucide-react';
 import { PurpleBeanLogo } from '../PurpleBeanLogo';
 
@@ -27,6 +27,8 @@ export function AppLaunchSplashScreen({
 }: AppLaunchSplashScreenProps) {
   const [internalProgress, setInternalProgress] = useState(externalProgress ?? 15);
   const [msgIdx, setMsgIdx] = useState(0);
+  const onFinishedRef = useRef(onFinished);
+  onFinishedRef.current = onFinished;
 
   // Smoothly increment progress if no static external progress provided
   useEffect(() => {
@@ -39,8 +41,8 @@ export function AppLaunchSplashScreen({
       setInternalProgress((prev) => {
         if (prev >= 100) {
           clearInterval(interval);
-          if (onFinished) {
-            setTimeout(onFinished, 400);
+          if (onFinishedRef.current) {
+            setTimeout(onFinishedRef.current, 400);
           }
           return 100;
         }
@@ -50,7 +52,7 @@ export function AppLaunchSplashScreen({
     }, 180);
 
     return () => clearInterval(interval);
-  }, [externalProgress, onFinished]);
+  }, [externalProgress]);
 
   // Rotate gaming messages
   useEffect(() => {

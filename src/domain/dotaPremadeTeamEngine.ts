@@ -223,7 +223,17 @@ export class DotaPremadeTeamEngine {
       return { success: false, error: 'Cannot register team: Captain must have a VERIFIED tournament registration.' };
     }
 
-    // 3. Validate captain is not already registered with another team in this tournament
+    // 3. Invariant: A player can only be in one team and one tournament at a time
+    for (const [key, t] of this.teams.entries()) {
+      if (t.status === 'REJECTED') continue;
+      const onRoster = [...t.primaryRoster, ...t.standIns].some(s => s.userId === captainUserId);
+      if (onRoster) {
+        return { 
+          success: false, 
+          error: `Roster Invariant: Captain '${captainReg.ign}' is already committed to another team ('${t.teamName}'). A player can only belong to one team at a time.` 
+        };
+      }
+    }
     const playerKey = `${tournamentId}__${captainUserId}`;
     if (this.playerToTeamMap.has(playerKey)) {
       return { success: false, error: `Captain '${captainReg.ign}' is already registered with another team in this tournament.` };
@@ -323,7 +333,17 @@ export class DotaPremadeTeamEngine {
       return { success: false, error: `Contender '${candidateReg.ign}' is already on this team's roster.` };
     }
 
-    // 4. Validate player is not on another team in this tournament
+    // 4. Invariant: One player can only be in one team at a time
+    for (const [key, t] of this.teams.entries()) {
+      if (t.status === 'REJECTED') continue;
+      const onRoster = [...t.primaryRoster, ...t.standIns].some(s => s.userId === candidateUserId);
+      if (onRoster) {
+        return { 
+          success: false, 
+          error: `Roster Invariant: Contender '${candidateReg.ign}' is already committed to another team ('${t.teamName}'). A player can only be in one team at a time.` 
+        };
+      }
+    }
     const playerKey = `${tournamentId}__${candidateUserId}`;
     if (this.playerToTeamMap.has(playerKey) && this.playerToTeamMap.get(playerKey) !== teamId) {
       return { success: false, error: `Contender '${candidateReg.ign}' is already committed to another team in this tournament.` };

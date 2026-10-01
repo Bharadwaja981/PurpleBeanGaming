@@ -498,6 +498,16 @@ export function Navigation({
                 />
               )}
 
+              {(currentUser.role === 'captain' || Boolean(currentUser.teamId)) && (
+                <MenuItem
+                  icon={Gavel}
+                  label="Live Captain Auction"
+                  badge="Auction"
+                  badgeColor="bg-[#FFE600] text-black"
+                  onClick={() => onNavigate('auction')}
+                />
+              )}
+
               <MenuItem
                 icon={Trophy}
                 label="Tournaments Directory"

@@ -205,17 +205,30 @@ export class DotaCareerHistoryEngine {
       startDate: '2026-01-01T00:00:00Z',
       endDate: '2026-06-30T23:59:59Z',
       isActive: true,
-      tournaments: ['purple-bean-test-cup', 'india-dota-open-2026'],
+      tournaments: ['india-dota-open-2026', 'purple-bean-test-cup'],
       champions: [],
       notableResults: [
-        'Purple Bean Test Cup Grand Finals scheduled for Oct 15, 2026',
         'India Dota Open 2026 registration opened with ₹1,00,000 prize pool'
       ]
     };
     this.seasons.set(s1.id, s1);
   }
 
+  public clearAll() {
+    this.playerCareers.clear();
+    this.captainCareers.clear();
+    this.teamCareers.clear();
+    this.processedMatches.clear();
+    this.completedTournaments.clear();
+    this.ratingLedger = [];
+    this.canonicalMatches = [];
+  }
+
   private seedFromExistingEngines() {
+    const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
+    if (!isTest) {
+      return;
+    }
     const existingPlayers = dotaPlayerEngine.getAllPlayers();
     for (const p of existingPlayers) {
       this.ensurePlayerCareer(p);

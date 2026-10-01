@@ -129,7 +129,9 @@ export default function App() {
     const updateNotifs = () => {
       const curUser = tournamentService.getCurrentUser();
       const dotaNotifs = tournamentService.getUserNotifications(curUser.id);
-      const opsNotifs = dotaTournamentOperations.getUserNotifications(curUser.id, curUser.role);
+      const opsNotifs: any[] = typeof (dotaTournamentOperations as any)?.getUserNotifications === 'function'
+        ? (dotaTournamentOperations as any).getUserNotifications(curUser.id, curUser.role)
+        : [];
 
       const combinedDota: NotificationItem[] = [
         ...dotaNotifs.map(n => {
@@ -138,26 +140,24 @@ export default function App() {
           let linkText = 'View Details →';
 
           if (n.type === 'CAPTAIN_SELECTED') {
-            const engine = tournamentService.getDotaAuctionEngine(n.tournamentId);
-            const isAuctionReady = engine.getState().status === 'READY' || engine.getState().status === 'LIVE';
-            viewTarget = isAuctionReady ? 'auction' : 'captain_selection';
-            entityIdTarget = n.tournamentId || 'auction-basic-test-1';
-            linkText = isAuctionReady ? 'Join Live Auction Lobby →' : 'View Captain & Team Desk →';
+            viewTarget = 'auction';
+            entityIdTarget = n.tournamentId;
+            linkText = 'Enter Auction Room ↗';
           } else if (n.type === 'MATCH_SCHEDULED' || n.type === 'RESULT_CONFIRMATION_REQUIRED') {
             viewTarget = 'match_detail';
-            entityIdTarget = n.matchId || 'm-live-1';
+            entityIdTarget = n.matchId;
             linkText = n.type === 'RESULT_CONFIRMATION_REQUIRED' ? 'Confirm Match Results →' : 'Go to Match Room →';
           } else if (n.type === 'EVIDENCE_REQUESTED') {
             viewTarget = 'tournament_detail';
-            entityIdTarget = n.tournamentId || 'auction-basic-test-1';
+            entityIdTarget = n.tournamentId;
             linkText = 'Submit Evidence / Review →';
           } else if (n.type === 'AUCTION_STARTING') {
             viewTarget = 'auction';
-            entityIdTarget = n.tournamentId || 'auction-basic-test-1';
+            entityIdTarget = n.tournamentId;
             linkText = 'Enter Auction Room →';
           } else if (n.type === 'TOURNAMENT_ANNOUNCEMENT') {
             viewTarget = 'tournament_detail';
-            entityIdTarget = n.tournamentId || 'auction-basic-test-1';
+            entityIdTarget = n.tournamentId;
             linkText = 'Read Announcement →';
           }
 
@@ -176,7 +176,7 @@ export default function App() {
             linkText
           };
         }),
-        ...opsNotifs.map(n => ({
+        ...opsNotifs.map((n: any) => ({
           id: n.id,
           type: (n.type === 'MATCH_RESCHEDULE' ? 'match' : n.type === 'ANNOUNCEMENT' ? 'system' : 'registration') as any,
           title: n.title,
@@ -192,8 +192,19 @@ export default function App() {
 
       if (combinedDota.length > 0) {
         setNotifications(prev => {
-          const nonDota = prev.filter(p => !p.id.startsWith('notif-'));
-          return [...combinedDota, ...nonDota];
+          const map = new Map<string, NotificationItem>();
+          // Preserve read state if already acknowledged
+          prev.forEach(p => map.set(p.id, p));
+          combinedDota.forEach(n => {
+            const existing = map.get(n.id);
+            if (existing) {
+              map.set(n.id, { ...n, unread: existing.unread });
+            } else {
+              map.set(n.id, n);
+            }
+          });
+          // Cap at max 40 items to conserve browser memory
+          return Array.from(map.values()).slice(0, 40);
         });
       }
     };
@@ -337,7 +348,7 @@ export default function App() {
     <div 
       className={`min-h-screen w-full transition-colors duration-200 ${currentTheme.bg} selection:bg-black selection:text-white flex flex-col`}
       style={{
-        backgroundImage: `radial-gradient(#000 1.2px, transparent 1.2px)`,
+        backgroundImage: `radial-gradient(rgba(0,0,0,0.08) 1px, transparent 1px)`,
         backgroundSize: '24px 24px',
       }}
     >
@@ -486,7 +497,10 @@ export default function App() {
                       Official double elimination bracket. Solid black lines denote winner advancement; dotted red lines demonstrate upper bracket losers dropping directly to lower bracket survival deciders.
                     </p>
                   </div>
-                  <DoubleEliminationBracket onSelectMatch={(mId) => handleNavigate('match_detail', mId)} />
+                  <DoubleEliminationBracket 
+                    tournamentId={activeEntityId || (tournamentService.getTournaments()[0]?.id || 'purple-bean-test-cup')} 
+                    onSelectMatch={(mId) => handleNavigate('match_detail', mId)} 
+                  />
                 </div>
               )}
 
@@ -596,30 +610,38 @@ export default function App() {
         onNavigate={handleNavigate}
       />
 
-      <RegistrationModal
-        isOpen={isRegisterOpen}
-        onClose={() => setIsRegisterOpen(false)}
-        tournamentId={registerTournamentId || activeEntityId || (tournamentService.getTournaments()[0]?.id || '')}
-        tournamentName={tournamentService.getTournamentBySlug(registerTournamentId || activeEntityId || '')?.name || tournamentService.getTournaments()[0]?.name || 'Tournament'}
-      />
+      {isRegisterOpen && (
+        <RegistrationModal
+          isOpen={isRegisterOpen}
+          onClose={() => setIsRegisterOpen(false)}
+          tournamentId={registerTournamentId || activeEntityId || (tournamentService.getTournaments()[0]?.id || '')}
+          tournamentName={tournamentService.getTournamentBySlug(registerTournamentId || activeEntityId || '')?.name || tournamentService.getTournaments()[0]?.name || 'Tournament'}
+        />
+      )}
 
-      <BrandKitModal
-        isOpen={isBrandKitOpen}
-        onClose={() => setIsBrandKitOpen(false)}
-      />
+      {isBrandKitOpen && (
+        <BrandKitModal
+          isOpen={isBrandKitOpen}
+          onClose={() => setIsBrandKitOpen(false)}
+        />
+      )}
 
       {/* Reference Loading Screen System Modal */}
-      <LoadingScreenSystemModal
-        isOpen={isLoadingShowcaseOpen}
-        onClose={() => setIsLoadingShowcaseOpen(false)}
-      />
+      {isLoadingShowcaseOpen && (
+        <LoadingScreenSystemModal
+          isOpen={isLoadingShowcaseOpen}
+          onClose={() => setIsLoadingShowcaseOpen(false)}
+        />
+      )}
 
       {/* Admin Access & Credentials Modal (Strictly Restricted to Primary Project Admin) */}
-      <AdminCredentialsModal
-        isOpen={isAdminModalOpen}
-        onClose={() => setIsAdminModalOpen(false)}
-        onOpenBrandKit={() => setIsBrandKitOpen(true)}
-      />
+      {isAdminModalOpen && (
+        <AdminCredentialsModal
+          isOpen={isAdminModalOpen}
+          onClose={() => setIsAdminModalOpen(false)}
+          onOpenBrandKit={() => setIsBrandKitOpen(true)}
+        />
+      )}
 
       {/* Neo-brutalist Footer */}
       <footer className="w-full border-t-[3.5px] border-black bg-white mt-auto">
