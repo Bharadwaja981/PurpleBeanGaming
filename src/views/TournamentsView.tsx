@@ -31,11 +31,14 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
   const [feedbackNotice, setFeedbackNotice] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const currentUser = tournamentService.getCurrentUser();
+  const isSpectator = currentUser.role === 'spectator' || currentUser.id === 'guest-spectator' || !currentUser.email;
   const isOrganiserOrAdmin = 
-    currentUser.role === 'organizer' || 
-    currentUser.isAdmin || 
-    currentUser.isPrimaryAdmin || 
-    (currentUser.email?.toLowerCase().trim() === '11106cm009@gmail.com');
+    !isSpectator && (
+      currentUser.role === 'organizer' || 
+      currentUser.isAdmin || 
+      currentUser.isPrimaryAdmin || 
+      (currentUser.email?.toLowerCase().trim() === '11106cm009@gmail.com')
+    );
 
   const showFeedback = (message: string, type: 'success' | 'error' = 'success') => {
     setFeedbackNotice({ message, type });
@@ -300,7 +303,7 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
             (tourney as any).createdBy === currentUser.id ||
             ((tourney as any).organizerEmail && currentUser.email && (tourney as any).organizerEmail.toLowerCase().trim() === currentUser.email.toLowerCase().trim())
           );
-          const canManage = isOrganiserOrAdmin || isCreator || currentUser.id === 'guest-spectator';
+          const canManage = !isSpectator && (isOrganiserOrAdmin || isCreator);
 
           const displayStatusLabel = 
             normSt === 'REGISTRATION_OPEN' ? 'Registration Open' :

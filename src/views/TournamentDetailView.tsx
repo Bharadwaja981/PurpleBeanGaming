@@ -69,7 +69,8 @@ export function TournamentDetailView({
   );
 
   const [currentUser, setCurrentUser] = useState(() => tournamentService.getCurrentUser());
-  const isOrganiser = 
+  const isSpectator = currentUser.role === 'spectator' || currentUser.id === 'guest-spectator' || !currentUser.email;
+  const isOrganiser = !isSpectator && (
     currentUser.role === 'organizer' || 
     currentUser.isAdmin || 
     currentUser.isPrimaryAdmin || 
@@ -78,7 +79,8 @@ export function TournamentDetailView({
       tournament.organiserId === currentUser.id || 
       tournament.organizer === currentUser.id || 
       (tournament.organizerEmail && currentUser.email && tournament.organizerEmail.toLowerCase().trim() === currentUser.email.toLowerCase().trim())
-    ));
+    ))
+  );
   const [showPlayerManagerModal, setShowPlayerManagerModal] = useState(false);
   const [playerManagerInitialTab, setPlayerManagerInitialTab] = useState<'manual' | 'upload' | 'dummy'>('manual');
   const [userRegistration, setUserRegistration] = useState(() => 
@@ -448,143 +450,154 @@ export function TournamentDetailView({
                 )}
               </div>
 
-              {/* Action Buttons */}
-              <div className="flex items-center gap-2 flex-wrap">
-                {/* 1. Advance Lifecycle */}
-                {(tournament.status === 'Registration Open' || tournament.lifecycle === 'REGISTRATION_OPEN') && (
-                  <button
-                    type="button"
-                    disabled={lifecycleBusy}
-                    onClick={async () => {
-                      setLifecycleBusy(true);
-                      const res = await tournamentService.setTournamentLifecycle(tournament.id, 'DRAFTING');
-                      setLifecycleBusy(false);
-                      setLifecycleMessage(res.message || res.error || null);
-                      setTimeout(() => setLifecycleMessage(null), 4000);
-                    }}
-                    className="px-3 py-1.5 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  >
-                    <Gavel className="w-3.5 h-3.5 text-[#FFE600]" />
-                    <span>Advance to Draft (DRAFTING) →</span>
-                  </button>
-                )}
-
-                {(tournament.status === 'Drafting' || tournament.lifecycle === 'DRAFTING') && (
-                  <button
-                    type="button"
-                    disabled={lifecycleBusy}
-                    onClick={async () => {
-                      setLifecycleBusy(true);
-                      const res = await tournamentService.setTournamentLifecycle(tournament.id, 'LIVE');
-                      setLifecycleBusy(false);
-                      setLifecycleMessage(res.message || res.error || null);
-                      setTimeout(() => setLifecycleMessage(null), 4000);
-                    }}
-                    className="px-3 py-1.5 bg-[#38EF7D] hover:bg-emerald-400 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  >
-                    <Play className="w-3.5 h-3.5 text-black" />
-                    <span>Start Matches (LIVE) →</span>
-                  </button>
-                )}
-
-                {(tournament.status === 'Live' || tournament.lifecycle === 'LIVE') && (
-                  <button
-                    type="button"
-                    disabled={lifecycleBusy}
-                    onClick={async () => {
-                      if (!window.confirm(`Are you sure you want to conclude and finalize '${tournament.name}'?`)) return;
-                      setLifecycleBusy(true);
-                      const res = await tournamentService.setTournamentLifecycle(tournament.id, 'COMPLETED');
-                      setLifecycleBusy(false);
-                      setLifecycleMessage(res.message || res.error || null);
-                      setTimeout(() => setLifecycleMessage(null), 4000);
-                    }}
-                    className="px-3 py-1.5 bg-black hover:bg-stone-800 text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  >
-                    <Trophy className="w-3.5 h-3.5 text-[#FFE600]" />
-                    <span>Conclude Tournament (COMPLETED)</span>
-                  </button>
-                )}
-
-                {/* 2. Hold / Continue */}
-                {(tournament.status === 'On Hold' || tournament.lifecycle === 'ON_HOLD') ? (
-                  <button
-                    type="button"
-                    disabled={lifecycleBusy}
-                    onClick={async () => {
-                      setLifecycleBusy(true);
-                      const res = await tournamentService.resumeTournament(tournament.id);
-                      setLifecycleBusy(false);
-                      setLifecycleMessage(res.message || res.error || null);
-                      setTimeout(() => setLifecycleMessage(null), 4000);
-                    }}
-                    className="px-3 py-1.5 bg-[#38EF7D] hover:bg-emerald-400 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  >
-                    <Play className="w-3.5 h-3.5 text-black" />
-                    <span>Resume / Continue Tournament</span>
-                  </button>
-                ) : (
-                  tournament.status !== 'Completed' && tournament.status !== 'Cancelled' && (
+              {/* Action Buttons: strictly restricted to tournament Organisers & Platform Admins */}
+              {isOrganiser && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {/* 1. Advance Lifecycle */}
+                  {(tournament.status === 'Registration Open' || tournament.lifecycle === 'REGISTRATION_OPEN') && (
                     <button
                       type="button"
                       disabled={lifecycleBusy}
                       onClick={async () => {
-                        const reason = window.prompt("Enter reason for holding tournament (e.g. Technical delay, server outage, roster adjustment):", "Temporary operational hold");
-                        if (reason === null) return;
                         setLifecycleBusy(true);
-                        const res = await tournamentService.setTournamentLifecycle(tournament.id, 'ON_HOLD', reason.trim());
+                        const res = await tournamentService.setTournamentLifecycle(tournament.id, 'DRAFTING');
                         setLifecycleBusy(false);
                         setLifecycleMessage(res.message || res.error || null);
                         setTimeout(() => setLifecycleMessage(null), 4000);
                       }}
-                      className="px-3 py-1.5 bg-amber-200 hover:bg-amber-300 text-amber-950 border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      className="px-3 py-1.5 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                     >
-                      <Pause className="w-3.5 h-3.5 text-amber-950" />
-                      <span>Hold Tournament</span>
+                      <Gavel className="w-3.5 h-3.5 text-[#FFE600]" />
+                      <span>Advance to Draft (DRAFTING) →</span>
                     </button>
-                  )
-                )}
+                  )}
 
-                {/* 3. Cancel Tournament */}
-                {tournament.status !== 'Cancelled' && tournament.status !== 'Completed' && (
+                  {(tournament.status === 'Drafting' || tournament.lifecycle === 'DRAFTING') && (
+                    <button
+                      type="button"
+                      disabled={lifecycleBusy}
+                      onClick={async () => {
+                        setLifecycleBusy(true);
+                        const res = await tournamentService.setTournamentLifecycle(tournament.id, 'LIVE');
+                        setLifecycleBusy(false);
+                        setLifecycleMessage(res.message || res.error || null);
+                        setTimeout(() => setLifecycleMessage(null), 4000);
+                      }}
+                      className="px-3 py-1.5 bg-[#38EF7D] hover:bg-emerald-400 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <Play className="w-3.5 h-3.5 text-black" />
+                      <span>Start Matches (LIVE) →</span>
+                    </button>
+                  )}
+
+                  {(tournament.status === 'Live' || tournament.lifecycle === 'LIVE') && (
+                    <button
+                      type="button"
+                      disabled={lifecycleBusy}
+                      onClick={async () => {
+                        if (!window.confirm(`Are you sure you want to conclude and finalize '${tournament.name}'?`)) return;
+                        setLifecycleBusy(true);
+                        const res = await tournamentService.setTournamentLifecycle(tournament.id, 'COMPLETED');
+                        setLifecycleBusy(false);
+                        setLifecycleMessage(res.message || res.error || null);
+                        setTimeout(() => setLifecycleMessage(null), 4000);
+                      }}
+                      className="px-3 py-1.5 bg-black hover:bg-stone-800 text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <Trophy className="w-3.5 h-3.5 text-[#FFE600]" />
+                      <span>Conclude Tournament (COMPLETED)</span>
+                    </button>
+                  )}
+
+                  {/* 2. Hold / Continue */}
+                  {(tournament.status === 'On Hold' || tournament.lifecycle === 'ON_HOLD') ? (
+                    <button
+                      type="button"
+                      disabled={lifecycleBusy}
+                      onClick={async () => {
+                        setLifecycleBusy(true);
+                        const res = await tournamentService.resumeTournament(tournament.id);
+                        setLifecycleBusy(false);
+                        setLifecycleMessage(res.message || res.error || null);
+                        setTimeout(() => setLifecycleMessage(null), 4000);
+                      }}
+                      className="px-3 py-1.5 bg-[#38EF7D] hover:bg-emerald-400 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <Play className="w-3.5 h-3.5 text-black" />
+                      <span>Resume / Continue Tournament</span>
+                    </button>
+                  ) : (
+                    tournament.status !== 'Completed' && tournament.status !== 'Cancelled' && (
+                      <button
+                        type="button"
+                        disabled={lifecycleBusy}
+                        onClick={async () => {
+                          const reason = window.prompt("Enter reason for holding tournament (e.g. Technical delay, server outage, roster adjustment):", "Temporary operational hold");
+                          if (reason === null) return;
+                          setLifecycleBusy(true);
+                          const res = await tournamentService.setTournamentLifecycle(tournament.id, 'ON_HOLD', reason.trim());
+                          setLifecycleBusy(false);
+                          setLifecycleMessage(res.message || res.error || null);
+                          setTimeout(() => setLifecycleMessage(null), 4000);
+                        }}
+                        className="px-3 py-1.5 bg-amber-200 hover:bg-amber-300 text-amber-950 border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                      >
+                        <Pause className="w-3.5 h-3.5 text-amber-950" />
+                        <span>Hold Tournament</span>
+                      </button>
+                    )
+                  )}
+
+                  {/* 3. Cancel Tournament */}
+                  {tournament.status !== 'Cancelled' && tournament.status !== 'Completed' && (
+                    <button
+                      type="button"
+                      disabled={lifecycleBusy}
+                      onClick={async () => {
+                        setLifecycleBusy(true);
+                        const res = await tournamentService.setTournamentLifecycle(tournament.id, 'CANCELLED');
+                        setLifecycleBusy(false);
+                        setLifecycleMessage(res.message || res.error || null);
+                        setTimeout(() => setLifecycleMessage(null), 4000);
+                      }}
+                      className="px-3 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-800 border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      <StopCircle className="w-3.5 h-3.5 text-rose-700" />
+                      <span>Cancel Tournament</span>
+                    </button>
+                  )}
+
+                  {/* 4. Delete Tournament */}
                   <button
                     type="button"
                     disabled={lifecycleBusy}
                     onClick={async () => {
+                      if (!window.confirm(`Are you sure you want to permanently delete '${tournament.name}'? This action cannot be undone.`)) return;
                       setLifecycleBusy(true);
-                      const res = await tournamentService.setTournamentLifecycle(tournament.id, 'CANCELLED');
+                      const res = await tournamentService.deleteTournament(tournament.id);
                       setLifecycleBusy(false);
-                      setLifecycleMessage(res.message || res.error || null);
-                      setTimeout(() => setLifecycleMessage(null), 4000);
+                      if (res.success) {
+                        onNavigate('tournaments');
+                      } else {
+                        setLifecycleMessage(res.error || 'Failed to delete tournament.');
+                      }
                     }}
-                    className="px-3 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-800 border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    title="Permanently remove tournament"
                   >
-                    <StopCircle className="w-3.5 h-3.5 text-rose-700" />
-                    <span>Cancel Tournament</span>
+                    <Trash2 className="w-3.5 h-3.5 text-white" />
+                    <span>Delete</span>
                   </button>
-                )}
+                </div>
+              )}
 
-                {/* 4. Delete Tournament */}
-                <button
-                  type="button"
-                  disabled={lifecycleBusy}
-                  onClick={async () => {
-                    setLifecycleBusy(true);
-                    const res = await tournamentService.deleteTournament(tournament.id);
-                    setLifecycleBusy(false);
-                    if (res.success) {
-                      onNavigate('tournaments');
-                    } else {
-                      setLifecycleMessage(res.error || 'Failed to delete tournament.');
-                    }
-                  }}
-                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                  title="Permanently remove tournament"
-                >
-                  <Trash2 className="w-3.5 h-3.5 text-white" />
-                  <span>Delete</span>
-                </button>
-              </div>
+              {/* Informational badge for spectators / non-organisers when tournament is on hold */}
+              {!isOrganiser && (tournament.status === 'On Hold' || tournament.lifecycle === 'ON_HOLD') && (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 border-2 border-black text-amber-950 font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000]">
+                  <Pause className="w-3.5 h-3.5 text-amber-900" />
+                  <span>Tournament Status: Temporarily Paused by Organisers</span>
+                </div>
+              )}
             </div>
 
             {lifecycleMessage && (

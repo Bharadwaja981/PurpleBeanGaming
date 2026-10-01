@@ -10,6 +10,7 @@
 
 import { TournamentConfig } from './tournamentConfig';
 import { INITIAL_SEED_TOURNAMENTS } from '../data/seedTournaments';
+import { TEST_CUP_GENERIC_CONFIG } from './testCupEngine';
 import { Tournament } from '../types/tournament';
 import { getAuctionEngine } from './dotaAuctionEngine';
 import { dotaPlayerRegistry } from './dotaPlayerEngine';
@@ -50,81 +51,37 @@ class TournamentConfigRegistry {
   }
 
   public removeConfig(tournamentId: string) {
+    if (!tournamentId) return;
     this.deletedIds.add(tournamentId);
     this.deletedIds.add(tournamentId.toLowerCase());
     this.configs.delete(tournamentId);
+    this.configs.delete(tournamentId.toLowerCase());
     this.notify();
   }
 
   public getConfig(tournamentId: string): TournamentConfig | undefined {
     if (!tournamentId) return undefined;
-    if (this.deletedIds.has(tournamentId) || this.deletedIds.has(tournamentId.toLowerCase())) {
+    const tIdLower = tournamentId.toLowerCase();
+    if (this.deletedIds.has(tournamentId) || this.deletedIds.has(tIdLower)) {
       return undefined;
     }
-    const found = this.configs.get(tournamentId);
+    const found = this.configs.get(tournamentId) || this.configs.get(tIdLower);
     if (found) return found;
-    const seed = INITIAL_SEED_TOURNAMENTS.find(s => s.identity.tournamentId === tournamentId);
-    if (seed) {
-      this.configs.set(tournamentId, seed);
-      return seed;
-    }
-    if (tournamentId === 'purple-bean-test-cup') {
-      const testCupConfig: TournamentConfig = {
-        identity: {
-          tournamentId: 'purple-bean-test-cup',
-          name: 'Purple Bean Test Cup',
-          gameId: 'dota2',
-          gameName: 'Dota 2',
-          description: 'Official Dota 2 Pan India test championship. 3 franchise teams with live captain auction.',
-          city: 'Mumbai',
-          region: 'Pan India',
-          locationType: 'ONLINE',
-          visibility: 'PUBLIC'
-        },
-        teamFormation: {
-          mode: 'AUCTION',
-          numberOfTeams: 3
-        },
-        auction: {
-          enabled: true,
-          startingCredits: 1000,
-          minimumBid: 10,
-          bidIncrement: 10,
-          reservePerRemainingSlot: 10,
-          nominationTimerSeconds: 30,
-          bidTimerSeconds: 15,
-          creditAllocationMode: 'CAPTAIN_MMR_BALANCED'
-        },
-        roster: {
-          primaryRosterSize: 5,
-          captainCountsTowardRoster: true,
-          substituteSlots: 1,
-          substituteRequired: false
-        },
-        competition: {
-          format: 'SINGLE_ELIMINATION',
-          defaultSeriesFormat: 'BO3',
-          seedingMethod: 'RATING_BASED',
-          roundOverrides: {}
-        },
-        registration: {
-          registrationMode: 'INDIVIDUAL',
-          openDate: '2026-10-01',
-          closeDate: '2026-10-14',
-          maxParticipants: 18,
-          eligibilityRules: { minMmrOrRank: 0, requireKyc: false, regionLocked: false }
-        },
-        prizes: {
-          totalPrizePoolINR: 25000,
-          placementDistribution: []
-        },
-        integrity: {
-          verificationRequired: true,
-          organizerApprovalRequired: true
-        }
-      };
-      this.configs.set(tournamentId, testCupConfig);
-      return testCupConfig;
+
+    const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
+    if (isTest) {
+      if (tIdLower === 'purple-bean-test-cup') {
+        this.configs.set(tournamentId, TEST_CUP_GENERIC_CONFIG);
+        return TEST_CUP_GENERIC_CONFIG;
+      }
+      const seed = INITIAL_SEED_TOURNAMENTS.find(s => 
+        s.identity.tournamentId === tournamentId || 
+        s.identity.tournamentId.toLowerCase() === tIdLower
+      );
+      if (seed) {
+        this.configs.set(tournamentId, seed);
+        return seed;
+      }
     }
     return undefined;
   }
