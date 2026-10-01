@@ -18,6 +18,7 @@ const PRIMARY_PROJECT_ADMIN_EMAIL = '11106cm009@gmail.com';
 
 class TournamentConfigRegistry {
   private configs = new Map<string, TournamentConfig>();
+  private deletedIds = new Set<string>();
   private listeners: Array<() => void> = [];
   private teamProvider: ((tournamentId: string) => any[]) | null = null;
 
@@ -36,21 +37,30 @@ class TournamentConfigRegistry {
 
   public clearConfigs() {
     this.configs.clear();
+    this.deletedIds.clear();
     this.notify();
   }
 
   public registerConfig(config: TournamentConfig) {
-    this.configs.set(config.identity.tournamentId, config);
+    const id = config.identity.tournamentId;
+    this.deletedIds.delete(id);
+    this.deletedIds.delete(id.toLowerCase());
+    this.configs.set(id, config);
     this.notify();
   }
 
   public removeConfig(tournamentId: string) {
+    this.deletedIds.add(tournamentId);
+    this.deletedIds.add(tournamentId.toLowerCase());
     this.configs.delete(tournamentId);
     this.notify();
   }
 
   public getConfig(tournamentId: string): TournamentConfig | undefined {
     if (!tournamentId) return undefined;
+    if (this.deletedIds.has(tournamentId) || this.deletedIds.has(tournamentId.toLowerCase())) {
+      return undefined;
+    }
     const found = this.configs.get(tournamentId);
     if (found) return found;
     const seed = INITIAL_SEED_TOURNAMENTS.find(s => s.identity.tournamentId === tournamentId);
@@ -131,7 +141,10 @@ class TournamentConfigRegistry {
   public getAllConfigs(): TournamentConfig[] {
     const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
     if (isTest) {
-      return Array.from(this.configs.values());
+      return Array.from(this.configs.values()).filter(c => {
+        const id = c.identity?.tournamentId;
+        return !this.deletedIds.has(id) && !this.deletedIds.has((id || '').toLowerCase());
+      });
     }
     const LEGACY_MOCK_TOURNAMENT_IDS = new Set([
       '2-team-auction-test',
@@ -140,8 +153,9 @@ class TournamentConfigRegistry {
       'purple-bean-test-cup'
     ]);
     return Array.from(this.configs.values()).filter(c => {
-      const id = (c.identity?.tournamentId || '').toLowerCase();
-      return !LEGACY_MOCK_TOURNAMENT_IDS.has(id);
+      const rawId = c.identity?.tournamentId || '';
+      const id = rawId.toLowerCase();
+      return !LEGACY_MOCK_TOURNAMENT_IDS.has(id) && !this.deletedIds.has(rawId) && !this.deletedIds.has(id);
     });
   }
 

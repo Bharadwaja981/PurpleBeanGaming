@@ -13,7 +13,7 @@ interface RegisteredPlayersViewProps {
 export function RegisteredPlayersView({ onNavigate, tournamentId }: RegisteredPlayersViewProps) {
   const [tournaments, setTournaments] = useState<Tournament[]>(() => tournamentService.getTournaments());
   const [selectedTourneyId, setSelectedTourneyId] = useState<string>(() => tournamentId || 'ALL');
-  const [statusFilter, setStatusFilter] = useState<'All' | 'VERIFIED' | 'REGISTERED' | 'UNDER_REVIEW' | 'EVIDENCE_REQUESTED'>('All');
+  const [statusFilter, setStatusFilter] = useState<'All Active' | 'All' | 'VERIFIED' | 'REGISTERED' | 'UNDER_REVIEW' | 'EVIDENCE_REQUESTED' | 'WITHDRAWN' | 'REJECTED'>('All Active');
   const [roleFilter, setRoleFilter] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   
@@ -51,11 +51,15 @@ export function RegisteredPlayersView({ onNavigate, tournamentId }: RegisteredPl
 
   const filteredRegistrations = useMemo(() => {
     return effectiveRegistrations.filter((r) => {
-      const matchesStatus = statusFilter === 'All' || 
+      const matchesStatus = 
+        (statusFilter === 'All Active' && r.status !== 'WITHDRAWN' && r.status !== 'REJECTED' && (r.status as string) !== 'CANCELLED') ||
+        statusFilter === 'All' || 
         (statusFilter === 'VERIFIED' && r.status === 'VERIFIED') ||
         (statusFilter === 'REGISTERED' && (r.status === 'REGISTERED' || (r.status as string) === 'Pending Review')) ||
         (statusFilter === 'UNDER_REVIEW' && r.status === 'UNDER_REVIEW') ||
-        (statusFilter === 'EVIDENCE_REQUESTED' && r.status === 'EVIDENCE_REQUESTED');
+        (statusFilter === 'EVIDENCE_REQUESTED' && r.status === 'EVIDENCE_REQUESTED') ||
+        (statusFilter === 'WITHDRAWN' && r.status === 'WITHDRAWN') ||
+        (statusFilter === 'REJECTED' && r.status === 'REJECTED');
 
       const matchesRole = roleFilter === 'All' || r.primaryRole.toLowerCase().includes(roleFilter.toLowerCase());
 
@@ -177,23 +181,30 @@ export function RegisteredPlayersView({ onNavigate, tournamentId }: RegisteredPl
       {/* Filter and Search Bar */}
       <div className="p-4 bg-[#FFFBEB] border-[3px] border-black shadow-[4px_4px_0px_0px_#000] flex flex-wrap items-center justify-between gap-4 text-xs">
         <div className="flex flex-wrap items-center gap-2">
-          {(['All', 'VERIFIED', 'REGISTERED', 'UNDER_REVIEW', 'EVIDENCE_REQUESTED'] as const).map((s) => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1 font-black uppercase border-2 border-black transition-all cursor-pointer ${
-                statusFilter === s
-                  ? 'bg-[#FFE600] text-black shadow-[3px_3px_0px_0px_#000] -translate-x-0.5 -translate-y-0.5'
-                  : 'bg-white text-stone-700 hover:bg-stone-50 shadow-[1px_1px_0px_0px_#000]'
-              }`}
-            >
-              {s === 'All' ? 'All Statuses' : s} ({
-                s === 'All'
-                  ? effectiveRegistrations.length
-                  : effectiveRegistrations.filter(r => r.status === s || (s === 'REGISTERED' && (r.status as string) === 'Pending Review')).length
-              })
-            </button>
-          ))}
+          {(['All Active', 'All', 'VERIFIED', 'REGISTERED', 'UNDER_REVIEW', 'EVIDENCE_REQUESTED', 'WITHDRAWN', 'REJECTED'] as const).map((s) => {
+            const count = 
+              s === 'All Active' 
+                ? effectiveRegistrations.filter(r => r.status !== 'WITHDRAWN' && r.status !== 'REJECTED' && (r.status as string) !== 'CANCELLED').length
+                : s === 'All'
+                ? effectiveRegistrations.length
+                : effectiveRegistrations.filter(r => r.status === s || (s === 'REGISTERED' && (r.status as string) === 'Pending Review')).length;
+
+            return (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(s)}
+                className={`px-3 py-1 font-black uppercase border-2 border-black transition-all cursor-pointer ${
+                  statusFilter === s
+                    ? 'bg-[#FFE600] text-black shadow-[3px_3px_0px_0px_#000] -translate-x-0.5 -translate-y-0.5'
+                    : s === 'WITHDRAWN'
+                    ? 'bg-stone-200 text-stone-700 hover:bg-stone-300 shadow-[1px_1px_0px_0px_#000]'
+                    : 'bg-white text-stone-700 hover:bg-stone-50 shadow-[1px_1px_0px_0px_#000]'
+                }`}
+              >
+                {s === 'All Active' ? 'Active Contenders' : s === 'All' ? 'All (inc. Inactive)' : s} ({count})
+              </button>
+            );
+          })}
         </div>
 
         <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -310,8 +321,10 @@ export function RegisteredPlayersView({ onNavigate, tournamentId }: RegisteredPl
                       <td className="p-3.5 text-center">
                         <span className={`px-2 py-0.5 text-[10px] font-black border border-black uppercase ${
                           isVerified ? 'bg-[#70FFAF] text-black' :
+                          reg.status === 'WITHDRAWN' ? 'bg-stone-200 text-stone-600 line-through border-stone-400' :
                           reg.status === 'UNDER_REVIEW' ? 'bg-[#FFDE59] text-black' :
-                          reg.status === 'EVIDENCE_REQUESTED' || reg.status === 'REJECTED' ? 'bg-[#FF5757] text-white' :
+                          reg.status === 'EVIDENCE_REQUESTED' ? 'bg-amber-400 text-black' :
+                          reg.status === 'REJECTED' ? 'bg-[#FF5757] text-white' :
                           'bg-[#FFE600] text-black'
                         }`}>
                           {reg.status}
@@ -320,7 +333,11 @@ export function RegisteredPlayersView({ onNavigate, tournamentId }: RegisteredPl
 
                       {isOrganiser && (
                         <td className="p-3.5 text-right">
-                          {!isVerified ? (
+                          {reg.status === 'WITHDRAWN' ? (
+                            <span className="text-[10px] text-stone-500 font-bold italic">Withdrawn</span>
+                          ) : reg.status === 'REJECTED' ? (
+                            <span className="text-[10px] text-red-600 font-bold italic">Rejected</span>
+                          ) : !isVerified ? (
                             <button
                               type="button"
                               onClick={() => handleVerifyPlayer(reg)}

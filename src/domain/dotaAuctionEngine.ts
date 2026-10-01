@@ -736,6 +736,8 @@ export class DotaAuctionEngine {
       };
       this.players.set(reg.userId, auctionPlayer);
       this.notify();
+    } else if (reg.status === 'WITHDRAWN' || reg.status === 'REJECTED' || (reg.status as string) === 'CANCELLED') {
+      this.removePlayer(reg.userId);
     } else {
       const existing = this.players.get(reg.userId);
       if (existing && existing.status === 'AVAILABLE') {
@@ -746,7 +748,37 @@ export class DotaAuctionEngine {
   }
 
   public removePlayer(userId: string): boolean {
-    const deleted = this.players.delete(userId);
+    let deleted = this.players.delete(userId);
+    for (const [key, p] of this.players.entries()) {
+      if (p.userId === userId || p.id === userId) {
+        this.players.delete(key);
+        deleted = true;
+      }
+    }
+
+    // Purge from all teams' primary rosters and stand-ins
+    for (const team of this.teams.values()) {
+      team.primaryRoster = team.primaryRoster.filter(p => p.userId !== userId && p.id !== userId);
+      if (team.standIns && Array.isArray(team.standIns)) {
+        team.standIns = team.standIns.filter(p => p.userId !== userId && p.id !== userId);
+      }
+      if (team.captainId === userId) {
+        team.captainId = '';
+        team.captainIgn = '';
+      }
+      team.creditsUsed = team.primaryRoster.reduce((sum, p) => sum + (p.soldAmount || 0), 0);
+      team.remainingCredits = Math.max(0, team.startingCredits - team.creditsUsed);
+    }
+
+    // Clear live nominee if withdrawn player is on the block
+    if (this.state.nominee && (this.state.nominee.userId === userId || this.state.nominee.id === userId)) {
+      this.state.nominee = null;
+      this.state.currentBid = 0;
+      this.state.leadingTeamId = '';
+      this.state.leadingTeamName = '';
+      this.state.secondsRemaining = 0;
+    }
+
     if (deleted) {
       this.notify();
     }

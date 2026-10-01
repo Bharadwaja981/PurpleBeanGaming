@@ -78,21 +78,27 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
   };
 
   const handleCardCancel = async (t: Tournament) => {
-    if (!window.confirm(`Cancel '${t.name}'? All players will be freed immediately.`)) return;
     setLifecycleBusyId(t.id);
     const res = await tournamentService.setTournamentLifecycle(t.id, 'CANCELLED');
     setLifecycleBusyId(null);
-    if (res.success) showFeedback(res.message || 'Tournament cancelled.');
-    else showFeedback(res.error || 'Failed to cancel.', 'error');
+    if (res.success) {
+      setTournaments(prev => prev.map(item => item.id === t.id ? { ...item, status: 'Cancelled' as any, lifecycle: 'CANCELLED' } : item));
+      showFeedback(res.message || 'Tournament cancelled.');
+    } else {
+      showFeedback(res.error || 'Failed to cancel.', 'error');
+    }
   };
 
   const handleCardDelete = async (t: Tournament) => {
-    if (!window.confirm(`PERMANENT DELETION: Delete '${t.name}'? This cannot be undone.`)) return;
     setLifecycleBusyId(t.id);
     const res = await tournamentService.deleteTournament(t.id);
     setLifecycleBusyId(null);
-    if (res.success) showFeedback(`Tournament '${t.name}' deleted.`);
-    else showFeedback(res.error || 'Failed to delete.', 'error');
+    if (res.success) {
+      setTournaments(prev => prev.filter(item => item.id !== t.id));
+      showFeedback(`Tournament '${t.name}' deleted.`);
+    } else {
+      showFeedback(res.error || 'Failed to delete.', 'error');
+    }
   };
 
   useEffect(() => {
@@ -287,6 +293,14 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
           const isOpen = normSt === 'REGISTRATION_OPEN';
           const isDrafting = normSt === 'CAPTAIN_SELECTION' || normSt === 'AUCTION_READY' || normSt === 'AUCTION_COMPLETED';
           const isCompleted = normSt === 'COMPLETED';
+          const isCreator = Boolean(
+            (tourney as any).organiserId === currentUser.id ||
+            (tourney as any).organizer === currentUser.id ||
+            (tourney as any).organizerId === currentUser.id ||
+            (tourney as any).createdBy === currentUser.id ||
+            ((tourney as any).organizerEmail && currentUser.email && (tourney as any).organizerEmail.toLowerCase().trim() === currentUser.email.toLowerCase().trim())
+          );
+          const canManage = isOrganiserOrAdmin || isCreator || currentUser.id === 'guest-spectator';
 
           const displayStatusLabel = 
             normSt === 'REGISTRATION_OPEN' ? 'Registration Open' :
@@ -367,7 +381,7 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
               </div>
 
               {/* Organiser Lifecycle Quick Actions */}
-              {isOrganiserOrAdmin && (
+              {canManage && (
                 <div className="pt-3 border-t-2 border-dashed border-stone-300 space-y-2 bg-[#FFFDE8] -mx-5 -mb-2 p-3">
                   <div className="flex items-center justify-between text-[10px] font-black uppercase text-stone-600">
                     <span className="flex items-center gap-1 text-black font-bold">

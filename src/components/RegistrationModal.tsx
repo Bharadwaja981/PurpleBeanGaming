@@ -23,6 +23,7 @@ export interface RegistrationModalProps {
   onClose: () => void;
   tournamentId: string;
   tournamentName?: string;
+  onSuccess?: () => void;
 }
 
 const DOTA_ROLES: DotaRolePosition[] = [
@@ -51,13 +52,20 @@ export function RegistrationModal({
   isOpen,
   onClose,
   tournamentId,
-  tournamentName
+  tournamentName,
+  onSuccess
 }: RegistrationModalProps) {
   const currentUser = tournamentService.getCurrentUser();
   const allTournaments = tournamentService.getTournaments('All Games', 'All', true);
   const targetTourneyId = tournamentId || allTournaments[0]?.id || 'purple-bean-test-cup';
   const currentTourneyObj = allTournaments.find(t => t.id === targetTourneyId);
   const effectiveTourneyName = tournamentName || currentTourneyObj?.name || 'Tournament';
+
+  const isRegistrationClosed = Boolean(
+    currentTourneyObj && 
+    currentTourneyObj.status !== 'Registration Open' && 
+    currentTourneyObj.lifecycle !== 'REGISTRATION_OPEN'
+  );
 
   const [ign, setIgn] = useState('');
   const [primaryRole, setPrimaryRole] = useState<DotaRolePosition>('Position 1 — Carry');
@@ -113,26 +121,25 @@ export function RegistrationModal({
 
   const handleWithdrawOtherTourney = async () => {
     if (!otherActiveTourneyWithReg || !currentUser) return;
-    if (!window.confirm(`Withdraw your active registration from '${otherActiveTourneyWithReg.name}' so you can enter '${effectiveTourneyName}'?`)) {
-      return;
-    }
     setWithdrawBusy(true);
-    const res = await tournamentService.withdrawTournamentRegistration(otherActiveTourneyWithReg.id, currentUser.id);
+    const otherId = otherActiveTourneyWithReg.id;
+    const res = await tournamentService.withdrawTournamentRegistration(otherId, currentUser.id);
     setWithdrawBusy(false);
     if (!res.success) {
       setErrorMessage(res.error || 'Failed to withdraw from other tournament.');
+    } else {
+      setErrorMessage(null);
+      onSuccess?.();
     }
   };
 
   const handleWithdrawThisTourney = async () => {
     if (!existingRegThisTourney || !currentUser) return;
-    if (!window.confirm(`Are you sure you want to withdraw your registration from '${effectiveTourneyName}'?`)) {
-      return;
-    }
     setWithdrawBusy(true);
     const res = await tournamentService.withdrawTournamentRegistration(targetTourneyId, currentUser.id);
     setWithdrawBusy(false);
     if (res.success) {
+      onSuccess?.();
       onClose();
     } else {
       setErrorMessage(res.error || 'Failed to withdraw registration.');
@@ -142,6 +149,11 @@ export function RegistrationModal({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+
+    if (isRegistrationClosed) {
+      setErrorMessage(`Registration is locked: '${effectiveTourneyName}' is currently in '${currentTourneyObj?.status || 'Locked'}' state.`);
+      return;
+    }
 
     if (!ign.trim()) {
       setErrorMessage('Please provide an In-Game Name (IGN).');
@@ -394,6 +406,39 @@ export function RegistrationModal({
                     type="button"
                     onClick={onClose}
                     className="px-4 py-2.5 bg-white hover:bg-stone-100 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : isRegistrationClosed ? (
+            /* Registration closed / stage lock */
+            <div className="space-y-5 py-4">
+              <div className="bg-[#FFF9E6] border-4 border-black p-5 shadow-[6px_6px_0px_0px_#000] space-y-4">
+                <div className="flex items-start gap-3 border-b-2 border-black pb-3">
+                  <div className="w-10 h-10 bg-amber-400 text-black border-2 border-black flex items-center justify-center font-black text-xl shrink-0 font-mono">
+                    🔒
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase text-amber-900 block font-mono">
+                      Tournament Stage Lock
+                    </span>
+                    <h3 className="text-xl font-black uppercase text-black font-sans">
+                      Registration Locked ({currentTourneyObj?.status || 'Closed'})
+                    </h3>
+                  </div>
+                </div>
+
+                <p className="font-mono text-xs text-stone-800 leading-relaxed">
+                  Contender registration for <strong>{effectiveTourneyName}</strong> is locked because the tournament has progressed to <strong>{currentTourneyObj?.status}</strong>. New entries can only be submitted during the Registration Open stage.
+                </p>
+
+                <div className="flex items-center gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-4 py-2.5 bg-black text-white hover:bg-stone-800 border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
                   >
                     Close
                   </button>

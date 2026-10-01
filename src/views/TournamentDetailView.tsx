@@ -326,7 +326,7 @@ export function TournamentDetailView({
         )}
 
         {/* User Appointed Captain Notification Card */}
-        {Boolean(
+        {userRegistration?.status !== 'WITHDRAWN' && userRegistration?.status !== 'REJECTED' && Boolean(
           userRegistration?.isCaptainApproved || 
           currentUser.role === 'captain' ||
           effectiveTeams.some(t => 
@@ -551,7 +551,6 @@ export function TournamentDetailView({
                     type="button"
                     disabled={lifecycleBusy}
                     onClick={async () => {
-                      if (!window.confirm(`Are you sure you want to CANCEL '${tournament.name}'? This will automatically free all registered players so they can enter other tournaments.`)) return;
                       setLifecycleBusy(true);
                       const res = await tournamentService.setTournamentLifecycle(tournament.id, 'CANCELLED');
                       setLifecycleBusy(false);
@@ -570,14 +569,13 @@ export function TournamentDetailView({
                   type="button"
                   disabled={lifecycleBusy}
                   onClick={async () => {
-                    if (!window.confirm(`PERMANENT DELETION: Are you sure you want to permanently delete '${tournament.name}'? This cannot be recovered.`)) return;
                     setLifecycleBusy(true);
                     const res = await tournamentService.deleteTournament(tournament.id);
                     setLifecycleBusy(false);
                     if (res.success) {
                       onNavigate('tournaments');
                     } else {
-                      alert(res.error || 'Failed to delete tournament.');
+                      setLifecycleMessage(res.error || 'Failed to delete tournament.');
                     }
                   }}
                   className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
@@ -1309,13 +1307,9 @@ export function TournamentDetailView({
                               {isOrganiser && isAuctionSupported && assignedTeam?.captainId === reg.userId && (
                                 <button
                                   onClick={async () => {
-                                    if (window.confirm(`Unassign captain role for ${reg.ign}? This will dissolve ${assignedTeam?.name}.`)) {
-                                      const res = tournamentService.resetDotaCaptain(reg.userId, tournament.id);
-                                      if (res.success) {
-                                        setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
-                                      } else {
-                                        alert(res.error || 'Failed to unassign captain.');
-                                      }
+                                    const res = tournamentService.resetDotaCaptain(reg.userId, tournament.id);
+                                    if (res.success) {
+                                      setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
                                     }
                                   }}
                                   title="Unassign Captain"
@@ -1338,10 +1332,8 @@ export function TournamentDetailView({
                               {isOrganiser && (
                                 <button
                                   onClick={async () => {
-                                    if (window.confirm(`Remove contender "${reg.ign}" from tournament?`)) {
-                                      await tournamentService.removeTournamentRegistration(tournament.id, reg.userId);
-                                      setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
-                                    }
+                                    await tournamentService.removeTournamentRegistration(tournament.id, reg.userId);
+                                    setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
                                   }}
                                   title="Remove contender from tournament"
                                   className="bg-red-50 hover:bg-red-200 text-red-700 border border-black px-1.5 py-0.5 text-[9px] font-black uppercase cursor-pointer"

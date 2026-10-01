@@ -75,7 +75,7 @@ export interface Player {
   secondaryRole: EsportsRole | string;
   teamId?: string;
   teamName?: string;
-  status: 'Verified' | 'Pending Review' | 'Flagged';
+  status: 'Verified' | 'Pending Review' | 'Flagged' | 'Withdrawn' | 'Rejected';
   matches: number;
   wins: number;
   losses: number;

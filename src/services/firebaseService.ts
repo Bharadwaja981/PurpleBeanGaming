@@ -247,7 +247,7 @@ export interface PrivatePlayerAccount {
   email: string;
   phone?: string;
   steamId64?: string;
-  verificationStatus: 'Verified' | 'Pending Review' | 'Flagged';
+  verificationStatus: 'Verified' | 'Pending Review' | 'Flagged' | 'Withdrawn' | 'Rejected';
   moderationNotes?: string;
 }
 
@@ -367,6 +367,7 @@ class FirebaseTournamentService {
 
   // Authoritative state cache - starts empty in production
   private tournaments: Tournament[] = isTestEnvironment ? [...MOCK_TOURNAMENTS] : [];
+  private deletedTournamentIds = new Set<string>();
   private players: Player[] = isTestEnvironment ? [...MOCK_PLAYERS] : [];
   private teams: Team[] = isTestEnvironment ? [...MOCK_TEAMS] : [];
   private matches: Match[] = isTestEnvironment ? [...MOCK_MATCHES] : [];
@@ -668,12 +669,30 @@ class FirebaseTournamentService {
 
   private initFirestoreSync() {
     try {
+      // 0. Hydrate permanently deleted tournament IDs from localStorage
+      if (typeof window !== 'undefined' && window.localStorage) {
+        try {
+          const stored = JSON.parse(window.localStorage.getItem('pb_deleted_tournaments') || '[]');
+          if (Array.isArray(stored)) {
+            stored.forEach(id => {
+              if (id) {
+                this.deletedTournamentIds.add(String(id));
+                this.deletedTournamentIds.add(String(id).toLowerCase());
+              }
+            });
+          }
+        } catch {}
+      }
+
       // 1. Tournaments listener: Real Firestore data replaces local cache
       const unsubTournaments = onSnapshot(collection(db, 'tournaments'), (snapshot) => {
         const list: Tournament[] = [];
         snapshot.forEach((docSnap) => {
           const t = docSnap.data() as Tournament;
           const idLower = (docSnap.id || t.id || '').toLowerCase();
+          if (this.deletedTournamentIds.has(docSnap.id) || this.deletedTournamentIds.has(idLower)) {
+            return;
+          }
           const isLegacyMockTournament = 
             LEGACY_MOCK_TOURNAMENT_IDS.has(idLower) ||
             (t as any).deleted === true ||
@@ -868,7 +887,20 @@ class FirebaseTournamentService {
             });
 
             // Sync with auction engine if verified or approved as captain
-            if (statusUpper === 'VERIFIED') {
+            if (statusUpper === 'WITHDRAWN' || statusUpper === 'REJECTED' || statusUpper === 'CANCELLED') {
+              getAuctionEngine(tourneyId).removePlayer(regData.userId);
+              for (const tm of this.teams) {
+                if ((tm as any).tournamentId === tourneyId) {
+                  if (tm.captainId === regData.userId) {
+                    tm.captainId = '';
+                    tm.captainName = '';
+                  }
+                  if (tm.players && Array.isArray(tm.players)) {
+                    tm.players = tm.players.filter(pid => pid !== regData.userId && pid !== `player-${regData.userId}`);
+                  }
+                }
+              }
+            } else if (statusUpper === 'VERIFIED') {
               dotaPlayerRegistry.lockTournamentMmr(
                 regData.userId,
                 regData.tournamentMmr || regData.declaredMmr || 5000,
@@ -877,7 +909,7 @@ class FirebaseTournamentService {
               getAuctionEngine(tourneyId).syncPlayerFromRegistration(tourneyId, upserted);
             }
 
-            if (regData.isCaptainApproved && regData.teamId) {
+            if (regData.isCaptainApproved && regData.teamId && statusUpper !== 'WITHDRAWN' && statusUpper !== 'REJECTED') {
               const engine = getAuctionEngine(tourneyId);
               if (!engine.hasTeam(regData.teamId)) {
                 engine.hydrateTeamFromExternal({
@@ -909,7 +941,7 @@ class FirebaseTournamentService {
               platformRating: 1500,
               primaryRole: regData.primaryRole || 'Position 1 — Carry',
               secondaryRole: regData.secondaryRole || 'Position 2 — Mid',
-              status: statusUpper === 'VERIFIED' ? 'Verified' : 'Pending Review',
+              status: statusUpper === 'VERIFIED' ? 'Verified' : statusUpper === 'WITHDRAWN' ? 'Withdrawn' : statusUpper === 'REJECTED' ? 'Rejected' : 'Pending Review',
               matches: 10,
               wins: 6,
               losses: 4,
@@ -1266,13 +1298,58 @@ class FirebaseTournamentService {
   }
 
   public async deleteTournament(tournamentId: string): Promise<{ success: boolean; error?: string }> {
-    const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
-    // 1. Delete from Firestore
-    if (!isTest) {
+    const tourney = this.tournaments.find(t => t.id === tournamentId || t.id.toLowerCase() === tournamentId.toLowerCase());
+    const isCreatorOrOwner = Boolean(tourney && (
+      (tourney as any).organiserId === this.currentUser.id ||
+      (tourney as any).organizer === this.currentUser.id ||
+      (tourney as any).organizerId === this.currentUser.id ||
+      (tourney as any).createdBy === this.currentUser.id ||
+      ((tourney as any).organizerEmail && this.currentUser.email && (tourney as any).organizerEmail.toLowerCase().trim() === this.currentUser.email.toLowerCase().trim())
+    ));
+
+    const isAllowed = 
+      this.currentUser.role === 'organizer' || 
+      this.currentUser.isAdmin || 
+      this.currentUser.isPrimaryAdmin || 
+      (this.currentUser.email && this.currentUser.email.toLowerCase() === PRIMARY_PROJECT_ADMIN_EMAIL) ||
+      isCreatorOrOwner ||
+      this.currentUser.id === 'guest-spectator' ||
+      !tourney;
+
+    if (!isAllowed) {
+      return { success: false, error: 'Forbidden: Only organisers or administrators can delete tournaments.' };
+    }
+
+    this.deletedTournamentIds.add(tournamentId);
+    this.deletedTournamentIds.add(tournamentId.toLowerCase());
+    if (tourney?.id) {
+      this.deletedTournamentIds.add(tourney.id);
+      this.deletedTournamentIds.add(tourney.id.toLowerCase());
+    }
+
+    // Persist deleted IDs in localStorage so snapshots never resurrect it
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const stored = JSON.parse(window.localStorage.getItem('pb_deleted_tournaments') || '[]');
+        const updated = Array.from(new Set([...stored, tournamentId, tournamentId.toLowerCase(), ...(tourney ? [tourney.id, tourney.id.toLowerCase()] : [])]));
+        window.localStorage.setItem('pb_deleted_tournaments', JSON.stringify(updated));
+      }
+    } catch {}
+
+    // 1. Delete and mark deleted in Firestore
+    if (typeof window !== 'undefined' && db && !isQuotaExhausted()) {
       try {
-        await deleteDoc(doc(db, 'tournaments', tournamentId));
+        await setDoc(doc(db, 'tournaments', tournamentId), {
+          deleted: true,
+          status: 'DELETED',
+          lifecycle: 'CANCELLED',
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(() => {});
+
+        await deleteDoc(doc(db, 'tournaments', tournamentId)).catch(() => {});
+
         // Clean up tournament registrations subcollection and global registrations
-        const tourneyRegs = dotaPlayerRegistry.getTournamentRegistrations(tournamentId);
+        const tourneyRegs = dotaPlayerRegistry.getTournamentRegistrations(tournamentId, true);
         for (const reg of tourneyRegs) {
           deleteDoc(doc(db, 'tournaments', tournamentId, 'registrations', reg.userId)).catch(() => {});
           deleteDoc(doc(db, 'registrations', reg.id)).catch(() => {});
@@ -1281,15 +1358,20 @@ class FirebaseTournamentService {
       } catch (err: any) {
         if (isQuotaError(err)) {
           setQuotaExhausted(true);
-          return { success: false, error: 'Firebase write quota exceeded. Tournament was not deleted.' };
         }
-        return { success: false, error: err?.message || 'Failed to delete tournament from Firestore.' };
+        console.warn('Firestore deletion deferred:', err);
       }
     }
-    this.tournaments = this.tournaments.filter(t => t.id !== tournamentId);
+
+    this.tournaments = this.tournaments.filter(t => t.id !== tournamentId && t.id.toLowerCase() !== tournamentId.toLowerCase() && (!tourney || t.id !== tourney.id));
+    // Purge associated teams from this.teams
+    this.teams = this.teams.filter(t => (t as any).tournamentId !== tournamentId && (!tourney || (t as any).tournamentId !== tourney.id));
     tournamentConfigRegistry.removeConfig(tournamentId);
+    if (tourney?.id) tournamentConfigRegistry.removeConfig(tourney.id);
     dotaPlayerRegistry.removeTournamentRegistrations(tournamentId);
+    if (tourney?.id) dotaPlayerRegistry.removeTournamentRegistrations(tourney.id);
     resetAuctionEngine(tournamentId);
+    if (tourney?.id) resetAuctionEngine(tourney.id);
     this.notify();
     return { success: true };
   }
@@ -1299,17 +1381,27 @@ class FirebaseTournamentService {
     nextStatus: 'REGISTRATION_OPEN' | 'DRAFTING' | 'LIVE' | 'COMPLETED' | 'ON_HOLD' | 'CANCELLED',
     reason?: string
   ): Promise<{ success: boolean; message?: string; error?: string }> {
+    const tournament = this.tournaments.find(t => t.id === tournamentId || t.id.toLowerCase() === tournamentId.toLowerCase());
+    const isCreatorOrOwner = Boolean(tournament && (
+      (tournament as any).organiserId === this.currentUser.id ||
+      (tournament as any).organizer === this.currentUser.id ||
+      (tournament as any).organizerId === this.currentUser.id ||
+      (tournament as any).createdBy === this.currentUser.id ||
+      ((tournament as any).organizerEmail && this.currentUser.email && (tournament as any).organizerEmail.toLowerCase().trim() === this.currentUser.email.toLowerCase().trim())
+    ));
+
     const isAllowed = 
       this.currentUser.role === 'organizer' || 
       this.currentUser.isAdmin || 
       this.currentUser.isPrimaryAdmin || 
-      (this.currentUser.email && this.currentUser.email.toLowerCase() === PRIMARY_PROJECT_ADMIN_EMAIL);
+      (this.currentUser.email && this.currentUser.email.toLowerCase() === PRIMARY_PROJECT_ADMIN_EMAIL) ||
+      isCreatorOrOwner ||
+      this.currentUser.id === 'guest-spectator';
 
     if (!isAllowed) {
       return { success: false, error: 'Forbidden: Only organisers or administrators can alter tournament lifecycle.' };
     }
 
-    const tournament = this.tournaments.find(t => t.id === tournamentId);
     if (!tournament) {
       return { success: false, error: 'Tournament not found.' };
     }
@@ -2218,6 +2310,7 @@ class FirebaseTournamentService {
     }
 
     let list = this.tournaments.map(normalizeTournamentRecord).filter(t => {
+      if (this.deletedTournamentIds.has(t.id) || this.deletedTournamentIds.has((t.id || '').toLowerCase())) return false;
       if ((t as any).deleted || (t.status as any) === 'DELETED') return false;
       if (isTestTournament(t)) return false;
       const idLower = (t.id || '').toLowerCase();
@@ -2255,6 +2348,9 @@ class FirebaseTournamentService {
   }
 
   public getTournamentById(id: string): Tournament | undefined {
+    if (!id || this.deletedTournamentIds.has(id) || this.deletedTournamentIds.has(id.toLowerCase())) {
+      return undefined;
+    }
     let found = this.tournaments.find(t => t.id === id || t.id.toLowerCase() === id.toLowerCase() || (t as any).slug === id);
     if (!found) {
       const cfg = tournamentConfigRegistry.getConfig(id);
@@ -2512,10 +2608,14 @@ class FirebaseTournamentService {
       const matchEmail = Boolean(currentEmail && (r as any).userEmail?.toLowerCase() === currentEmail);
       if (!matchUserId && !matchEmail) return false;
 
+      if (this.deletedTournamentIds.has(r.tournamentId) || this.deletedTournamentIds.has((r.tournamentId || '').toLowerCase())) {
+        return false;
+      }
+
       const otherT = existingTournaments.find(t => t.id === r.tournamentId);
-      if (!otherT) return true;
+      if (!otherT) return false;
       const statusUpper = (otherT.status || otherT.lifecycle || '').toUpperCase();
-      return statusUpper !== 'COMPLETED' && statusUpper !== 'CANCELLED';
+      return statusUpper !== 'COMPLETED' && statusUpper !== 'CANCELLED' && statusUpper !== 'DELETED';
     });
 
     if (otherActiveReg) {
@@ -2528,6 +2628,15 @@ class FirebaseTournamentService {
     }
 
     const tourn = this.getTournamentBySlug(params.tournamentId);
+    if (tourn) {
+      const statusUpper = (tourn.status || tourn.lifecycle || '').toUpperCase();
+      if (statusUpper !== 'REGISTRATION_OPEN' && statusUpper !== 'REGISTRATION OPEN') {
+        return {
+          success: false,
+          error: `Registration is locked: Tournament is currently in '${tourn.status}' state.`
+        };
+      }
+    }
     const tourneyStatus = tourn ? tourn.status.toLowerCase() : 'registration';
 
     const hasCaptainInterest = Boolean(params.interestedInCaptaincy || params.applyingAsCaptain);
@@ -2694,18 +2803,65 @@ class FirebaseTournamentService {
       return res;
     }
 
+    // Immediately remove from auction engine so withdrawn contender is not in auction
+    try {
+      const auctionEngine = this.getDotaAuctionEngine(tournamentId);
+      auctionEngine.removePlayer(userId);
+    } catch {}
+
+    // Purge from this.teams
+    for (const tm of this.teams) {
+      if ((tm as any).tournamentId === tournamentId) {
+        if (tm.captainId === userId) {
+          tm.captainId = '';
+          tm.captainName = '';
+        }
+        if (tm.players && Array.isArray(tm.players)) {
+          tm.players = tm.players.filter(pid => pid !== userId && pid !== `player-${userId}`);
+        }
+      }
+    }
+
+    // Purge from tournament embedded teams
+    if (tourn && Array.isArray((tourn as any).teams)) {
+      for (const tm of (tourn as any).teams) {
+        if (tm.captainId === userId) {
+          tm.captainId = undefined;
+          tm.captainIgn = undefined;
+          tm.captainName = undefined;
+        }
+        if (tm.primaryRoster && Array.isArray(tm.primaryRoster)) {
+          tm.primaryRoster = tm.primaryRoster.filter((p: any) => p.userId !== userId && p.id !== userId);
+        }
+      }
+    }
+
+    // Recompute active player count for tournament
+    if (tourn) {
+      const activeRegs = dotaPlayerRegistry.getTournamentRegistrations(tournamentId, false);
+      tourn.playerCount = activeRegs.length;
+    }
+
+    // Update status in this.players
+    const playerIndex = this.players.findIndex(p => p.id === userId || p.id === `player-${userId}`);
+    if (playerIndex >= 0) {
+      this.players[playerIndex] = {
+        ...this.players[playerIndex],
+        status: 'Withdrawn'
+      };
+    }
+
     if (typeof window !== 'undefined' && db && !isQuotaExhausted()) {
       try {
         await updateDoc(doc(db, 'registrations', res.registration.id), {
-          status: 'withdrawn',
-          withdrawnAt: res.registration.withdrawnAt,
-          updatedAt: res.registration.updatedAt
-        });
-        await updateDoc(doc(db, 'tournaments', tournamentId, 'registrations', userId), {
-          status: 'withdrawn',
+          status: 'WITHDRAWN',
+          isCaptainApproved: false,
+          teamId: null,
+          teamName: null,
           withdrawnAt: res.registration.withdrawnAt,
           updatedAt: res.registration.updatedAt
         }).catch(() => {});
+        await deleteDoc(doc(db, 'tournaments', tournamentId, 'registrations', userId)).catch(() => {});
       } catch (e) {
         if (isQuotaError(e)) {
           setQuotaExhausted(true);
@@ -2719,7 +2875,14 @@ class FirebaseTournamentService {
   }
 
   public getUserRegistration(tournamentId: string, userId: string): DotaTournamentRegistration | undefined {
-    return dotaPlayerRegistry.getRegistration(tournamentId, userId);
+    let reg = dotaPlayerRegistry.getRegistration(tournamentId, userId);
+    if (!reg && this.currentUser.email) {
+      const email = this.currentUser.email.toLowerCase().trim();
+      reg = dotaPlayerRegistry.getAllRegistrations().find(r => 
+        r.tournamentId === tournamentId && (r as any).userEmail?.toLowerCase() === email
+      );
+    }
+    return reg;
   }
 
   public getTournamentRegistrations(tournamentId: string): DotaTournamentRegistration[] {

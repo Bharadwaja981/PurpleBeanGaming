@@ -745,6 +745,10 @@ export class DotaPlayerRegistry {
     const reg = this.registrations.get(regKey);
     if (!reg) return { success: false, error: 'Contender registration not found.' };
 
+    if (reg.status === 'WITHDRAWN' || reg.status === 'REJECTED' || (reg.status as string) === 'CANCELLED') {
+      return { success: false, error: `Cannot approve contender in ${reg.status} state as captain.` };
+    }
+
     const approvedCaptains = this.getTournamentRegistrations(tournamentId).filter(r => Boolean(r.isCaptainApproved));
     if (approvedCaptains.length >= maxSlots && !reg.isCaptainApproved) {
       return { success: false, error: `Cannot approve more than ${maxSlots} captains. All ${maxSlots} slots are filled.` };
@@ -790,7 +794,10 @@ export class DotaPlayerRegistry {
     }
 
     const regKey = `${tournamentId}__${userId}`;
-    const reg = this.registrations.get(regKey);
+    let reg = this.registrations.get(regKey);
+    if (!reg) {
+      reg = Array.from(this.registrations.values()).find(r => r.tournamentId === tournamentId && r.userId === userId);
+    }
     if (!reg) {
       return { success: false, error: 'Registration not found.' };
     }
@@ -800,17 +807,55 @@ export class DotaPlayerRegistry {
     }
 
     reg.status = 'WITHDRAWN';
+    reg.isCaptainApproved = false;
+    reg.teamId = undefined;
+    reg.teamName = undefined;
     reg.withdrawnAt = new Date().toISOString();
     reg.updatedAt = new Date().toISOString();
+
+    // Ensure all duplicate references in this.registrations are updated to WITHDRAWN
+    for (const [key, item] of this.registrations.entries()) {
+      if (item.tournamentId === tournamentId && (item.userId === userId || item.id === userId || key.endsWith(`__${userId}`))) {
+        item.status = 'WITHDRAWN';
+        item.isCaptainApproved = false;
+        item.teamId = undefined;
+        item.teamName = undefined;
+        item.withdrawnAt = reg.withdrawnAt;
+        item.updatedAt = reg.updatedAt;
+      }
+    }
+
+    this.activeTournamentLocks.delete(userId);
 
     return { success: true, registration: reg };
   }
 
-  public getRegistration(tournamentId: string, userId: string): DotaTournamentRegistration | undefined {
-    return this.registrations.get(`${tournamentId}__${userId}`);
+  public removeRegistration(tournamentId: string, userId: string) {
+    const regKey = `${tournamentId}__${userId}`;
+    this.registrations.delete(regKey);
+    for (const [key, item] of this.registrations.entries()) {
+      if (item.tournamentId === tournamentId && (item.userId === userId || item.id === userId)) {
+        this.registrations.delete(key);
+      }
+    }
+    this.activeTournamentLocks.delete(userId);
   }
 
-  public getTournamentRegistrations(tournamentId: string): DotaTournamentRegistration[] {
+  public getRegistration(tournamentId: string, userId: string): DotaTournamentRegistration | undefined {
+    const regKey = `${tournamentId}__${userId}`;
+    const allMatches = Array.from(this.registrations.values()).filter(
+      r => r.tournamentId === tournamentId && (r.userId === userId || r.id === userId)
+    );
+    if (allMatches.length === 0) {
+      return this.registrations.get(regKey);
+    }
+    // Return the latest record by timestamp
+    return allMatches.sort((a, b) => 
+      new Date(b.updatedAt || b.registeredAt || 0).getTime() - new Date(a.updatedAt || a.registeredAt || 0).getTime()
+    )[0];
+  }
+
+  public getTournamentRegistrations(tournamentId: string, includeInactive = false): DotaTournamentRegistration[] {
     const list = Array.from(this.registrations.values()).filter(r => r.tournamentId === tournamentId);
     // Strict invariant: ONE authenticated user + ONE tournament = ONE registration
     const byUserId = new Map<string, DotaTournamentRegistration>();
@@ -819,19 +864,20 @@ export class DotaPlayerRegistry {
       if (!existing) {
         byUserId.set(reg.userId, reg);
       } else {
-        // Keep the best / active / latest record
-        const isBetter = 
-          (reg.status === 'VERIFIED' && existing.status !== 'VERIFIED') ||
-          (Boolean(reg.isCaptainApproved) && !existing.isCaptainApproved) ||
-          (Boolean(reg.interestedInCaptaincy) && !existing.interestedInCaptaincy) ||
-          (existing.status === 'WITHDRAWN' && reg.status !== 'WITHDRAWN') ||
-          (new Date(reg.updatedAt || reg.registeredAt).getTime() > new Date(existing.updatedAt || existing.registeredAt).getTime());
-        if (isBetter) {
+        // Authoritative resolution: Pick the latest updated or registered record
+        const regTime = new Date(reg.updatedAt || reg.registeredAt || 0).getTime();
+        const existingTime = new Date(existing.updatedAt || existing.registeredAt || 0).getTime();
+        if (regTime >= existingTime) {
           byUserId.set(reg.userId, reg);
         }
       }
     }
-    return Array.from(byUserId.values());
+
+    return Array.from(byUserId.values()).filter(reg => {
+      if (includeInactive) return true;
+      const s = (reg.status || '').toUpperCase();
+      return s !== 'WITHDRAWN' && s !== 'REJECTED' && s !== 'CANCELLED';
+    });
   }
 
   public removeTournamentRegistrations(tournamentId: string) {
@@ -847,7 +893,21 @@ export class DotaPlayerRegistry {
   }
 
   public getAllRegistrations(): DotaTournamentRegistration[] {
-    return Array.from(this.registrations.values());
+    const byKey = new Map<string, DotaTournamentRegistration>();
+    for (const reg of this.registrations.values()) {
+      const key = `${reg.tournamentId}__${reg.userId}`;
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, reg);
+      } else {
+        const regTime = new Date(reg.updatedAt || reg.registeredAt || 0).getTime();
+        const existingTime = new Date(existing.updatedAt || existing.registeredAt || 0).getTime();
+        if (regTime >= existingTime) {
+          byKey.set(key, reg);
+        }
+      }
+    }
+    return Array.from(byKey.values());
   }
 
   public getUserRegistrations(userId: string): DotaTournamentRegistration[] {
@@ -1103,6 +1163,10 @@ export class DotaPlayerRegistry {
     const regKey = `${tournamentId}__${userId}`;
     const reg = this.registrations.get(regKey);
     if (!reg) return { success: false, error: 'Registration not found.' };
+
+    if (reg.status === 'WITHDRAWN' || reg.status === 'REJECTED' || (reg.status as string) === 'CANCELLED') {
+      return { success: false, error: `Cannot verify registration in ${reg.status} state. Contender must re-register first.` };
+    }
 
     const finalMmr = confirmedTournamentMmr || reg.tournamentMmr || reg.declaredMmr;
     reg.tournamentMmr = finalMmr;

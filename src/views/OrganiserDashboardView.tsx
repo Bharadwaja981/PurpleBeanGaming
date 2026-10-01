@@ -130,9 +130,6 @@ export function OrganiserDashboardView({
 
   const handleCancelTournament = async () => {
     if (!activeTourney) return;
-    if (!window.confirm(`Are you sure you want to CANCEL '${activeTourney.name}'? This will free all registered players immediately.`)) {
-      return;
-    }
     setLifecycleBusy(true);
     const res = await tournamentService.setTournamentLifecycle(activeTourney.id, 'CANCELLED');
     setLifecycleBusy(false);
@@ -145,15 +142,14 @@ export function OrganiserDashboardView({
 
   const handleDeleteTournament = async () => {
     if (!activeTourney) return;
-    if (!window.confirm(`PERMANENT DELETION: Are you sure you want to permanently delete '${activeTourney.name}'? This cannot be undone.`)) {
-      return;
-    }
+    const targetTourney = activeTourney;
     setLifecycleBusy(true);
-    const res = await tournamentService.deleteTournament(activeTourney.id);
+    const res = await tournamentService.deleteTournament(targetTourney.id);
     setLifecycleBusy(false);
     if (res.success) {
-      showNotice(`Tournament '${activeTourney.name}' deleted.`);
-      const remaining = tournaments.filter(t => t.id !== activeTourney.id);
+      showNotice(`Tournament '${targetTourney.name}' deleted.`);
+      const remaining = tournaments.filter(t => t.id !== targetTourney.id);
+      setTournaments(remaining);
       setSelectedTournamentId(remaining[0]?.id || '');
     } else {
       showNotice(res.error || 'Failed to delete tournament.', 'error');
