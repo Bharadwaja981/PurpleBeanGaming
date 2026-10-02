@@ -116,6 +116,35 @@
         "status": { "type": "string", "enum": ["SCHEDULED", "LIVE", "COMPLETED"] }
       },
       "required": ["id", "tournamentId", "round", "status"]
+    },
+    "steamIdentityClaim": {
+      "title": "SteamIdentityClaim",
+      "description": "1:1 authoritative Steam account ownership claim",
+      "type": "object",
+      "properties": {
+        "steamId64": { "type": "string", "maxLength": 17 },
+        "dotaAccountId": { "type": "string", "maxLength": 10 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "verificationMethod": { "type": "string" },
+        "verifiedAt": { "type": "number" }
+      },
+      "required": ["steamId64", "dotaAccountId", "userId", "verificationMethod", "verifiedAt"]
+    },
+    "privatePlayerAccount": {
+      "title": "PrivatePlayerAccount",
+      "description": "Private Steam & Dota player identity verification record",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "steamId64": { "type": "string" },
+        "steamId32": { "type": "string" },
+        "dotaAccountId": { "type": "string" },
+        "verificationStatus": { "type": "string" },
+        "steamOwnershipVerified": { "type": "boolean" },
+        "steamPersonaName": { "type": "string" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["userId", "verificationStatus", "steamOwnershipVerified", "updatedAt"]
     }
   },
   "firestore": {
@@ -138,6 +167,14 @@
     "/auctions/{auctionId}": {
       "schema": "#/entities/auctionState",
       "description": "Live auction floor state"
+    },
+    "/steamIdentityClaims/{steamId64}": {
+      "schema": "#/entities/steamIdentityClaim",
+      "description": "1:1 Steam account identity claims"
+    },
+    "/privatePlayerAccounts/{userId}": {
+      "schema": "#/entities/privatePlayerAccount",
+      "description": "Private Steam verification state"
     }
   }
 }

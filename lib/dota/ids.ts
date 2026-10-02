@@ -25,6 +25,11 @@ export function normalizeDotaIdentity(input: string) {
   throw new DotaIdError();
 }
 
+export function maskSteamId64(steamId64: string): string {
+  if (!steamId64 || steamId64.length < 6) return '•••••••••••••••••';
+  return '•••••••••••' + steamId64.slice(-6);
+}
+
 function parseUnsigned(value: string | bigint, digits: number) {
   const text = value.toString();
   if (!new RegExp(`^[0-9]{1,${digits}}$`).test(text)) throw new DotaIdError();

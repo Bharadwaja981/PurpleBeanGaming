@@ -171,6 +171,8 @@ import {
   MmrIntegrityCaseType,
   DotaUserNotification
 } from '../domain/dotaPlayerEngine';
+import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
+import { PBGPlayerAccount } from '../types/pbgAccount';
 import { dotaCareerHistoryEngine } from '../domain/dotaCareerHistoryEngine';
 import {
   dotaAuctionEngine,
@@ -217,6 +219,8 @@ export interface UserSession {
   teamName?: string;
   avatarUrl?: string;
   ign?: string;
+  pbgId?: string;
+  isFirstTimePBG?: boolean;
 }
 
 export interface PublicPlayerProfile {
@@ -481,6 +485,13 @@ class FirebaseTournamentService {
         const email = (firebaseUser.email || '').toLowerCase().trim();
         const perms = this.computeUserPermissions(email);
         
+        const { account: pbgAcc, isFirstTime } = pbgAccountRegistry.getOrCreatePBGAccount({
+          googleUid: firebaseUser.uid,
+          email,
+          displayName: firebaseUser.displayName || email.split('@')[0],
+          photoURL: firebaseUser.photoURL || undefined
+        });
+
         this.currentUser = {
           id: firebaseUser.uid,
           email,
@@ -489,7 +500,9 @@ class FirebaseTournamentService {
           role: perms.role,
           isAdmin: perms.isAdmin,
           isPrimaryAdmin: perms.isPrimaryAdmin,
-          isModerator: perms.isModerator
+          isModerator: perms.isModerator,
+          pbgId: pbgAcc.pbgId,
+          isFirstTimePBG: isFirstTime
         };
 
         this.syncAuthListeners(firebaseUser, perms);
@@ -1733,6 +1746,14 @@ class FirebaseTournamentService {
     return this.currentUser;
   }
 
+  public getCurrentPBGAccount(): PBGPlayerAccount | undefined {
+    if (this.currentUser && this.currentUser.id && this.currentUser.id !== 'guest-spectator') {
+      const acc = pbgAccountRegistry.getAccountByUid(this.currentUser.id);
+      if (acc) return acc;
+    }
+    return pbgAccountRegistry.getAccountByPbgId('PBG-000184');
+  }
+
   public async signInWithGoogle(): Promise<{ user: UserSession; error: any; cancelled?: boolean }> {
     // If a request is already active, return the existing in-flight promise
     if (this.activeSignInPromise) {
@@ -1758,6 +1779,13 @@ class FirebaseTournamentService {
         const email = (fbUser.email || '').toLowerCase().trim();
         const perms = this.computeUserPermissions(email);
         
+        const { account: pbgAcc, isFirstTime } = pbgAccountRegistry.getOrCreatePBGAccount({
+          googleUid: fbUser.uid,
+          email,
+          displayName: fbUser.displayName || email.split('@')[0] || 'Gamer',
+          photoURL: fbUser.photoURL || undefined
+        });
+
         this.currentUser = {
           id: fbUser.uid,
           email,
@@ -1766,7 +1794,9 @@ class FirebaseTournamentService {
           role: perms.role,
           isAdmin: perms.isAdmin,
           isPrimaryAdmin: perms.isPrimaryAdmin,
-          isModerator: perms.isModerator
+          isModerator: perms.isModerator,
+          pbgId: pbgAcc.pbgId,
+          isFirstTimePBG: isFirstTime
         };
 
         if (perms.isAdmin) {
@@ -1774,7 +1804,7 @@ class FirebaseTournamentService {
         }
 
         this.notify();
-        return { user: this.currentUser, error: null, cancelled: false };
+        return { user: this.currentUser, pbgAccount: pbgAcc, isFirstTime, error: null, cancelled: false };
       } catch (error: any) {
         const errorCode = error?.code || '';
         const errorMessage = error?.message || String(error || '');

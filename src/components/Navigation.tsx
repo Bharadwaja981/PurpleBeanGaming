@@ -23,7 +23,8 @@ import {
   Loader2,
   Zap,
   AlertCircle,
-  Plus
+  Plus,
+  Sparkles
 } from 'lucide-react';
 import { ViewType, CompetitiveGame, Match, Tournament } from '../types/tournament';
 import { PurpleBeanLogo } from './PurpleBeanLogo';
@@ -52,6 +53,7 @@ interface NavigationProps {
   onOpenLoadingSystem?: () => void;
   onOpenAdminCredentials?: () => void;
   onOpenCreateTournament?: () => void;
+  onOpenOnboarding?: () => void;
 }
 
 export function Navigation({
@@ -68,7 +70,8 @@ export function Navigation({
   onOpenBrandKit,
   onOpenLoadingSystem,
   onOpenAdminCredentials,
-  onOpenCreateTournament
+  onOpenCreateTournament,
+  onOpenOnboarding
 }: NavigationProps) {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserSession>(() => tournamentService.getCurrentUser());
@@ -443,32 +446,23 @@ export function Navigation({
                   {currentUser.displayName || 'Player'}
                 </span>
 
-                <span
-                  className={`hidden md:inline text-[9px] font-mono px-1 border border-black uppercase font-black ${
-                    currentUser.role === 'organizer'
-                      ? 'bg-[#FFE600] text-black'
-                      : currentUser.role === 'captain'
-                      ? 'bg-[#7C3AED] text-white'
-                      : currentUser.role === 'player'
-                      ? 'bg-[#10B981] text-black'
-                      : 'bg-stone-200 text-stone-700'
-                  }`}
-                >
-                  {currentUser.role}
+                {/* PBG ID Badge */}
+                <span className="text-[9px] font-mono px-1 py-0.2 border border-black uppercase font-black bg-[#FFE600] text-black">
+                  {currentUser.pbgId || tournamentService.getCurrentPBGAccount()?.pbgId || 'PBG-000184'}
                 </span>
 
                 <ChevronDown className={`w-3 h-3 text-stone-700 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
               </button>
             )}
           >
-            {/* Real Authenticated User Details */}
+            {/* Real Authenticated User Details & PBG Identity */}
             <div className="px-3 py-2 bg-[#FFF9E6] border-b-2 border-black space-y-1">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-sans font-black text-xs text-black truncate">
                   {currentUser.displayName || 'Guest Spectator'}
                 </span>
                 <span className="text-[9px] font-mono px-1 py-0.2 border border-black font-black uppercase bg-[#FFE600] text-black shrink-0">
-                  {currentUser.role.toUpperCase()}
+                  {currentUser.pbgId || tournamentService.getCurrentPBGAccount()?.pbgId || 'PBG-000184'}
                 </span>
               </div>
               {currentUser.email ? (
@@ -477,14 +471,25 @@ export function Navigation({
                 </div>
               ) : (
                 <div className="font-mono text-[10px] text-stone-500">
-                  Spectator Session
+                  Spectator Session · PBG Player Account
                 </div>
               )}
-              {currentUser.teamName && (
-                <div className="font-mono text-[10px] font-bold text-stone-700 pt-0.5">
-                  Squad: <span className="font-black text-black">{currentUser.teamName}</span>
-                </div>
-              )}
+              {/* Linked Accounts Mini Pills */}
+              <div className="flex flex-wrap items-center gap-1 pt-1 text-[9px] font-mono">
+                <span className={`px-1 py-0.2 border border-black font-black ${
+                  tournamentService.getCurrentPBGAccount()?.discordLinked ? 'bg-[#5865F2] text-white' : 'bg-stone-200 text-stone-600'
+                }`}>
+                  Discord: {tournamentService.getCurrentPBGAccount()?.discordLinked ? 'LINKED' : 'OFF'}
+                </span>
+                <span className={`px-1 py-0.2 border border-black font-black ${
+                  tournamentService.getCurrentPBGAccount()?.dotaAccountLinked ? 'bg-blue-100 text-blue-900' : 'bg-stone-200 text-stone-600'
+                }`}>
+                  Dota: {tournamentService.getCurrentPBGAccount()?.dotaAccountVerified ? 'VERIFIED' : 'OFF'}
+                </span>
+                <span className="px-1 py-0.2 border border-black font-black bg-[#FFE600] text-black">
+                  {tournamentService.getCurrentPBGAccount()?.purpleBeanRating || 'UNRATED'}
+                </span>
+              </div>
             </div>
 
             {/* Account Actions */}
@@ -509,11 +514,29 @@ export function Navigation({
                 />
               )}
 
-              {isAuthenticated && (
+              <MenuItem
+                icon={User}
+                label={`PBG Player Profile (${currentUser.pbgId || tournamentService.getCurrentPBGAccount()?.pbgId || 'PBG-000184'})`}
+                badge="Identity"
+                badgeColor="bg-[#FFE600] text-black"
+                onClick={() => onNavigate('player_profile', currentUser.pbgId || currentUser.id)}
+              />
+
+              <MenuItem
+                icon={Gamepad2}
+                label="Dota 2 Game Profile & OpenDota Stats"
+                badge={tournamentService.getCurrentPBGAccount()?.dotaAccountLinked ? "Verified" : "Link"}
+                badgeColor={tournamentService.getCurrentPBGAccount()?.dotaAccountLinked ? "bg-[#70FFAF] text-black" : "bg-stone-200 text-stone-700"}
+                onClick={() => onNavigate('dota_game_profile', currentUser.pbgId || currentUser.id)}
+              />
+
+              {onOpenOnboarding && (
                 <MenuItem
-                  icon={User}
-                  label="My Player Profile"
-                  onClick={() => onNavigate('player_profile', currentUser.id)}
+                  icon={Sparkles}
+                  label="First-Time Onboarding Walkthrough"
+                  badge="6-Step"
+                  badgeColor="bg-[#70FFAF] text-black"
+                  onClick={onOpenOnboarding}
                 />
               )}
 

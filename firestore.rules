@@ -55,7 +55,14 @@ service cloud.firestore {
     }
 
     match /privatePlayerAccounts/{userId} {
-      allow read, write: if true;
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow write: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+    }
+
+    // 7. Steam OpenID 2.0 1:1 Identity Claims (Server authoritative)
+    match /steamIdentityClaims/{steamId64} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
 
     match /{document=**} {

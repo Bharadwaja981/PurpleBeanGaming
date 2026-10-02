@@ -10,6 +10,7 @@
  */
 
 import { accountIdFromSteamId64, normalizeDotaIdentity } from '../../lib/dota/ids';
+import { getHeroName } from './dotaConstants';
 
 const isBrowser = typeof window !== 'undefined' && Boolean(window.location);
 
@@ -74,6 +75,23 @@ export async function testOpenDotaConnection(): Promise<{
   };
 }
 
+export interface OpenDotaPeer {
+  account_id: string;
+  personaname: string | null;
+  name?: string | null;
+  avatar?: string | null;
+  avatarfull?: string | null;
+  last_played?: number | null;
+  games: number;
+  win: number;
+  with_games: number;
+  with_win: number;
+  against_games: number;
+  against_win: number;
+  with_gpm_sum?: number | null;
+  with_xpm_sum?: number | null;
+}
+
 export interface OpenDotaPlayerSummary {
   accountId: string;
   steamId64: string;
@@ -111,6 +129,8 @@ export interface OpenDotaPlayerSummary {
     heroDamage?: number;
     towerDamage?: number;
     heroHealing?: number;
+    items?: number[];
+    itemNeutral?: number | null;
   }>;
   topHeroes: Array<{
     heroId: number;
@@ -124,15 +144,7 @@ export interface OpenDotaPlayerSummary {
     againstGames?: number;
     againstWinRate?: number;
   }>;
-  peers?: Array<{
-    accountId: string;
-    personaName: string;
-    avatarUrl: string;
-    games: number;
-    wins: number;
-    winRate: number;
-    lastPlayed?: string | null;
-  }>;
+  peers?: OpenDotaPeer[];
   totals?: {
     kills?: { sum: number; n: number; avg: number };
     deaths?: { sum: number; n: number; avg: number };
@@ -169,38 +181,15 @@ export const DOTA_LOBBY_TYPES: Record<number, string> = {
   7: 'Ranked'
 };
 
-// OpenDota Hero Map for friendly names
-export const DOTA_HEROES: Record<number, string> = {
-  1: 'Anti-Mage', 2: 'Axe', 3: 'Bane', 4: 'Bloodseeker', 5: 'Crystal Maiden',
-  6: 'Drow Ranger', 7: 'Earthshaker', 8: 'Juggernaut', 9: 'Mirana', 10: 'Morphling',
-  11: 'Shadow Fiend', 12: 'Phantom Lancer', 13: 'Puck', 14: 'Pudge', 15: 'Razor',
-  16: 'Sand King', 17: 'Storm Spirit', 18: 'Sven', 19: 'Tiny', 20: 'Vengeful Spirit',
-  21: 'Windranger', 22: 'Zeus', 23: 'Kunkka', 25: 'Lina', 26: 'Lion',
-  27: 'Shadow Shaman', 28: 'Slardar', 29: 'Tidehunter', 30: 'Witch Doctor',
-  31: 'Lich', 32: 'Riki', 33: 'Enigma', 34: 'Tinker', 35: 'Sniper',
-  36: 'Necrophos', 37: 'Warlock', 38: 'Beastmaster', 39: 'Queen of Pain',
-  40: 'Venomancer', 41: 'Faceless Void', 42: 'Wraith King', 43: 'Death Prophet',
-  44: 'Phantom Assassin', 45: 'Pugna', 46: 'Templar Assassin', 47: 'Viper',
-  48: 'Luna', 49: 'Dragon Knight', 50: 'Dazzle', 51: 'Clockwerk', 52: 'Leshrac',
-  53: 'Nature\'s Prophet', 54: 'Lifestealer', 55: 'Dark Seer', 56: 'Clinkz',
-  57: 'Omniknight', 58: 'Enchantress', 59: 'Huskar', 60: 'Night Stalker',
-  61: 'Broodmother', 62: 'Bounty Hunter', 63: 'Weaver', 64: 'Jakiro',
-  65: 'Batrider', 66: 'Chen', 67: 'Spectre', 68: 'Ancient Apparition',
-  69: 'Doom', 70: 'Ursa', 71: 'Spirit Breaker', 72: 'Gyrocopter',
-  73: 'Alchemist', 74: 'Invoker', 75: 'Silencer', 76: 'Outworld Destroyer',
-  77: 'Lycan', 78: 'Brewmaster', 79: 'Shadow Demon', 80: 'Lone Druid',
-  81: 'Chaos Knight', 82: 'Meepo', 83: 'Treant Protector', 84: 'Ogre Magi',
-  85: 'Undying', 86: 'Rubick', 87: 'Disruptor', 88: 'Nyx Assassin',
-  89: 'Naga Siren', 90: 'Keeper of the Light', 91: 'Io', 92: 'Visage',
-  93: 'Slark', 94: 'Medusa', 95: 'Troll Warlord', 96: 'Centaur Warrunner',
-  97: 'Magnus', 98: 'Timbersaw', 99: 'Bristleback', 100: 'Tusk',
-  101: 'Skywrath Mage', 102: 'Abaddon', 103: 'Elder Titan', 104: 'Legion Commander',
-  106: 'Ember Spirit', 107: 'Earth Spirit', 108: 'Underlord', 109: 'Terrorblade',
-  110: 'Phoenix', 111: 'Oracle', 112: 'Winter Wyvern', 113: 'Arc Warden',
-  114: 'Monkey King', 119: 'Dark Willow', 120: 'Pangolier', 121: 'Grimstroke',
-  123: 'Hoodwink', 126: 'Void Spirit', 128: 'Snapfire', 129: 'Mars',
-  135: 'Dawnbreaker', 136: 'Marci', 137: 'Primal Beast', 138: 'Muerta', 145: 'Kez'
-};
+// Canonical OpenDota Hero resolver (delegates to authoritative dotaConstants)
+export const DOTA_HEROES = new Proxy({} as Record<number, string>, {
+  get: (_, prop) => {
+    if (typeof prop === 'string' && !isNaN(Number(prop))) {
+      return getHeroName(Number(prop));
+    }
+    return undefined;
+  }
+});
 
 export function getRankTierName(rankTier?: number | null): string {
   if (!rankTier || rankTier <= 0) return 'Unranked';
@@ -439,7 +428,7 @@ export async function fetchOpenDotaPlayer(
             recentMatches.push({
               matchId: String(m.match_id),
               heroId,
-              heroName: DOTA_HEROES[heroId] || `Hero #${heroId}`,
+              heroName: getHeroName(heroId),
               kills: typeof m.kills === 'number' ? m.kills : 0,
               deaths: typeof m.deaths === 'number' ? m.deaths : 0,
               assists: typeof m.assists === 'number' ? m.assists : 0,
@@ -455,7 +444,9 @@ export async function fetchOpenDotaPlayer(
               lastHits: typeof m.last_hits === 'number' ? m.last_hits : undefined,
               heroDamage: typeof m.hero_damage === 'number' ? m.hero_damage : undefined,
               towerDamage: typeof m.tower_damage === 'number' ? m.tower_damage : undefined,
-              heroHealing: typeof m.hero_healing === 'number' ? m.hero_healing : undefined
+              heroHealing: typeof m.hero_healing === 'number' ? m.hero_healing : undefined,
+              items: [m.item_0, m.item_1, m.item_2, m.item_3, m.item_4, m.item_5].filter((id) => typeof id === 'number' && id > 0),
+              itemNeutral: typeof m.item_neutral === 'number' && m.item_neutral > 0 ? m.item_neutral : null
             });
           }
         }
@@ -488,7 +479,7 @@ export async function fetchOpenDotaPlayer(
 
             topHeroes.push({
               heroId,
-              heroName: DOTA_HEROES[heroId] || `Hero #${heroId}`,
+              heroName: getHeroName(heroId),
               games,
               wins: heroWins,
               losses: heroLosses,
@@ -561,15 +552,7 @@ export async function fetchOpenDotaPlayer(
 export async function fetchOpenDotaPeers(
   identifier: string,
   options?: { forceRefresh?: boolean }
-): Promise<Array<{
-  accountId: string;
-  personaName: string;
-  avatarUrl: string;
-  games: number;
-  wins: number;
-  winRate: number;
-  lastPlayed?: string | null;
-}>> {
+): Promise<OpenDotaPeer[]> {
   let accountId: string;
   try {
     const norm = normalizeDotaIdentity(identifier);
@@ -590,20 +573,22 @@ export async function fetchOpenDotaPeers(
 
     return data
       .filter((p: any) => typeof p.games === 'number' && p.games > 0)
-      .slice(0, 10)
-      .map((p: any) => {
-        const games = Number(p.games);
-        const wins = Number(p.win || 0);
-        return {
-          accountId: String(p.account_id),
-          personaName: p.personaname || `Player_${String(p.account_id).slice(-4)}`,
-          avatarUrl: p.avatarfull || p.avatar || '🎮',
-          games,
-          wins,
-          winRate: games > 0 ? Math.round((wins / games) * 100) : 0,
-          lastPlayed: p.last_played ? new Date(p.last_played * 1000).toISOString() : null
-        };
-      });
+      .map((p: any) => ({
+        account_id: String(p.account_id),
+        personaname: p.personaname || null,
+        name: p.name || null,
+        avatar: p.avatar || null,
+        avatarfull: p.avatarfull || null,
+        last_played: typeof p.last_played === 'number' ? p.last_played : null,
+        games: Number(p.games || 0),
+        win: Number(p.win || 0),
+        with_games: Number(p.with_games || 0),
+        with_win: Number(p.with_win || 0),
+        against_games: Number(p.against_games || 0),
+        against_win: Number(p.against_win || 0),
+        with_gpm_sum: typeof p.with_gpm_sum === 'number' ? p.with_gpm_sum : null,
+        with_xpm_sum: typeof p.with_xpm_sum === 'number' ? p.with_xpm_sum : null
+      }));
   } catch {
     return [];
   }
@@ -676,6 +661,341 @@ export async function fetchOpenDotaTotals(
   }
 }
 
+export interface OpenDotaSearchResult {
+  account_id: number;
+  personaname: string;
+  avatarfull?: string;
+  last_match_time?: string;
+  similarity?: number;
+}
+
+export interface OpenDotaProEncounter {
+  account_id: string;
+  name: string;
+  avatar: string;
+  team_name?: string;
+  team_tag?: string;
+  games: number;
+  with_games: number;
+  with_win: number;
+  against_games: number;
+  against_win: number;
+  win: number;
+  last_played?: string | null;
+}
+
+export interface OpenDotaCounts {
+  leaver_status?: Record<string, { games: number; win: number }>;
+  game_mode?: Record<string, { games: number; win: number }>;
+  lobby_type?: Record<string, { games: number; win: number }>;
+  lane_role?: Record<string, { games: number; win: number }>;
+  region?: Record<string, { games: number; win: number }>;
+  patch?: Record<string, { games: number; win: number }>;
+  is_radiant?: Record<string, { games: number; win: number }>;
+}
+
+export interface OpenDotaHistogramItem {
+  x: number;
+  games: number;
+  win: number;
+}
+
+export interface OpenDotaWardmap {
+  obs?: Record<string, Record<string, number>>;
+  sen?: Record<string, Record<string, number>>;
+}
+
+export interface OpenDotaWordcloud {
+  my_word_counts?: Record<string, number>;
+  all_word_counts?: Record<string, number>;
+}
+
+export interface OpenDotaRatingTimelineItem {
+  account_id: number;
+  match_id?: number;
+  solo_competitive_rank?: number;
+  competitive_rank?: number;
+  time: string;
+}
+
+export interface OpenDotaHeroRanking {
+  hero_id: number;
+  hero_name: string;
+  score: number;
+  percent_rank: number;
+  card?: number;
+}
+
+export async function searchOpenDotaPlayers(query: string): Promise<OpenDotaSearchResult[]> {
+  const cleanQ = query.trim();
+  if (!cleanQ) return [];
+
+  const baseEndpoint = isBrowser ? '/api/opendota' : 'https://api.opendota.com/api';
+  try {
+    const res = await fetch(`${baseEndpoint}/search?q=${encodeURIComponent(cleanQ)}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.warn('OpenDota search error:', e);
+    return [];
+  }
+}
+
+export async function fetchOpenDotaMatches(
+  identifier: string,
+  filters?: {
+    heroId?: number;
+    win?: number;
+    isRadiant?: number;
+    limit?: number;
+    offset?: number;
+    project?: string[];
+  }
+): Promise<OpenDotaPlayerSummary['recentMatches']> {
+  let accountId: string;
+  try {
+    const norm = normalizeDotaIdentity(identifier);
+    accountId = norm.accountId;
+  } catch {
+    return [];
+  }
+
+  const baseEndpoint = isBrowser ? '/api/opendota' : 'https://api.opendota.com/api';
+  const params = new URLSearchParams();
+  if (filters?.limit) params.set('limit', String(filters.limit));
+  if (filters?.offset) params.set('offset', String(filters.offset));
+  if (filters?.heroId) params.set('hero_id', String(filters.heroId));
+  if (filters?.win !== undefined) params.set('win', String(filters.win));
+  if (filters?.isRadiant !== undefined) params.set('is_radiant', String(filters.isRadiant));
+
+  const queryStr = params.toString() ? `?${params.toString()}` : '';
+
+  try {
+    const res = await fetch(`${baseEndpoint}/players/${accountId}/matches${queryStr}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!Array.isArray(data)) return [];
+
+    return data.map((m: any) => {
+      const heroId = Number(m.hero_id || 1);
+      const isRadiant = (m.player_slot ?? 0) < 128;
+      const radiantWin = Boolean(m.radiant_win);
+      const won = isRadiant === radiantWin;
+      return {
+        matchId: String(m.match_id),
+        heroId,
+        heroName: getHeroName(heroId),
+        kills: typeof m.kills === 'number' ? m.kills : 0,
+        deaths: typeof m.deaths === 'number' ? m.deaths : 0,
+        assists: typeof m.assists === 'number' ? m.assists : 0,
+        durationMinutes: typeof m.duration === 'number' ? Math.round(m.duration / 60) : 0,
+        radiantWin,
+        playerWon: won,
+        isRadiant,
+        startTime: m.start_time ? new Date(m.start_time * 1000).toISOString() : new Date().toISOString(),
+        gameMode: typeof m.game_mode === 'number' ? (DOTA_GAME_MODES[m.game_mode] || `Mode #${m.game_mode}`) : undefined,
+        lobbyType: typeof m.lobby_type === 'number' ? (DOTA_LOBBY_TYPES[m.lobby_type] || `Lobby #${m.lobby_type}`) : undefined,
+        gpm: typeof m.gold_per_min === 'number' ? m.gold_per_min : undefined,
+        xpm: typeof m.xp_per_min === 'number' ? m.xp_per_min : undefined,
+        lastHits: typeof m.last_hits === 'number' ? m.last_hits : undefined,
+        heroDamage: typeof m.hero_damage === 'number' ? m.hero_damage : undefined,
+        towerDamage: typeof m.tower_damage === 'number' ? m.tower_damage : undefined,
+        heroHealing: typeof m.hero_healing === 'number' ? m.hero_healing : undefined
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchOpenDotaPros(identifier: string): Promise<OpenDotaProEncounter[]> {
+  let accountId: string;
+  try {
+    const norm = normalizeDotaIdentity(identifier);
+    accountId = norm.accountId;
+  } catch {
+    return [];
+  }
+
+  const baseEndpoint = isBrowser ? '/api/opendota' : 'https://api.opendota.com/api';
+  try {
+    const res = await fetch(`${baseEndpoint}/players/${accountId}/pros`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!Array.isArray(data)) return [];
+
+    return data.map((p: any) => ({
+      account_id: String(p.account_id),
+      name: p.name || p.personaname || `Pro Contender (${p.account_id})`,
+      avatar: p.avatarfull || p.avatar || '',
+      team_name: p.team_name || undefined,
+      team_tag: p.team_tag || undefined,
+      games: Number(p.games || 0),
+      with_games: Number(p.with_games || 0),
+      with_win: Number(p.with_win || 0),
+      against_games: Number(p.against_games || 0),
+      against_win: Number(p.against_win || 0),
+      win: Number(p.win || 0),
+      last_played: p.last_played ? new Date(p.last_played * 1000).toISOString() : null
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchOpenDotaCounts(identifier: string): Promise<OpenDotaCounts | null> {
+  let accountId: string;
+  try {
+    const norm = normalizeDotaIdentity(identifier);
+    accountId = norm.accountId;
+  } catch {
+    return null;
+  }
+
+  const baseEndpoint = isBrowser ? '/api/opendota' : 'https://api.opendota.com/api';
+  try {
+    const res = await fetch(`${baseEndpoint}/players/${accountId}/counts`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchOpenDotaHistograms(identifier: string, field: string): Promise<OpenDotaHistogramItem[]> {
+  let accountId: string;
+  try {
+    const norm = normalizeDotaIdentity(identifier);
+    accountId = norm.accountId;
+  } catch {
+    return [];
+  }
+
+  const baseEndpoint = isBrowser ? '/api/opendota' : 'https://api.opendota.com/api';
+  try {
+    const res = await fetch(`${baseEndpoint}/players/${accountId}/histograms/${field}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchOpenDotaWardmap(identifier: string): Promise<OpenDotaWardmap | null> {
+  let accountId: string;
+  try {
+    const norm = normalizeDotaIdentity(identifier);
+    accountId = norm.accountId;
+  } catch {
+    return null;
+  }
+
+  const baseEndpoint = isBrowser ? '/api/opendota' : 'https://api.opendota.com/api';
+  try {
+    const res = await fetch(`${baseEndpoint}/players/${accountId}/wardmap`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchOpenDotaWordcloud(identifier: string): Promise<OpenDotaWordcloud | null> {
+  let accountId: string;
+  try {
+    const norm = normalizeDotaIdentity(identifier);
+    accountId = norm.accountId;
+  } catch {
+    return null;
+  }
+
+  const baseEndpoint = isBrowser ? '/api/opendota' : 'https://api.opendota.com/api';
+  try {
+    const res = await fetch(`${baseEndpoint}/players/${accountId}/wordcloud`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchOpenDotaRatings(identifier: string): Promise<OpenDotaRatingTimelineItem[]> {
+  let accountId: string;
+  try {
+    const norm = normalizeDotaIdentity(identifier);
+    accountId = norm.accountId;
+  } catch {
+    return [];
+  }
+
+  const baseEndpoint = isBrowser ? '/api/opendota' : 'https://api.opendota.com/api';
+  try {
+    const res = await fetch(`${baseEndpoint}/players/${accountId}/ratings`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data.map((r: any) => ({
+      account_id: r.account_id,
+      match_id: r.match_id,
+      solo_competitive_rank: r.solo_competitive_rank,
+      competitive_rank: r.competitive_rank,
+      time: r.time ? new Date(r.time * 1000).toISOString() : new Date().toISOString()
+    })) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchOpenDotaRankings(identifier: string): Promise<OpenDotaHeroRanking[]> {
+  let accountId: string;
+  try {
+    const norm = normalizeDotaIdentity(identifier);
+    accountId = norm.accountId;
+  } catch {
+    return [];
+  }
+
+  const baseEndpoint = isBrowser ? '/api/opendota' : 'https://api.opendota.com/api';
+  try {
+    const res = await fetch(`${baseEndpoint}/players/${accountId}/rankings`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!Array.isArray(data)) return [];
+
+    return data.slice(0, 12).map((rk: any) => {
+      const heroId = Number(rk.hero_id || 1);
+      return {
+        hero_id: heroId,
+        hero_name: getHeroName(heroId),
+        score: Math.round(rk.score || 0),
+        percent_rank: Math.round((rk.percent_rank || 0) * 100),
+        card: rk.card
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+export async function refreshOpenDotaPlayer(identifier: string): Promise<{ success: boolean }> {
+  let accountId: string;
+  try {
+    const norm = normalizeDotaIdentity(identifier);
+    accountId = norm.accountId;
+  } catch {
+    return { success: false };
+  }
+
+  const baseEndpoint = isBrowser ? '/api/opendota' : 'https://api.opendota.com/api';
+  try {
+    const res = await fetch(`${baseEndpoint}/players/${accountId}/refresh`, { method: 'POST' });
+    return { success: res.ok };
+  } catch {
+    return { success: false };
+  }
+}
+
 function buildEmptySummary(
   accountId: string,
   steamId64: string,
@@ -727,6 +1047,33 @@ export interface OpenDotaMatchPlayerSlot {
   towerDamage: number;
   heroHealing: number;
   personaName?: string;
+  name?: string;
+  avatar?: string;
+  level?: number;
+  item_0: number;
+  item_1: number;
+  item_2: number;
+  item_3: number;
+  item_4: number;
+  item_5: number;
+  backpack_0: number;
+  backpack_1: number;
+  backpack_2: number;
+  item_neutral: number;
+  item_neutral2?: number;
+  aghanims_scepter?: number;
+  aghanims_shard?: number;
+  moonshard?: number;
+  benchmarks?: Record<string, { raw: number; pct: number }>;
+  actions?: Record<string, number>;
+  purchase_log?: Array<{ time: number; key: string; charges?: number }>;
+  buyback_log?: Array<{ time: number; slot: number }>;
+  obs_log?: Array<{ time: number; x: number; y: number }>;
+  sen_log?: Array<{ time: number; x: number; y: number }>;
+  gold_t?: number[];
+  xp_t?: number[];
+  lh_t?: number[];
+  ability_upgrades_arr?: number[];
 }
 
 export interface OpenDotaMatchPickBan {
@@ -746,6 +1093,20 @@ export interface OpenDotaMatchSnapshot {
   direScore: number;
   players: OpenDotaMatchPlayerSlot[];
   picksBans?: OpenDotaMatchPickBan[];
+  patch?: number | string;
+  region?: number | string;
+  gameMode?: string | number;
+  lobbyType?: string | number;
+  avgRankTier?: number | null;
+  skill?: number | null;
+  parsed?: boolean;
+  radiantGoldAdv?: number[];
+  radiantXpAdv?: number[];
+  objectives?: any[];
+  teamfights?: any[];
+  chat?: any[];
+  draftTimings?: any[];
+  rawMatch?: any;
   status: 'SUCCESS' | 'NOT_PARSED' | 'NOT_FOUND' | 'RATE_LIMITED' | 'PROVIDER_UNAVAILABLE' | 'CACHED';
   fetchedAt: string;
   lastRefreshedAt?: string;
@@ -792,13 +1153,13 @@ export function getOpenDotaMatchSync(matchId: string): OpenDotaMatchSnapshot {
     const mock = mockMatches.get(cleanId)!;
     return {
       matchId: cleanId,
-      durationSeconds: mock.durationSeconds ?? 2240,
+      durationSeconds: mock.durationSeconds ?? 0,
       startTime: mock.startTime ?? new Date().toISOString(),
-      radiantWin: mock.radiantWin ?? true,
-      radiantScore: mock.radiantScore ?? 35,
-      direScore: mock.direScore ?? 22,
-      players: mock.players ?? buildFallbackPlayers(),
-      picksBans: mock.picksBans ?? buildFallbackPicksBans(),
+      radiantWin: mock.radiantWin ?? false,
+      radiantScore: mock.radiantScore ?? 0,
+      direScore: mock.direScore ?? 0,
+      players: mock.players ?? [],
+      picksBans: mock.picksBans ?? undefined,
       status: mock.status ?? 'SUCCESS',
       fetchedAt: new Date().toISOString()
     };
@@ -847,13 +1208,13 @@ export async function fetchOpenDotaMatch(
     const mock = mockMatches.get(cleanId)!;
     const snapshot: OpenDotaMatchSnapshot = {
       matchId: cleanId,
-      durationSeconds: mock.durationSeconds ?? 2240,
+      durationSeconds: mock.durationSeconds ?? 0,
       startTime: mock.startTime ?? new Date(now - 3600000).toISOString(),
-      radiantWin: mock.radiantWin ?? true,
-      radiantScore: mock.radiantScore ?? 35,
-      direScore: mock.direScore ?? 22,
-      players: mock.players ?? buildFallbackPlayers(),
-      picksBans: mock.picksBans ?? buildFallbackPicksBans(),
+      radiantWin: mock.radiantWin ?? false,
+      radiantScore: mock.radiantScore ?? 0,
+      direScore: mock.direScore ?? 0,
+      players: mock.players ?? [],
+      picksBans: mock.picksBans ?? undefined,
       status: mock.status ?? 'SUCCESS',
       fetchedAt: new Date().toISOString(),
       lastRefreshedAt: new Date().toISOString()
@@ -864,10 +1225,12 @@ export async function fetchOpenDotaMatch(
 
   // Live OpenDota fetch
   try {
+    const isBrowser = typeof window !== 'undefined' && Boolean(window.location);
+    const baseEndpoint = isBrowser ? '/api/opendota' : 'https://api.opendota.com/api';
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 1500);
+    const timeout = setTimeout(() => controller.abort(), 12000);
 
-    const res = await fetch(`https://api.opendota.com/api/matches/${cleanId}`, {
+    const res = await fetch(`${baseEndpoint}/matches/${cleanId}`, {
       signal: controller.signal
     });
     clearTimeout(timeout);
@@ -904,7 +1267,7 @@ export async function fetchOpenDotaMatch(
             playerSlot: p.player_slot ?? 0,
             isRadiant,
             heroId,
-            heroName: DOTA_HEROES[heroId] || `Hero #${heroId}`,
+            heroName: getHeroName(heroId),
             kills: p.kills ?? 0,
             deaths: p.deaths ?? 0,
             assists: p.assists ?? 0,
@@ -912,14 +1275,41 @@ export async function fetchOpenDotaMatch(
             xpm: p.xp_per_min ?? 0,
             lastHits: p.last_hits ?? 0,
             denies: p.denies !== undefined ? p.denies : undefined,
-            netWorth: p.net_worth !== undefined ? p.net_worth : undefined,
+            netWorth: p.net_worth !== undefined ? p.net_worth : (p.gold_per_min ? Math.round(p.gold_per_min * (duration / 60)) : undefined),
             heroDamage: p.hero_damage ?? 0,
             towerDamage: p.tower_damage ?? 0,
             heroHealing: p.hero_healing ?? 0,
-            personaName: p.personaname || (p.account_id ? `Player_${String(p.account_id).slice(-4)}` : undefined)
+            personaName: p.personaname || p.name || (p.account_id ? `Player_${String(p.account_id).slice(-4)}` : undefined),
+            name: p.name,
+            avatar: p.avatarfull || p.avatar,
+            level: p.level,
+            item_0: p.item_0 ?? 0,
+            item_1: p.item_1 ?? 0,
+            item_2: p.item_2 ?? 0,
+            item_3: p.item_3 ?? 0,
+            item_4: p.item_4 ?? 0,
+            item_5: p.item_5 ?? 0,
+            backpack_0: p.backpack_0 ?? 0,
+            backpack_1: p.backpack_1 ?? 0,
+            backpack_2: p.backpack_2 ?? 0,
+            item_neutral: p.item_neutral ?? 0,
+            item_neutral2: p.item_neutral2 ?? 0,
+            aghanims_scepter: p.aghanims_scepter,
+            aghanims_shard: p.aghanims_shard,
+            moonshard: p.moonshard,
+            benchmarks: p.benchmarks,
+            actions: p.actions,
+            purchase_log: p.purchase_log,
+            buyback_log: p.buyback_log,
+            obs_log: p.obs_log,
+            sen_log: p.sen_log,
+            gold_t: p.gold_t,
+            xp_t: p.xp_t,
+            lh_t: p.lh_t,
+            ability_upgrades_arr: p.ability_upgrades_arr
           };
         })
-      : buildFallbackPlayers();
+      : [];
 
     let picksBans: OpenDotaMatchPickBan[] | undefined;
     if (Array.isArray(data.picks_bans) && data.picks_bans.length > 0) {
@@ -928,7 +1318,7 @@ export async function fetchOpenDotaMatch(
         return {
           isPick: Boolean(pb.is_pick),
           heroId,
-          heroName: DOTA_HEROES[heroId] || `Hero #${heroId}`,
+          heroName: getHeroName(heroId),
           team: pb.team === 0 ? 'radiant' : 'dire',
           order: pb.order ?? 0
         };
@@ -944,6 +1334,19 @@ export async function fetchOpenDotaMatch(
       direScore,
       players,
       picksBans,
+      patch: data.patch,
+      region: data.region,
+      gameMode: data.game_mode,
+      lobbyType: data.lobby_type,
+      skill: data.skill,
+      parsed: Boolean(data.version || data.chat || data.draft_timings || data.radiant_gold_adv),
+      radiantGoldAdv: data.radiant_gold_adv,
+      radiantXpAdv: data.radiant_xp_adv,
+      objectives: data.objectives,
+      teamfights: data.teamfights,
+      chat: data.chat,
+      draftTimings: data.draft_timings,
+      rawMatch: data,
       status: 'SUCCESS',
       fetchedAt: new Date().toISOString(),
       lastRefreshedAt: new Date().toISOString()
@@ -966,52 +1369,35 @@ function buildFallbackMatch(
 ): OpenDotaMatchSnapshot {
   return {
     matchId,
-    durationSeconds: 2310,
-    startTime: new Date(Date.now() - 3600000).toISOString(),
-    radiantWin: true,
-    radiantScore: 32,
-    direScore: 24,
-    players: status === 'PROVIDER_UNAVAILABLE' || status === 'RATE_LIMITED' || status === 'NOT_FOUND' ? [] : buildFallbackPlayers(),
-    picksBans: status === 'PROVIDER_UNAVAILABLE' || status === 'RATE_LIMITED' || status === 'NOT_FOUND' ? undefined : buildFallbackPicksBans(),
+    durationSeconds: 0,
+    startTime: new Date().toISOString(),
+    radiantWin: false,
+    radiantScore: 0,
+    direScore: 0,
+    players: [],
+    picksBans: undefined,
     status,
     fetchedAt: new Date().toISOString(),
     lastRefreshedAt: new Date().toISOString()
   };
 }
 
-function buildFallbackPicksBans(): OpenDotaMatchPickBan[] {
-  return [
-    { isPick: false, heroId: 102, heroName: 'Abaddon', team: 'radiant', order: 0 },
-    { isPick: false, heroId: 74, heroName: 'Invoker', team: 'dire', order: 1 },
-    { isPick: true, heroId: 1, heroName: 'Anti-Mage', team: 'radiant', order: 2 },
-    { isPick: true, heroId: 8, heroName: 'Juggernaut', team: 'dire', order: 3 },
-    { isPick: true, heroId: 86, heroName: 'Rubick', team: 'radiant', order: 4 },
-    { isPick: true, heroId: 26, heroName: 'Lion', team: 'dire', order: 5 }
-  ];
-}
-
-function buildFallbackPlayers(): OpenDotaMatchPlayerSlot[] {
-  // 5 Radiant, 5 Dire default standard players
-  return [
-    // Radiant (0..4)
-    { accountId: '100000001', playerSlot: 0, isRadiant: true, heroId: 1, heroName: 'Anti-Mage', kills: 12, deaths: 2, assists: 8, gpm: 710, xpm: 680, lastHits: 340, netWorth: 24500, heroDamage: 28400, towerDamage: 8200, heroHealing: 0, personaName: 'Aether' },
-    { accountId: '100000002', playerSlot: 1, isRadiant: true, heroId: 74, heroName: 'Invoker', kills: 9, deaths: 4, assists: 14, gpm: 590, xpm: 620, lastHits: 220, netWorth: 18900, heroDamage: 31200, towerDamage: 3400, heroHealing: 0, personaName: 'Viper' },
-    { accountId: '100000003', playerSlot: 2, isRadiant: true, heroId: 99, heroName: 'Bristleback', kills: 5, deaths: 6, assists: 18, gpm: 480, xpm: 510, lastHits: 180, netWorth: 15400, heroDamage: 24100, towerDamage: 4100, heroHealing: 400, personaName: 'Titan' },
-    { accountId: '100000004', playerSlot: 3, isRadiant: true, heroId: 86, heroName: 'Rubick', kills: 3, deaths: 7, assists: 21, gpm: 350, xpm: 420, lastHits: 65, netWorth: 9800, heroDamage: 14200, towerDamage: 450, heroHealing: 1200, personaName: 'Mirage' },
-    { accountId: '100000005', playerSlot: 4, isRadiant: true, heroId: 30, heroName: 'Witch Doctor', kills: 3, deaths: 5, assists: 19, gpm: 320, xpm: 390, lastHits: 40, netWorth: 8500, heroDamage: 16500, towerDamage: 250, heroHealing: 4800, personaName: 'Echo' },
-    // Dire (128..132)
-    { accountId: '100000006', playerSlot: 128, isRadiant: false, heroId: 8, heroName: 'Juggernaut', kills: 8, deaths: 6, assists: 7, gpm: 610, xpm: 590, lastHits: 280, netWorth: 19200, heroDamage: 22100, towerDamage: 3100, heroHealing: 1500, personaName: 'Nova' },
-    { accountId: '100000007', playerSlot: 129, isRadiant: false, heroId: 17, heroName: 'Storm Spirit', kills: 7, deaths: 7, assists: 9, gpm: 540, xpm: 560, lastHits: 210, netWorth: 16800, heroDamage: 25800, towerDamage: 1200, heroHealing: 0, personaName: 'Blaze' },
-    { accountId: '100000008', playerSlot: 130, isRadiant: false, heroId: 7, heroName: 'Earthshaker', kills: 4, deaths: 7, assists: 12, gpm: 390, xpm: 430, lastHits: 110, netWorth: 11500, heroDamage: 16200, towerDamage: 800, heroHealing: 0, personaName: 'Quake' },
-    { accountId: '100000009', playerSlot: 131, isRadiant: false, heroId: 26, heroName: 'Lion', kills: 3, deaths: 6, assists: 11, gpm: 310, xpm: 340, lastHits: 35, netWorth: 7900, heroDamage: 11800, towerDamage: 150, heroHealing: 0, personaName: 'Frost' },
-    { accountId: '100000010', playerSlot: 132, isRadiant: false, heroId: 5, heroName: 'Crystal Maiden', kills: 2, deaths: 6, assists: 13, gpm: 290, xpm: 320, lastHits: 30, netWorth: 7200, heroDamage: 9800, towerDamage: 100, heroHealing: 0, personaName: 'Dawn' }
-  ];
-}
-
 export const openDotaService = {
   fetchPlayer: fetchOpenDotaPlayer,
   fetchMatch: fetchOpenDotaMatch,
   getMatchSync: getOpenDotaMatchSync,
+  searchPlayers: searchOpenDotaPlayers,
+  fetchMatches: fetchOpenDotaMatches,
+  fetchPeers: fetchOpenDotaPeers,
+  fetchPros: fetchOpenDotaPros,
+  fetchTotals: fetchOpenDotaTotals,
+  fetchCounts: fetchOpenDotaCounts,
+  fetchHistograms: fetchOpenDotaHistograms,
+  fetchWardmap: fetchOpenDotaWardmap,
+  fetchWordcloud: fetchOpenDotaWordcloud,
+  fetchRatings: fetchOpenDotaRatings,
+  fetchRankings: fetchOpenDotaRankings,
+  refreshPlayer: refreshOpenDotaPlayer,
   registerMockMatch,
   clearCache: () => {
     playerCache.clear();

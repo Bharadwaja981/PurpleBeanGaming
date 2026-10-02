@@ -1,12 +1,15 @@
 /**
  * Purple Bean Gaming — Full-Stack Express & Vite Server Entry Point
  * 
- * Runs on port 3000. Mounts server-authoritative competition API at /api/*
+ * Runs on port 3000 in dev (or process.env.PORT in production / Cloud Run).
+ * Mounts server-authoritative competition API at /api/*
  * and mounts Vite development middleware in dev mode or static files in production.
  */
 
 import { spawn } from 'node:child_process';
 import process from 'node:process';
+import path from 'node:path';
+import fs from 'node:fs';
 
 const isTsxRunning = 
   process.execArgv.some(a => a.includes('tsx') || a.includes('loader.mjs') || a.includes('preflight.cjs')) || 
@@ -44,7 +47,17 @@ async function startServer() {
   const { apiRouter } = await import('./src/server/apiRouter');
 
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-  const isProd = process.env.NODE_ENV === 'production';
+  const distPath = path.resolve(process.cwd(), 'dist');
+  const indexPath = path.resolve(distPath, 'index.html');
+
+  // Authoritative production check:
+  // In Cloud Run, K_SERVICE or K_REVISION is set, or NODE_ENV=production, or dist/index.html exists when not running dev script
+  const isProd = 
+    process.env.NODE_ENV === 'production' || 
+    Boolean(process.env.K_SERVICE) || 
+    Boolean(process.env.K_REVISION) ||
+    process.env.npm_lifecycle_event === 'start' ||
+    (fs.existsSync(indexPath) && process.env.npm_lifecycle_event !== 'dev');
 
   const app = express();
   app.use(express.json());
@@ -52,26 +65,45 @@ async function startServer() {
   // Mount Trusted Server Authoritative API Routes
   app.use('/api', apiRouter);
 
-  // Health check endpoint
+  // Health check endpoint (for Cloud Run and monitoring probes)
   app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', service: 'Purple Bean Gaming Authoritative Server', timestamp: new Date().toISOString() });
+    res.json({
+      status: 'ok',
+      service: 'Purple Bean Gaming Authoritative Server',
+      environment: isProd ? 'production' : 'development',
+      port: PORT,
+      timestamp: new Date().toISOString()
+    });
   });
 
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: 'spa'
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static('dist'));
+    app.use(express.static(distPath));
     app.get('*', (_req, res) => {
-      res.sendFile('dist/index.html', { root: '.' });
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        res.status(404).send('Not Found: Application assets not built.');
+      }
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Purple Bean Gaming] Full-stack authoritative server active on http://0.0.0.0:${PORT}`);
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`[Purple Bean Gaming] Full-stack authoritative server active on http://0.0.0.0:${PORT} (mode: ${isProd ? 'production' : 'development'})`);
   });
+
+  // Handle Cloud Run termination signals gracefully
+  const shutdown = () => {
+    server.close(() => {
+      process.exit(0);
+    });
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 }

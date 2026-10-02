@@ -1,0 +1,299 @@
+/**
+ * Purple Bean Gaming — Client-Side Steam Ownership Verification Client
+ * 
+ * Manages the Steam OpenID 2.0 popup lifecycle, message handshake,
+ * status synchronization, and unlinking requests.
+ */
+
+export interface PrivateAccountStatus {
+  userId: string;
+  steamId64: string | null;
+  steamId32: string | null;
+  dotaAccountId: string | null;
+  verificationStatus: 'VERIFIED' | 'NOT_LINKED' | 'PENDING';
+  steamOwnershipVerified: boolean;
+  steamVerificationMethod?: string;
+  steamVerifiedAt?: number;
+  steamPersonaName?: string;
+  steamAvatarUrl?: string;
+  steamProfileUrl?: string;
+  openDotaUrl?: string;
+  openDotaAvailable?: boolean;
+  publicMatchData?: 'PUBLIC' | 'PRIVATE';
+  rankTier?: number | null;
+  leaderboardRank?: number | null;
+  linkedAt?: number;
+  updatedAt: number;
+}
+
+export interface PublicProfileStatus {
+  userId: string;
+  steamAccountLinked: boolean;
+  steamOwnershipVerified: boolean;
+  dotaAccountId: string | null;
+  steamId64Masked: string | null;
+  openDotaUrl: string | null;
+  profileUrl: string | null;
+  publicMatchData: 'PUBLIC' | 'PRIVATE' | 'UNLINKED';
+  steamPersonaName?: string;
+  steamAvatarUrl?: string;
+  rankTier?: number | null;
+}
+
+export type SteamVerificationErrorCode =
+  | 'SIGN_IN_REQUIRED'
+  | 'POPUP_BLOCKED'
+  | 'STEAM_ALREADY_LINKED'
+  | 'PBG_ACCOUNT_ALREADY_HAS_STEAM'
+  | 'LINK_SESSION_EXPIRED'
+  | 'STEAM_VALIDATION_FAILED'
+  | 'STEAM_ID_MISSING'
+  | 'STEAM_PROVIDER_UNAVAILABLE'
+  | 'OPENDOTA_UNAVAILABLE'
+  | 'ACTIVE_TOURNAMENT_LOCK'
+  | 'UNKNOWN_ERROR';
+
+export class SteamVerificationError extends Error {
+  code: SteamVerificationErrorCode;
+  constructor(code: SteamVerificationErrorCode, message: string) {
+    super(message);
+    this.name = 'SteamVerificationError';
+    this.code = code;
+  }
+}
+
+export function getFriendlyErrorMessage(code: string | SteamVerificationErrorCode, rawMessage?: string): string {
+  switch (code) {
+    case 'SIGN_IN_REQUIRED':
+      return 'Please sign in to your PurpleBeanGaming account to verify your Steam identity.';
+    case 'POPUP_BLOCKED':
+      return 'Steam verification popup was blocked. Allow popups for PurpleBeanGaming and try again.';
+    case 'STEAM_ALREADY_LINKED':
+      return 'This Steam account is already linked to another PurpleBeanGaming account.';
+    case 'PBG_ACCOUNT_ALREADY_HAS_STEAM':
+      return 'This account already has a verified Steam account. Please disconnect it first.';
+    case 'LINK_SESSION_EXPIRED':
+      return 'Your Steam verification session has expired. Please initiate verification again.';
+    case 'STEAM_VALIDATION_FAILED':
+      return 'Failed to verify Steam ownership with Valve. Please try again.';
+    case 'STEAM_ID_MISSING':
+      return 'Steam ID could not be identified from the authentication response.';
+    case 'STEAM_PROVIDER_UNAVAILABLE':
+      return 'Valve Steam OpenID servers are currently unreachable. Please try again later.';
+    case 'OPENDOTA_UNAVAILABLE':
+      return 'OpenDota API is currently unavailable. Your Steam ownership remains verified.';
+    case 'ACTIVE_TOURNAMENT_LOCK':
+      return 'Steam cannot be disconnected while you have an active tournament registration.';
+    default:
+      return rawMessage || 'An unexpected error occurred during Steam verification.';
+  }
+}
+
+export interface SteamVerificationResult {
+  steamId64: string;
+  dotaAccountId: string;
+  personaName?: string;
+}
+
+/**
+ * Initiates the Steam OpenID verification popup flow.
+ */
+export async function startSteamVerificationFlow(
+  getIdToken: () => Promise<string>,
+  options?: { fallbackToRedirect?: boolean }
+): Promise<SteamVerificationResult> {
+  let token: string;
+  try {
+    token = await getIdToken();
+    if (!token) throw new Error('SIGN_IN_REQUIRED');
+  } catch {
+    throw new SteamVerificationError(
+      'SIGN_IN_REQUIRED',
+      'Please sign in to your PurpleBeanGaming account to verify Steam ownership.'
+    );
+  }
+
+  // Pre-open window immediately to satisfy browser user gesture requirements
+  const width = 800;
+  const height = 650;
+  const left = window.screenX + (window.outerWidth - width) / 2;
+  const top = window.screenY + (window.outerHeight - height) / 2;
+
+  let popup: Window | null = null;
+  try {
+    popup = window.open(
+      'about:blank',
+      'SteamOpenIdLogin',
+      `width=${width},height=${height},left=${left},top=${top},toolbar=no,menubar=no,scrollbars=yes,status=no`
+    );
+  } catch {
+    popup = null;
+  }
+
+  if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+    if (options?.fallbackToRedirect) {
+      // Fetch start URL and redirect current window
+      const res = await fetch('/api/steam/link/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ returnUrl: window.location.pathname })
+      });
+      const data = await res.json();
+      if (data.redirectUrl) {
+        window.location.href = data.redirectUrl;
+        return new Promise(() => {}); // Halts until redirect completes
+      }
+    }
+    throw new SteamVerificationError(
+      'POPUP_BLOCKED',
+      'Steam verification popup was blocked. Allow popups for PurpleBeanGaming and try again.'
+    );
+  }
+
+  // Render temporary neo-brutalist loading state inside popup
+  try {
+    popup.document.write(`
+      <html>
+        <head><title>Connecting to Steam | PurpleBeanGaming</title></head>
+        <body style="font-family: monospace; background: #FFE600; display:flex; align-items:center; justify-content:center; height:100vh; margin:0;">
+          <div style="background:white; border:4px solid black; box-shadow:6px 6px 0 #000; padding:20px; text-align:center;">
+            <h3 style="margin:0 0 8px 0; font-size:16px;">CONNECTING TO STEAM...</h3>
+            <p style="margin:0; font-size:12px;">Opening official Valve login portal</p>
+          </div>
+        </body>
+      </html>
+    `);
+  } catch {
+    // Cross-origin write note
+  }
+
+  // Request Steam start URL from backend
+  let redirectUrl: string;
+  try {
+    const res = await fetch('/api/steam/link/start', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({ returnUrl: window.location.pathname })
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      popup.close();
+      const code = (errData.error || 'STEAM_VALIDATION_FAILED') as SteamVerificationErrorCode;
+      throw new SteamVerificationError(code, getFriendlyErrorMessage(code, errData.message));
+    }
+
+    const data = await res.json();
+    redirectUrl = data.redirectUrl;
+  } catch (err: any) {
+    if (popup && !popup.closed) popup.close();
+    if (err instanceof SteamVerificationError) throw err;
+    throw new SteamVerificationError('STEAM_PROVIDER_UNAVAILABLE', 'Failed to reach Steam verification service.');
+  }
+
+  // Navigate popup to Steam
+  popup.location.href = redirectUrl;
+
+  // Await postMessage from callback or detect manual window closure
+  return new Promise<SteamVerificationResult>((resolve, reject) => {
+    let checkInterval: any = null;
+
+    const cleanup = () => {
+      window.removeEventListener('message', handleMessage);
+      if (checkInterval) clearInterval(checkInterval);
+    };
+
+    const handleMessage = (event: MessageEvent) => {
+      // Validate origin if not local
+      const data = event.data;
+      if (!data || typeof data !== 'object') return;
+
+      if (data.type === 'STEAM_LINK_SUCCESS') {
+        cleanup();
+        resolve({
+          steamId64: data.steamId64,
+          dotaAccountId: data.dotaAccountId,
+          personaName: data.personaName
+        });
+      } else if (data.type === 'STEAM_LINK_ERROR') {
+        cleanup();
+        const code = (data.error || 'STEAM_VALIDATION_FAILED') as SteamVerificationErrorCode;
+        reject(new SteamVerificationError(code, getFriendlyErrorMessage(code, data.message)));
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+
+    // Poll for user closing popup
+    checkInterval = setInterval(() => {
+      if (popup && popup.closed) {
+        cleanup();
+        reject(new SteamVerificationError('UNKNOWN_ERROR', 'Steam verification window was closed.'));
+      }
+    }, 500);
+  });
+}
+
+/**
+ * Fetches status for current user (private account) or another user (safe public profile).
+ */
+export async function fetchSteamLinkStatus(
+  getIdToken?: () => Promise<string>,
+  targetUserId?: string
+): Promise<{ isOwner: boolean; account?: PrivateAccountStatus; profile?: PublicProfileStatus }> {
+  let headers: Record<string, string> = {};
+  if (getIdToken) {
+    try {
+      const token = await getIdToken();
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+    } catch {
+      // Unauthenticated
+    }
+  }
+
+  const query = targetUserId ? `?userId=${encodeURIComponent(targetUserId)}` : '';
+  const res = await fetch(`/api/steam/link/status${query}`, { headers });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new SteamVerificationError(
+      (err.error || 'UNKNOWN_ERROR') as SteamVerificationErrorCode,
+      getFriendlyErrorMessage(err.error, err.message)
+    );
+  }
+
+  return await res.json();
+}
+
+/**
+ * Disconnects the user's Steam account with active tournament registration lock check.
+ */
+export async function disconnectSteamAccount(getIdToken: () => Promise<string>): Promise<void> {
+  const token = await getIdToken();
+  if (!token) {
+    throw new SteamVerificationError('SIGN_IN_REQUIRED', 'Please sign in to disconnect Steam.');
+  }
+
+  const res = await fetch('/api/steam/link/unlink', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const code = (err.error || 'DISCONNECT_FAILED') as SteamVerificationErrorCode;
+    throw new SteamVerificationError(code, getFriendlyErrorMessage(code, err.message));
+  }
+}
+
+export { maskSteamId64 } from '../../lib/dota/ids';

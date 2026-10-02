@@ -55,6 +55,8 @@ export interface UserSession {
   avatarUrl?: string;
   ign?: string;
   gamerTag?: string;
+  pbgId?: string; // Permanent unique PBG Player ID (e.g. "PBG-000184")
+  isFirstTime?: boolean;
 }
 
 export interface Player {
@@ -458,4 +460,6 @@ export type ViewType =
   | 'draft'
   | 'draft_results'
   | 'organiser_dashboard'
+  | 'dota_game_profile'
+  | 'dota_match_detail'
   | 'not_found';

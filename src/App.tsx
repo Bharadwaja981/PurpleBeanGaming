@@ -12,6 +12,9 @@ import { RegistrationModal } from './components/RegistrationModal';
 import { BrandKitModal } from './components/BrandKitModal';
 import { AdminCredentialsModal } from './components/AdminCredentialsModal';
 import { CreateTournamentModal } from './components/CreateTournamentModal';
+import { FirstTimeOnboardingModal } from './components/FirstTimeOnboardingModal';
+import { pbgAccountRegistry } from './domain/pbgAccountRegistry';
+import { PBGPlayerAccount } from './types/pbgAccount';
 import { PurpleBeanLogo } from './components/PurpleBeanLogo';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { tournamentService } from './services/firebaseService';
@@ -37,6 +40,8 @@ import { TeamsView } from './views/TeamsView';
 import { TeamProfileView } from './views/TeamProfileView';
 import { PlayersView } from './views/PlayersView';
 import { PlayerProfileView } from './views/PlayerProfileView';
+import { DotaGameProfileView } from './views/DotaGameProfileView';
+import { DotaMatchDetailView } from './views/DotaMatchDetailView';
 import { RankingsView } from './views/RankingsView';
 import { RegisteredPlayersView } from './views/RegisteredPlayersView';
 import { CaptainSelectionView } from './views/CaptainSelectionView';
@@ -78,6 +83,12 @@ export default function App() {
   const [signOutNotice, setSignOutNotice] = useState<string | null>(null);
   const [quotaExhausted, setQuotaExhaustedState] = useState(() => isQuotaExhausted());
 
+  // First-Time PBG Player Onboarding Walkthrough State
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+  const [onboardingAccount, setOnboardingAccount] = useState<PBGPlayerAccount>(() => {
+    return tournamentService.getCurrentPBGAccount() || pbgAccountRegistry.getAccountByPbgId('PBG-000184')!;
+  });
+
   useEffect(() => {
     return onQuotaStateChange((exhausted) => {
       setQuotaExhaustedState(exhausted);
@@ -97,6 +108,20 @@ export default function App() {
       const curUser = tournamentService.getCurrentUser();
       const wasAuth = prevUser && prevUser.id !== 'guest-spectator' && Boolean(prevUser.email);
       const isNowGuest = !curUser || curUser.id === 'guest-spectator' || !curUser.email;
+
+      // When a user signs in:
+      if (curUser && curUser.id !== 'guest-spectator' && curUser.email) {
+        const pbgAcc = tournamentService.getCurrentPBGAccount() || pbgAccountRegistry.getAccountByUid(curUser.id);
+        if (pbgAcc) {
+          setOnboardingAccount(pbgAcc);
+          // Automatically prompt first-time onboarding if new account or flagged
+          const hasShownOnboarding = sessionStorage.getItem(`pbg_onboarded_${curUser.id}`);
+          if (curUser.isFirstTimePBG && !hasShownOnboarding) {
+            sessionStorage.setItem(`pbg_onboarded_${curUser.id}`, 'true');
+            setIsOnboardingOpen(true);
+          }
+        }
+      }
 
       // When signing out from an authenticated account:
       if (wasAuth && isNowGuest) {
@@ -227,8 +252,18 @@ export default function App() {
     const pathname = window.location.pathname;
     const auctionPathMatch = pathname.match(/^\/tournaments\/([^/]+)\/auction\/?$/);
     const tournamentPathMatch = pathname.match(/^\/tournaments\/([^/]+)\/?$/);
+    const dotaPlayerMatch = pathname.match(/^\/game\/dota2\/players\/([^/]+)\/?$/);
+    const dotaMatchMatch = pathname.match(/^\/game\/dota2\/matches\/([^/]+)\/?$/);
 
-    if (auctionPathMatch) {
+    if (dotaMatchMatch) {
+      const matchId = dotaMatchMatch[1];
+      setActiveEntityId(matchId);
+      setCurrentView('dota_match_detail');
+    } else if (dotaPlayerMatch) {
+      const dotaAccId = dotaPlayerMatch[1];
+      setActiveEntityId(dotaAccId);
+      setCurrentView('dota_game_profile');
+    } else if (auctionPathMatch) {
       const tourneyId = auctionPathMatch[1];
       setActiveEntityId(tourneyId);
       setCurrentView('auction');
@@ -302,8 +337,38 @@ export default function App() {
       }
     };
 
+    const handlePopState = () => {
+      const p = window.location.pathname;
+      const dotaMatch = p.match(/^\/game\/dota2\/matches\/([^/]+)\/?$/);
+      const dotaPlayer = p.match(/^\/game\/dota2\/players\/([^/]+)\/?$/);
+      const tourneyMatch = p.match(/^\/tournaments\/([^/]+)\/?$/);
+      const auctionMatch = p.match(/^\/tournaments\/([^/]+)\/auction\/?$/);
+
+      if (dotaMatch) {
+        setActiveEntityId(dotaMatch[1]);
+        setCurrentView('dota_match_detail');
+      } else if (dotaPlayer) {
+        setActiveEntityId(dotaPlayer[1]);
+        setCurrentView('dota_game_profile');
+      } else if (auctionMatch) {
+        setActiveEntityId(auctionMatch[1]);
+        setCurrentView('auction');
+      } else if (tourneyMatch) {
+        setActiveEntityId(tourneyMatch[1]);
+        setCurrentView('tournament_detail');
+      } else if (p === '/tournaments' || p === '/tournaments/') {
+        setCurrentView('tournaments');
+      } else if (p === '/') {
+        setCurrentView('home');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
     window.addEventListener('message', handleWindowMessage);
-    return () => window.removeEventListener('message', handleWindowMessage);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('message', handleWindowMessage);
+    };
   }, []);
 
   const handleNavigate = (view: ViewType, entityId?: string) => {
@@ -323,6 +388,10 @@ export default function App() {
           window.history.pushState({ view, entityId }, '', `/tournaments/${entityId}`);
         } else if (view === 'organiser_dashboard') {
           window.history.pushState({ view, entityId }, '', entityId ? `/tournaments/${entityId}?manage=true` : '/tournaments?manage=true');
+        } else if (view === 'dota_match_detail' && entityId) {
+          window.history.pushState({ view, entityId }, '', `/game/dota2/matches/${entityId}`);
+        } else if (view === 'dota_game_profile' && entityId) {
+          window.history.pushState({ view, entityId }, '', `/game/dota2/players/${entityId}`);
         } else if (view === 'home') {
           window.history.pushState({ view }, '', '/');
         } else if (view === 'tournaments') {
@@ -442,6 +511,11 @@ export default function App() {
         onOpenRegister={() => handleOpenRegister()}
         onOpenAdminCredentials={() => setIsAdminModalOpen(true)}
         onOpenCreateTournament={() => setIsCreateTournamentOpen(true)}
+        onOpenOnboarding={() => {
+          const acc = tournamentService.getCurrentPBGAccount() || pbgAccountRegistry.getAccountByPbgId('PBG-000184');
+          if (acc) setOnboardingAccount(acc);
+          setIsOnboardingOpen(true);
+        }}
         activeThemeName={currentTheme.name}
         onCycleTheme={handleCycleTheme}
         selectedGame={selectedGame}
@@ -557,6 +631,24 @@ export default function App() {
                 />
               )}
 
+              {currentView === 'dota_game_profile' && (
+                <DotaGameProfileView
+                  pbgId={activeEntityId}
+                  onNavigateBack={() => handleNavigate('player_profile', activeEntityId)}
+                  onNavigateToTournament={(tId) => handleNavigate('tournament_detail', tId)}
+                  onSelectPlayer={(accId) => handleNavigate('dota_game_profile', accId)}
+                  onNavigateToPbgProfile={(pId) => handleNavigate('player_profile', pId)}
+                  onOpenMatchDetail={(matchId) => handleNavigate('dota_match_detail', matchId)}
+                />
+              )}
+
+              {currentView === 'dota_match_detail' && (
+                <DotaMatchDetailView
+                  matchId={activeEntityId}
+                  onNavigate={handleNavigate}
+                />
+              )}
+
               {currentView === 'rankings' && (
                 <RankingsView onNavigate={handleNavigate} />
               )}
@@ -614,6 +706,8 @@ export default function App() {
                 'draft_results',
                 'organiser_dashboard',
                 'register',
+                'dota_game_profile',
+                'dota_match_detail',
                 'not_found'
               ].includes(currentView) && (
                 <HomeView 
@@ -683,6 +777,19 @@ export default function App() {
           onClose={() => setIsCreateTournamentOpen(false)}
           onSuccess={(newTournamentId) => {
             handleNavigate('tournament_detail', newTournamentId);
+          }}
+        />
+      )}
+
+      {/* First-Time PBG Player Onboarding Walkthrough Modal */}
+      {isOnboardingOpen && onboardingAccount && (
+        <FirstTimeOnboardingModal
+          isOpen={isOnboardingOpen}
+          onClose={() => setIsOnboardingOpen(false)}
+          account={onboardingAccount}
+          onComplete={(acc) => {
+            setOnboardingAccount(acc);
+            setIsOnboardingOpen(false);
           }}
         />
       )}
