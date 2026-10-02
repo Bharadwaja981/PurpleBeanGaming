@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { startSteamLink, completeSteamLink, getSteamLinkStatus, unlinkSteam } from './steamOpenId';
 
 export const apiRouter = Router();
 
@@ -44,6 +45,11 @@ apiRouter.get('/health', (_req: Request, res: Response) => {
     timestamp: new Date().toISOString()
   });
 });
+
+apiRouter.post('/steam/link/start', startSteamLink);
+apiRouter.get('/steam/link/callback', completeSteamLink);
+apiRouter.get('/steam/link/status', getSteamLinkStatus);
+apiRouter.post('/steam/link/unlink', unlinkSteam);
 
 // SSE Real-time stream for an auction room
 apiRouter.get('/auction/:tournamentId/stream', (req: Request, res: Response) => {
