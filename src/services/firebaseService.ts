@@ -2608,6 +2608,16 @@ class FirebaseTournamentService {
     steamIdentifier: string,
     accountName?: string
   ): Promise<{ success: boolean; error?: string }> {
+    // Production ownership verification must only be completed by the trusted
+    // Steam OpenID callback. Retain this direct helper exclusively for tests so
+    // legacy unit fixtures cannot accidentally become a browser verification path.
+    if (!isTestEnvironment) {
+      return {
+        success: false,
+        error: 'Direct Steam/Dota ID linking is disabled. Use Verify with Steam to prove account ownership.'
+      };
+    }
+
     let norm;
     try {
       norm = normalizeDotaIdentity(steamIdentifier);
@@ -2615,33 +2625,11 @@ class FirebaseTournamentService {
       return { success: false, error: 'Invalid Steam identifier. Must be a 17-digit Steam64 ID or 32-bit Dota ID.' };
     }
 
-    const res = dotaPlayerRegistry.linkSteamAccount(
+    return dotaPlayerRegistry.linkSteamAccount(
       userId,
       norm.steamId64,
       accountName || `Steam_${norm.accountId}`
     );
-
-    if (res.success) {
-      if (typeof window !== 'undefined' && db && !isQuotaExhausted()) {
-        try {
-          await setDoc(doc(db, 'privatePlayerAccounts', userId), {
-            userId,
-            steamId64: norm.steamId64,
-            steamId32: norm.accountId,
-            verificationStatus: 'Pending Review',
-            updatedAt: new Date().toISOString()
-          }, { merge: true });
-        } catch (e) {
-          if (isQuotaError(e)) {
-            setQuotaExhausted(true);
-          }
-          console.warn('Firestore private account save deferred:', e);
-        }
-      }
-      this.notify();
-    }
-
-    return res;
   }
 
   public async unlinkUserSteamAccount(userId: string): Promise<{ success: boolean; error?: string }> {
