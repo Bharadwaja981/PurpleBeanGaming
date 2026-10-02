@@ -16,15 +16,34 @@ type LinkState = {
   email?: string;
   returnTo: string;
   createdAt: number;
+  nonce: string;
 };
 
-const pendingStates = new Map<string, LinkState>();
+function stateSecret() {
+  const secret = process.env.STEAM_OPENID_STATE_SECRET;
+  if (!secret || secret.length < 32) throw new Error('STEAM_OPENID_STATE_SECRET_REQUIRED');
+  return secret;
+}
 
-function cleanExpiredStates() {
-  const now = Date.now();
-  for (const [key, value] of pendingStates) {
-    if (now - value.createdAt > STATE_TTL_MS) pendingStates.delete(key);
+function encodeState(value: LinkState) {
+  const payload = Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+  const signature = crypto.createHmac('sha256', stateSecret()).update(payload).digest('base64url');
+  return `${payload}.${signature}`;
+}
+
+function decodeState(token: string): LinkState {
+  const [payload, signature] = token.split('.');
+  if (!payload || !signature) throw new Error('INVALID_LINK_STATE');
+  const expected = crypto.createHmac('sha256', stateSecret()).update(payload).digest();
+  const actual = Buffer.from(signature, 'base64url');
+  if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) {
+    throw new Error('INVALID_LINK_STATE');
   }
+  const value = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as LinkState;
+  if (!value.uid || !value.returnTo || !value.createdAt || Date.now() - value.createdAt > STATE_TTL_MS) {
+    throw new Error('LINK_SESSION_EXPIRED');
+  }
+  return value;
 }
 
 function safeReturnTo(value: unknown) {
@@ -143,15 +162,14 @@ function completionHtml(payload: Record<string, unknown>, returnTo: string) {
 
 export async function startSteamLink(req: Request, res: Response) {
   try {
-    cleanExpiredStates();
     const decoded = await verifyFirebaseBearer(req.headers.authorization);
-    const state = crypto.randomBytes(24).toString('base64url');
     const returnTo = safeReturnTo(req.body?.returnTo);
-    pendingStates.set(state, {
+    const state = encodeState({
       uid: decoded.uid,
       email: decoded.email,
       returnTo,
       createdAt: Date.now(),
+      nonce: crypto.randomBytes(16).toString('base64url'),
     });
     return res.json({ success: true, authorizeUrl: buildSteamOpenIdUrl(req, state) });
   } catch (error: any) {
@@ -161,13 +179,13 @@ export async function startSteamLink(req: Request, res: Response) {
 }
 
 export async function completeSteamLink(req: Request, res: Response) {
-  cleanExpiredStates();
-  const stateKey = typeof req.query.state === 'string' ? req.query.state : '';
-  const state = pendingStates.get(stateKey);
-  if (!state) {
-    return res.status(400).send(completionHtml({ success: false, error: 'LINK_SESSION_EXPIRED' }, '/'));
+  let state: LinkState;
+  try {
+    const stateKey = typeof req.query.state === 'string' ? req.query.state : '';
+    state = decodeState(stateKey);
+  } catch (error: any) {
+    return res.status(400).send(completionHtml({ success: false, error: error?.message || 'LINK_SESSION_EXPIRED' }, '/'));
   }
-  pendingStates.delete(stateKey);
 
   try {
     const steamId64 = await validateSteamCallback(req);
@@ -204,6 +222,7 @@ export async function completeSteamLink(req: Request, res: Response) {
         userId: state.uid,
         verifiedAt,
         verificationMethod: 'steam_openid_2',
+        nonce: state.nonce,
       }, { merge: true });
 
       tx.set(privateRef, {
