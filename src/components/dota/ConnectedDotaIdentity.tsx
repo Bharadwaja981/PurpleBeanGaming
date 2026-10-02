@@ -21,6 +21,7 @@ import {
   maskSteamId64
 } from '../../services/steamVerificationClient';
 import { auth } from '../../services/firebaseConfig';
+import { pbgAccountRegistry } from '../../domain/pbgAccountRegistry';
 
 interface ConnectedDotaIdentityProps {
   targetUserId?: string;
@@ -60,6 +61,22 @@ export function ConnectedDotaIdentity({
       );
       if (data.isOwner && data.account) {
         setPrivateAccount(data.account);
+        const user = auth.currentUser;
+        if (user && data.account.steamOwnershipVerified && data.account.dotaAccountId && data.account.steamId64) {
+          pbgAccountRegistry.verifyAndLinkDotaAccount(user.uid, {
+            steamId64: data.account.steamId64,
+            dotaAccountId: data.account.dotaAccountId,
+            steamPersonaName: data.account.steamPersonaName,
+            steamAvatar: data.account.steamAvatarUrl,
+            steamProfileUrl: data.account.steamProfileUrl,
+            publicMatchDataStatus: data.account.publicMatchData || 'PUBLIC',
+            rankTier: data.account.rankTier,
+            leaderboardRank: data.account.leaderboardRank
+          });
+          if (onIdentityUpdated) {
+            onIdentityUpdated(data.account.dotaAccountId);
+          }
+        }
       } else if (data.profile) {
         setPublicProfile(data.profile);
       }
@@ -114,6 +131,10 @@ export function ConnectedDotaIdentity({
 
     try {
       await disconnectSteamAccount(getIdToken);
+      const user = auth.currentUser;
+      if (user) {
+        pbgAccountRegistry.disconnectSteamDotaAccount(user.uid);
+      }
       setSuccessNotice('Steam account disconnected successfully.');
       await loadStatus();
       if (onIdentityUpdated) {

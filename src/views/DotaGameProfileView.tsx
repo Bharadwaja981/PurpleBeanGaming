@@ -34,6 +34,8 @@ import { DotaRankMedal } from '../components/dota/DotaRankMedal';
 import { DotaGlobalFilters, DotaFilterState, INITIAL_DOTA_FILTERS } from '../components/dota/DotaGlobalFilters';
 import { DotaHeroDetailModal } from '../components/dota/DotaHeroDetailModal';
 import { DotaLinkingModal } from '../components/dota/DotaLinkingModal';
+import { auth } from '../services/firebaseConfig';
+import { fetchSteamLinkStatus } from '../services/steamVerificationClient';
 
 // Sub-tabs
 import { DotaOverviewTab } from '../components/dota/tabs/DotaOverviewTab';
@@ -108,9 +110,9 @@ export function DotaGameProfileView({
     if (targetId) {
       const clean = targetId.trim();
       const byPbg = pbgAccountRegistry.getAccountByPbgId(clean);
-      if (byPbg) return { dotaId: byPbg.dotaAccountId || '383650106', pbgAccount: byPbg };
+      if (byPbg) return { dotaId: byPbg.dotaAccountId || '', pbgAccount: byPbg };
       const byUid = pbgAccountRegistry.getAccountByUid(clean);
-      if (byUid) return { dotaId: byUid.dotaAccountId || '383650106', pbgAccount: byUid };
+      if (byUid) return { dotaId: byUid.dotaAccountId || '', pbgAccount: byUid };
       const byDota = pbgAccountRegistry.getAccountByDotaId(clean);
       if (byDota) return { dotaId: clean, pbgAccount: byDota };
       if (/^\d+$/.test(clean)) {
@@ -118,12 +120,10 @@ export function DotaGameProfileView({
       }
     }
     const current = tournamentService.getCurrentPBGAccount();
-    if (current && current.dotaAccountLinked) {
-      return { dotaId: current.dotaAccountId || '383650106', pbgAccount: current };
+    if (current && current.dotaAccountId) {
+      return { dotaId: current.dotaAccountId, pbgAccount: current };
     }
-    const robin = pbgAccountRegistry.getAccountByPbgId('PBG-000185');
-    if (robin) return { dotaId: robin.dotaAccountId || '383650106', pbgAccount: robin };
-    return { dotaId: '383650106', pbgAccount: null };
+    return { dotaId: current?.dotaAccountId || '', pbgAccount: current || null };
   };
 
   const initial = resolveTarget(pbgId);
@@ -135,6 +135,35 @@ export function DotaGameProfileView({
     const res = resolveTarget(pbgId);
     setActiveDotaId(res.dotaId);
     setActivePbgAccount(res.pbgAccount);
+
+    // If dotaId is not yet linked in local storage, check server-authoritative status
+    const user = auth.currentUser;
+    if (!res.dotaId && user) {
+      fetchSteamLinkStatus(async () => await user.getIdToken(true))
+        .then((status) => {
+          if (
+            status.isOwner &&
+            status.account &&
+            status.account.steamOwnershipVerified &&
+            status.account.dotaAccountId &&
+            status.account.steamId64
+          ) {
+            const synced = pbgAccountRegistry.syncVerifiedSteamAccount(user.uid, {
+              steamId64: status.account.steamId64,
+              dotaAccountId: status.account.dotaAccountId,
+              steamPersonaName: status.account.steamPersonaName,
+              steamAvatar: status.account.steamAvatarUrl,
+              steamProfileUrl: status.account.steamProfileUrl,
+              publicMatchDataStatus: status.account.publicMatchData || 'PUBLIC',
+              rankTier: status.account.rankTier,
+              leaderboardRank: status.account.leaderboardRank
+            });
+            setActiveDotaId(status.account.dotaAccountId);
+            if (synced) setActivePbgAccount(synced);
+          }
+        })
+        .catch(() => {});
+    }
   }, [pbgId]);
 
   const [activeTab, setActiveTab] = useState<DotaSubTab>('overview');
@@ -206,6 +235,11 @@ export function DotaGameProfileView({
 
   // Load Primary Data
   const loadPrimaryData = async (force = false) => {
+    if (!activeDotaId) {
+      setIsLoading(false);
+      setPlayerData(null);
+      return;
+    }
     setIsLoading(true);
     try {
       const summary = await openDotaService.fetchPlayer(activeDotaId, { forceRefresh: force });
@@ -299,6 +333,66 @@ export function DotaGameProfileView({
   const displayName = playerData?.personaName || activePbgAccount?.displayName || `Contender #${activeDotaId}`;
   const avatarUrl = playerData?.avatarUrl || activePbgAccount?.dotaAvatar || activePbgAccount?.avatarUrl || '';
   const isPbgLinked = Boolean(activePbgAccount);
+
+  if (!activeDotaId && !isLoading) {
+    const isOwner = Boolean(
+      auth.currentUser &&
+      (activePbgAccount?.googleUid === auth.currentUser.uid ||
+        tournamentService.getCurrentPBGAccount()?.googleUid === auth.currentUser.uid)
+    );
+
+    return (
+      <div className="space-y-5 font-mono animate-in fade-in duration-200 pb-20">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onNavigateBack}
+            className="px-3.5 py-2 bg-white hover:bg-stone-100 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-2 cursor-pointer"
+          >
+            <ArrowLeftIcon className="w-4 h-4" />
+            <span>Back</span>
+          </button>
+        </div>
+
+        <div className="bg-white border-[3.5px] border-black shadow-[8px_8px_0px_0px_#000] p-8 text-center space-y-4 max-w-xl mx-auto my-8">
+          <div className="w-16 h-16 bg-[#171a21] border-2 border-black text-white text-2xl flex items-center justify-center mx-auto shadow-[3px_3px_0px_0px_#000]">
+            🎮
+          </div>
+          <h2 className="text-xl font-black uppercase">NO DOTA 2 ACCOUNT LINKED</h2>
+          <p className="text-xs text-stone-600 leading-relaxed">
+            {isOwner
+              ? "Your PurpleBeanGaming account has not connected a Dota 2 & Steam identity yet. Verify ownership with Steam OpenID to unlock competitive MMR calibration, OpenDota telemetry, and tournament eligibility."
+              : `${activePbgAccount?.displayName || 'This player'} has not linked their Steam or Dota 2 identity to PurpleBeanGaming.`
+            }
+          </p>
+          {isOwner && (
+            <div className="pt-2">
+              <button
+                onClick={() => setIsLinkingModalOpen(true)}
+                className="px-6 py-2.5 bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] cursor-pointer"
+              >
+                CONNECT DOTA 2 &amp; STEAM ACCOUNT
+              </button>
+            </div>
+          )}
+        </div>
+
+        {isLinkingModalOpen && activePbgAccount && (
+          <DotaLinkingModal
+            isOpen={isLinkingModalOpen}
+            account={activePbgAccount}
+            onClose={() => setIsLinkingModalOpen(false)}
+            onLinked={(updated) => {
+              setActivePbgAccount(updated);
+              if (updated.dotaAccountId) {
+                setActiveDotaId(updated.dotaAccountId);
+              }
+              setIsLinkingModalOpen(false);
+            }}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5 font-mono animate-in fade-in duration-200 pb-20">

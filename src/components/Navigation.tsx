@@ -30,6 +30,10 @@ import { ViewType, CompetitiveGame, Match, Tournament } from '../types/tournamen
 import { PurpleBeanLogo } from './PurpleBeanLogo';
 import { tournamentService, UserSession, PRIMARY_PROJECT_ADMIN_EMAIL } from '../services/firebaseService';
 import { gameManagementEngine } from '../domain/gameManagementEngine';
+import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
+import { auth } from '../services/firebaseConfig';
+import { fetchSteamLinkStatus } from '../services/steamVerificationClient';
+import { fetchDiscordLinkStatus } from '../services/discordVerificationClient';
 import { 
   MenuDropdown, 
   MenuItem, 
@@ -92,7 +96,55 @@ export function Navigation({
       setMatches(tournamentService.getMatches());
       setTournaments(tournamentService.getTournaments());
     });
-    return unsubService;
+    const unsubRegistry = pbgAccountRegistry.subscribe(() => {
+      setCurrentUser(tournamentService.getCurrentUser());
+    });
+
+    // Check server-side verified Steam/Dota status and sync
+    const checkServerSync = async () => {
+      const user = auth.currentUser;
+      if (!user) return;
+      try {
+        const status = await fetchSteamLinkStatus(async () => await user.getIdToken(true));
+        if (
+          status.isOwner &&
+          status.account &&
+          status.account.steamOwnershipVerified &&
+          status.account.dotaAccountId &&
+          status.account.steamId64
+        ) {
+          pbgAccountRegistry.syncVerifiedSteamAccount(user.uid, {
+            steamId64: status.account.steamId64,
+            dotaAccountId: status.account.dotaAccountId,
+            steamPersonaName: status.account.steamPersonaName,
+            steamAvatar: status.account.steamAvatarUrl,
+            steamProfileUrl: status.account.steamProfileUrl,
+            publicMatchDataStatus: status.account.publicMatchData || 'PUBLIC',
+            rankTier: status.account.rankTier,
+            leaderboardRank: status.account.leaderboardRank
+          });
+        }
+      } catch {}
+
+      try {
+        const discordStatus = await fetchDiscordLinkStatus(async () => await user.getIdToken(true));
+        if (discordStatus.account && discordStatus.account.discordLinked && discordStatus.account.discordUserId) {
+          pbgAccountRegistry.linkDiscordAccount(user.uid, {
+            discordUserId: discordStatus.account.discordUserId,
+            discordUsername: discordStatus.account.discordUsername || 'player',
+            discordDisplayName: discordStatus.account.discordDisplayName || undefined,
+            discordAvatar: discordStatus.account.discordAvatarUrl || undefined
+          });
+        }
+      } catch {}
+    };
+
+    checkServerSync();
+
+    return () => {
+      unsubService();
+      unsubRegistry();
+    };
   }, []);
 
   // Real data live ticker resolution (Zero fake ticker data)

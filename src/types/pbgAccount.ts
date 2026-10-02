@@ -44,6 +44,14 @@ export interface PBGPlayerAccount {
   city?: string;
 
   // Discord Account Identity (OAuth Authorized)
+  discord?: {
+    userId: string;
+    username: string;
+    globalName: string | null;
+    avatarUrl: string | null;
+    connectedAt: number | string;
+    verified: true;
+  } | null;
   discordUserId?: string; // Immutable 17-19 digit Discord Snowflake ID (e.g., "123456789012345678")
   discordUsername?: string; // Current handle (e.g., "bharadwaja")
   discordDisplayName?: string; // Server display name (e.g., "Bharadwaja | PBG")

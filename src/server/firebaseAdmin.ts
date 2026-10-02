@@ -18,7 +18,7 @@ function initAdmin() {
   }
 
   const projectId = process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0634745445';
-  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_A;
 
   try {
     if (serviceAccountJson && serviceAccountJson.trim().startsWith('{')) {

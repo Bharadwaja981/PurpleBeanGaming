@@ -177,6 +177,16 @@ export function DotaLinkingModal({
     try {
       const result = await startSteamVerificationFlow(getIdToken);
       setIsVerifyingSteam(false);
+
+      if (simulatedMismatch) {
+        setSteamVerifyError(
+          'ACCOUNT MISMATCH: The logged-in Steam account (Steam64: 76561198000000000) does not match the selected Dota 2 candidate profile (Dota ID: ' +
+            selectedCandidate?.accountId +
+            '). Please log in with the correct Steam account.'
+        );
+        return;
+      }
+
       // MATCH! Real Steam ownership verified from Valve
       performPublicDataCheck(result.dotaAccountId, result.steamId64);
     } catch (err: any) {
@@ -503,7 +513,11 @@ export function DotaLinkingModal({
               <div className="p-4 bg-red-100 border-2 border-red-600 text-red-950 text-xs space-y-2 shadow-[2px_2px_0px_0px_#000]">
                 <div className="flex items-center gap-2 font-black text-red-800">
                   <ExclamationTriangleIcon className="w-4 h-4 text-red-600 shrink-0" />
-                  <span>ACCOUNT DOES NOT MATCH</span>
+                  <span>
+                    {steamVerifyError.toLowerCase().includes('match')
+                      ? 'ACCOUNT DOES NOT MATCH'
+                      : 'VERIFICATION NOTICE'}
+                  </span>
                 </div>
                 <p className="text-[11px] text-stone-700">{steamVerifyError}</p>
                 <div className="pt-1">

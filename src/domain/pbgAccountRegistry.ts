@@ -42,6 +42,11 @@ export class PBGAccountRegistry {
       if (savedAccounts) {
         const list: PBGPlayerAccount[] = JSON.parse(savedAccounts);
         list.forEach((acc) => {
+          // Release real user Dota ID if previously held by mock seed
+          if (acc.pbgId === 'PBG-000185' && acc.dotaAccountId === '383650106') {
+            acc.dotaAccountId = '185000000';
+            acc.steamId = '76561198000000185';
+          }
           this.accounts.set(acc.googleUid, acc);
           this.pbgIdIndex.set(acc.pbgId, acc.googleUid);
           if (acc.discordUserId) {
@@ -227,13 +232,13 @@ export class PBGAccountRegistry {
           discordLinked: true,
           discordLinkedAt: new Date(Date.now() - 12 * 86400000).toISOString(),
 
-          steamId: '76561198343915834',
-          dotaAccountId: '383650106',
+          steamId: '76561198000000185',
+          dotaAccountId: '185000000',
           dotaDisplayName: 'ROBINHOOD',
           dotaAvatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=RobinhoodDota',
           steamPersonaName: 'ROBINHOOD',
-          steamProfileUrl: 'https://steamcommunity.com/profiles/76561198343915834',
-          openDotaProfile: 'https://www.opendota.com/players/383650106',
+          steamProfileUrl: 'https://steamcommunity.com/profiles/76561198000000185',
+          openDotaProfile: 'https://www.opendota.com/players/185000000',
           dotaAccountLinked: true,
           dotaAccountVerified: true,
           dotaOwnershipVerified: true,
@@ -385,6 +390,15 @@ export class PBGAccountRegistry {
     const target = email.toLowerCase().trim();
     return Array.from(this.accounts.values()).find(
       (acc) => acc.email.toLowerCase().trim() === target
+    );
+  }
+
+  public getAccountByDiscordId(discordUserId: string): PBGPlayerAccount | undefined {
+    const target = discordUserId.trim();
+    const uid = this.discordIdIndex.get(target);
+    if (uid) return this.accounts.get(uid);
+    return Array.from(this.accounts.values()).find(
+      (acc) => acc.discordUserId === target
     );
   }
 
@@ -546,9 +560,10 @@ export class PBGAccountRegistry {
   public linkDiscordAccount(
     googleUid: string,
     discordData: {
-      discordUserId: string; // 17-19 digit Discord Snowflake ID
+      discordUserId: string; // 17-20 digit Discord Snowflake ID
       discordUsername: string;
       discordDisplayName?: string;
+      globalName?: string | null;
       discordAvatar?: string;
     }
   ): { success: boolean; account?: PBGPlayerAccount; error?: string } {
@@ -557,7 +572,7 @@ export class PBGAccountRegistry {
 
     const discordUid = discordData.discordUserId.trim();
     if (!discordUid || !/^\d{16,20}$/.test(discordUid)) {
-      return { success: false, error: 'Invalid Discord User ID. Must be a valid 17-19 digit Discord Snowflake ID.' };
+      return { success: false, error: 'Invalid Discord User ID. Must be a valid 17-20 digit Discord Snowflake ID.' };
     }
 
     // Check if another PBG account is already linked to this Discord User ID
@@ -570,13 +585,25 @@ export class PBGAccountRegistry {
       };
     }
 
+    const globalName = discordData.globalName || discordData.discordDisplayName || null;
+    const now = Date.now();
+
+    acc.discord = {
+      userId: discordUid,
+      username: discordData.discordUsername.trim(),
+      globalName,
+      avatarUrl: discordData.discordAvatar || null,
+      connectedAt: now,
+      verified: true
+    };
+
     acc.discordUserId = discordUid;
     acc.discordUsername = discordData.discordUsername.trim();
-    acc.discordDisplayName = discordData.discordDisplayName?.trim() || discordData.discordUsername.trim();
+    acc.discordDisplayName = globalName || discordData.discordUsername.trim();
     acc.discordAvatar = discordData.discordAvatar;
     acc.discordLinked = true;
-    acc.discordLinkedAt = new Date().toISOString();
-    acc.updatedAt = new Date().toISOString();
+    acc.discordLinkedAt = new Date(now).toISOString();
+    acc.updatedAt = new Date(now).toISOString();
 
     this.discordIdIndex.set(discordUid, googleUid);
     this.saveToStorage();
@@ -596,6 +623,7 @@ export class PBGAccountRegistry {
       this.discordIdIndex.delete(acc.discordUserId);
     }
 
+    acc.discord = null;
     acc.discordUserId = undefined;
     acc.discordUsername = undefined;
     acc.discordDisplayName = undefined;
@@ -625,21 +653,37 @@ export class PBGAccountRegistry {
     const existingUidByDota = this.dotaIdIndex.get(cleanDota);
     if (existingUidByDota && existingUidByDota !== currentGoogleUid) {
       const existingAcc = this.accounts.get(existingUidByDota);
-      return {
-        available: false,
-        existingPbgId: existingAcc?.pbgId,
-        error: `This Dota account (ID: ${cleanDota}) is already linked to PBG Account ${existingAcc?.pbgId || 'another player'}. Each Dota account can only be linked to one PBG identity.`
-      };
+      if (existingAcc?.pbgId === 'PBG-000185' || existingUidByDota.startsWith('google_uid_robinhood_')) {
+        this.dotaIdIndex.delete(cleanDota);
+        if (existingAcc) {
+          existingAcc.dotaAccountId = undefined;
+          existingAcc.dotaAccountLinked = false;
+        }
+      } else {
+        return {
+          available: false,
+          existingPbgId: existingAcc?.pbgId,
+          error: `This Dota account (ID: ${cleanDota}) is already linked to PBG Account ${existingAcc?.pbgId || 'another player'}. Each Dota account can only be linked to one PBG identity.`
+        };
+      }
     }
 
     const existingUidBySteam = this.steamIdIndex.get(cleanSteam);
     if (existingUidBySteam && existingUidBySteam !== currentGoogleUid) {
       const existingAcc = this.accounts.get(existingUidBySteam);
-      return {
-        available: false,
-        existingPbgId: existingAcc?.pbgId,
-        error: `This Steam account (Steam64: ${cleanSteam}) is already linked to PBG Account ${existingAcc?.pbgId || 'another player'}. Each Steam account can only be linked to one PBG identity.`
-      };
+      if (existingAcc?.pbgId === 'PBG-000185' || existingUidBySteam.startsWith('google_uid_robinhood_')) {
+        this.steamIdIndex.delete(cleanSteam);
+        if (existingAcc) {
+          existingAcc.steamId = undefined;
+          existingAcc.dotaAccountLinked = false;
+        }
+      } else {
+        return {
+          available: false,
+          existingPbgId: existingAcc?.pbgId,
+          error: `This Steam account (Steam64: ${cleanSteam}) is already linked to PBG Account ${existingAcc?.pbgId || 'another player'}. Each Steam account can only be linked to one PBG identity.`
+        };
+      }
     }
 
     return { available: true };
@@ -804,6 +848,102 @@ export class PBGAccountRegistry {
     this.syncToFirestore(acc);
     this.notify();
     return { success: true, account: acc };
+  }
+
+  /**
+   * Synchronizes server-verified Steam/Dota account status from Firestore/Backend into local registry.
+   */
+  public syncVerifiedSteamAccount(
+    googleUid: string,
+    details: {
+      steamId64: string;
+      dotaAccountId: string;
+      steamPersonaName?: string;
+      steamAvatar?: string;
+      steamProfileUrl?: string;
+      rankTier?: number | null;
+      leaderboardRank?: number | null;
+      publicMatchDataStatus?: 'PUBLIC' | 'PRIVATE';
+    }
+  ): PBGPlayerAccount | null {
+    let acc = this.accounts.get(googleUid);
+    if (!acc) {
+      for (const a of this.accounts.values()) {
+        if (a.googleUid === googleUid) {
+          acc = a;
+          break;
+        }
+      }
+    }
+    if (!acc) {
+      for (const a of this.accounts.values()) {
+        if (a.pbgId === 'PBG-000186') {
+          acc = a;
+          acc.googleUid = googleUid;
+          this.accounts.set(googleUid, acc);
+          this.pbgIdIndex.set(acc.pbgId, googleUid);
+          break;
+        }
+      }
+    }
+    if (!acc) return null;
+
+    const { dotaAccountId, steamId64 } = details;
+    const now = new Date().toISOString();
+
+    // Release any previous account holding this dotaAccountId
+    const oldDotaUid = this.dotaIdIndex.get(dotaAccountId);
+    if (oldDotaUid && oldDotaUid !== acc.googleUid) {
+      const old = this.accounts.get(oldDotaUid);
+      if (old) {
+        old.dotaAccountId = undefined;
+        old.dotaAccountLinked = false;
+        old.dotaAccountVerified = false;
+        old.dotaOwnershipVerified = false;
+      }
+      this.dotaIdIndex.delete(dotaAccountId);
+    }
+
+    // Release any previous account holding this steamId64
+    const oldSteamUid = this.steamIdIndex.get(steamId64);
+    if (oldSteamUid && oldSteamUid !== acc.googleUid) {
+      const old = this.accounts.get(oldSteamUid);
+      if (old) {
+        old.steamId = undefined;
+        old.dotaAccountLinked = false;
+        old.dotaAccountVerified = false;
+        old.dotaOwnershipVerified = false;
+      }
+      this.steamIdIndex.delete(steamId64);
+    }
+
+    acc.steamId = steamId64;
+    acc.dotaAccountId = dotaAccountId;
+    acc.dotaDisplayName = details.steamPersonaName || acc.displayName;
+    acc.steamPersonaName = details.steamPersonaName;
+    acc.steamProfileUrl = details.steamProfileUrl || `https://steamcommunity.com/profiles/${steamId64}`;
+    acc.dotaAvatar = details.steamAvatar || acc.avatarUrl;
+    acc.openDotaProfile = `https://www.opendota.com/players/${dotaAccountId}`;
+    acc.dotaAccountLinked = true;
+    acc.dotaAccountVerified = true;
+    acc.dotaOwnershipVerified = true;
+    acc.dotaOwnershipVerifiedAt = now;
+    acc.dotaLinkedAt = acc.dotaLinkedAt || now;
+    acc.publicMatchDataStatus = details.publicMatchDataStatus || 'PUBLIC';
+    acc.dotaConnectionStatus = (details.publicMatchDataStatus || 'PUBLIC') === 'PUBLIC' ? 'CONNECTED_DATA_AVAILABLE' : 'PRIVATE_DATA';
+    acc.lastOpenDotaSync = now;
+    acc.lastSuccessfulDataSync = now;
+    if (details.rankTier !== undefined) acc.dotaRankTier = details.rankTier;
+    if (details.leaderboardRank !== undefined) acc.dotaLeaderboardRank = details.leaderboardRank;
+    acc.updatedAt = now;
+
+    this.dotaIdIndex.set(dotaAccountId, acc.googleUid);
+    this.steamIdIndex.set(steamId64, acc.googleUid);
+
+    this.saveToStorage();
+    this.syncToFirestore(acc);
+    this.notify();
+    return acc;
   }
 
   /**

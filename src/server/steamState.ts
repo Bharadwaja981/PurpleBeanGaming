@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 export interface SteamStatePayload {
   uid: string;
   email?: string;
+  pbgId?: string;
   returnUrl?: string;
   timestamp: number;
   nonce: string;
@@ -21,7 +22,7 @@ function getStateSecret(): string {
  */
 export function generateSignedSteamState(
   uid: string,
-  options?: { email?: string; returnUrl?: string }
+  options?: { email?: string; pbgId?: string; returnUrl?: string }
 ): string {
   if (!uid || typeof uid !== 'string') {
     throw new Error('UID is required to generate Steam state token');
@@ -30,6 +31,7 @@ export function generateSignedSteamState(
   const payload: SteamStatePayload = {
     uid,
     email: options?.email,
+    pbgId: options?.pbgId,
     returnUrl: options?.returnUrl,
     timestamp: Date.now(),
     nonce: crypto.randomBytes(16).toString('hex')

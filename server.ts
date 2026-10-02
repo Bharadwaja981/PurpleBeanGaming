@@ -46,23 +46,20 @@ async function startServer() {
   const express = (await import('express')).default;
   const { apiRouter } = await import('./src/server/apiRouter');
 
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
-  const distPath = path.resolve(process.cwd(), 'dist');
-  const indexPath = path.resolve(distPath, 'index.html');
+  // Dev mode determination:
+  // AI Studio runs with NODE_ENV='development' or unset. Dev server must run on port 3000.
+  const isDev = process.env.NODE_ENV !== 'production';
+  const PORT = isDev ? 3000 : (process.env.PORT ? parseInt(process.env.PORT, 10) : 3000);
 
-  // Authoritative production check:
-  // In Cloud Run, K_SERVICE or K_REVISION is set, or NODE_ENV=production, or dist/index.html exists when not running dev script
-  const isProd = 
-    process.env.NODE_ENV === 'production' || 
-    Boolean(process.env.K_SERVICE) || 
-    Boolean(process.env.K_REVISION) ||
-    process.env.npm_lifecycle_event === 'start' ||
-    (fs.existsSync(indexPath) && process.env.npm_lifecycle_event !== 'dev');
+  const rootPath = process.cwd();
+  const rootIndexPath = path.resolve(rootPath, 'index.html');
+  const distPath = path.resolve(rootPath, 'dist');
+  const distIndexPath = path.resolve(distPath, 'index.html');
 
   const app = express();
   app.use(express.json());
 
-  // Mount Trusted Server Authoritative API Routes
+  // Mount Server-Authoritative Competition API Routes
   app.use('/api', apiRouter);
 
   // Health check endpoint (for Cloud Run and monitoring probes)
@@ -70,35 +67,58 @@ async function startServer() {
     res.json({
       status: 'ok',
       service: 'Purple Bean Gaming Authoritative Server',
-      environment: isProd ? 'production' : 'development',
+      environment: isDev ? 'development' : 'production',
       port: PORT,
       timestamp: new Date().toISOString()
     });
   });
 
-  if (!isProd) {
+  // If in development OR if production dist assets haven't been compiled yet:
+  // Mount Vite development middlewares with live SPA HTML transformation.
+  if (isDev || !fs.existsSync(distIndexPath)) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true, hmr: false },
       appType: 'spa'
     });
     app.use(vite.middlewares);
+
+    // Dynamic HTML transformation for all SPA routes
+    app.get('*', async (req, res, next) => {
+      const url = req.originalUrl;
+      try {
+        if (!fs.existsSync(rootIndexPath)) {
+          return next();
+        }
+        let template = fs.readFileSync(rootIndexPath, 'utf-8');
+        template = await vite.transformIndexHtml(url, template);
+        res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
+      } catch (e: any) {
+        if (vite.ssrFixStacktrace) {
+          vite.ssrFixStacktrace(e);
+        }
+        next(e);
+      }
+    });
   } else {
+    // Pure production mode with pre-compiled dist/ assets
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
-      if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath);
+      if (fs.existsSync(distIndexPath)) {
+        res.sendFile(distIndexPath);
+      } else if (fs.existsSync(rootIndexPath)) {
+        res.sendFile(rootIndexPath);
       } else {
-        res.status(404).send('Not Found: Application assets not built.');
+        res.status(200).send('<!doctype html><html><body><div id="root"></div></body></html>');
       }
     });
   }
 
   const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Purple Bean Gaming] Full-stack authoritative server active on http://0.0.0.0:${PORT} (mode: ${isProd ? 'production' : 'development'})`);
+    console.log(`[Purple Bean Gaming] Full-stack server listening on http://0.0.0.0:${PORT} (${isDev ? 'dev mode with Vite middleware' : 'production static mode'})`);
   });
 
-  // Handle Cloud Run termination signals gracefully
+  // Handle termination signals gracefully
   const shutdown = () => {
     server.close(() => {
       process.exit(0);

@@ -39,9 +39,12 @@ import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
 import { DiscordConnectModal } from '../components/DiscordConnectModal';
 import { DotaLinkingModal } from '../components/dota/DotaLinkingModal';
 import { ConnectedDotaIdentity } from '../components/dota/ConnectedDotaIdentity';
+import { ConnectedDiscordIdentity } from '../components/ConnectedDiscordIdentity';
 import { EditPBGProfileModal } from '../components/EditPBGProfileModal';
 import { FirstTimeOnboardingModal } from '../components/FirstTimeOnboardingModal';
 import { auth } from '../services/firebaseConfig';
+import { fetchSteamLinkStatus, PrivateAccountStatus } from '../services/steamVerificationClient';
+import { fetchDiscordLinkStatus } from '../services/discordVerificationClient';
 
 interface PlayerProfileViewProps {
   playerId?: string;
@@ -83,35 +86,110 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
   const [isDotaModalOpen, setIsDotaModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isOnboardingModalOpen, setIsOnboardingModalOpen] = useState(false);
+  const [serverAccount, setServerAccount] = useState<PrivateAccountStatus | null>(null);
 
-  // Keep synced with PBG registry changes
+  const refreshAccount = () => {
+    if (playerId) {
+      const byPbg = pbgAccountRegistry.getAccountByPbgId(playerId);
+      if (byPbg) {
+        setAccount(byPbg);
+        return;
+      }
+      const byUid = pbgAccountRegistry.getAccountByUid(playerId);
+      if (byUid) {
+        setAccount(byUid);
+        return;
+      }
+    }
+    const cur = tournamentService.getCurrentPBGAccount();
+    if (cur) {
+      setAccount(cur);
+    } else {
+      const base = pbgAccountRegistry.getAccountByPbgId('PBG-000184');
+      if (base) setAccount(base);
+    }
+  };
+
+  // Keep synced with PBG registry changes & server-verified Steam identity
   useEffect(() => {
-    const refreshAccount = () => {
-      if (playerId) {
-        const byPbg = pbgAccountRegistry.getAccountByPbgId(playerId);
-        if (byPbg) {
-          setAccount(byPbg);
-          return;
-        }
-        const byUid = pbgAccountRegistry.getAccountByUid(playerId);
-        if (byUid) {
-          setAccount(byUid);
-          return;
-        }
-      }
-      const cur = tournamentService.getCurrentPBGAccount();
-      if (cur) {
-        setAccount(cur);
-      } else {
-        const base = pbgAccountRegistry.getAccountByPbgId('PBG-000184');
-        if (base) setAccount(base);
-      }
-    };
-
     const unsub = pbgAccountRegistry.subscribe(refreshAccount);
     refreshAccount();
+
+    const checkServerSync = async () => {
+      const user = auth.currentUser;
+      if (!user) return;
+
+      try {
+        const status = await fetchSteamLinkStatus(async () => await user.getIdToken(true));
+        if (
+          status.isOwner &&
+          status.account &&
+          status.account.steamOwnershipVerified &&
+          status.account.dotaAccountId &&
+          status.account.steamId64
+        ) {
+          setServerAccount(status.account);
+          const synced = pbgAccountRegistry.syncVerifiedSteamAccount(user.uid, {
+            steamId64: status.account.steamId64,
+            dotaAccountId: status.account.dotaAccountId,
+            steamPersonaName: status.account.steamPersonaName,
+            steamAvatar: status.account.steamAvatarUrl,
+            steamProfileUrl: status.account.steamProfileUrl,
+            publicMatchDataStatus: status.account.publicMatchData || 'PUBLIC',
+            rankTier: status.account.rankTier,
+            leaderboardRank: status.account.leaderboardRank
+          });
+          if (synced) {
+            setAccount({ ...synced });
+          } else {
+            refreshAccount();
+          }
+        }
+      } catch {}
+
+      try {
+        const discordStatus = await fetchDiscordLinkStatus(async () => await user.getIdToken(true));
+        if (discordStatus.account && discordStatus.account.discordLinked && discordStatus.account.discordUserId) {
+          pbgAccountRegistry.linkDiscordAccount(user.uid, {
+            discordUserId: discordStatus.account.discordUserId,
+            discordUsername: discordStatus.account.discordUsername || 'player',
+            discordDisplayName: discordStatus.account.discordDisplayName || undefined,
+            discordAvatar: discordStatus.account.discordAvatarUrl || undefined
+          });
+          refreshAccount();
+        }
+      } catch {}
+    };
+
+    checkServerSync();
     return unsub;
-  }, [playerId]);
+  }, [playerId, account.googleUid]);
+
+  const isDotaConnected = Boolean(
+    account.dotaAccountLinked ||
+    (isOwner && serverAccount?.steamOwnershipVerified)
+  );
+  const activeDotaId =
+    account.dotaAccountId ||
+    (isOwner && serverAccount?.dotaAccountId);
+  const activeDotaVerified = Boolean(
+    account.dotaAccountVerified ||
+    (isOwner && serverAccount?.steamOwnershipVerified)
+  );
+  const activeOpenDotaProfile =
+    account.openDotaProfile ||
+    (activeDotaId ? `https://www.opendota.com/players/${activeDotaId}` : undefined);
+
+  const handleIdentityUpdated = (newDotaId: string | null) => {
+    refreshAccount();
+    if (newDotaId && auth.currentUser) {
+      fetchSteamLinkStatus(async () => await auth.currentUser!.getIdToken(true))
+        .then((s) => s.account && setServerAccount(s.account))
+        .catch(() => {});
+    } else {
+      setServerAccount(null);
+    }
+  };
 
   const copyToClipboard = (text: string, type: 'pbg' | 'discord') => {
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
@@ -321,13 +399,13 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
 
           {/* 3. Steam & Dota Account */}
           <div className={`border-2 border-black p-3.5 space-y-1.5 shadow-[2px_2px_0px_0px_#000] ${
-            account.dotaAccountLinked ? 'bg-blue-50 border-blue-900' : 'bg-stone-50'
+            isDotaConnected ? 'bg-blue-50 border-blue-900' : 'bg-stone-50'
           }`}>
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-black uppercase text-stone-600 flex items-center gap-1">
                 <span>🎮</span> STEAM / DOTA 2
               </span>
-              {account.dotaAccountVerified ? (
+              {activeDotaVerified ? (
                 <span className="bg-[#70FFAF] text-black text-[9px] font-black uppercase px-1.5 py-0.2 border border-black">
                   VERIFIED
                 </span>
@@ -337,10 +415,10 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
                 </span>
               )}
             </div>
-            {account.dotaAccountLinked ? (
+            {isDotaConnected && activeDotaId ? (
               <>
                 <div className="font-mono text-xs font-black text-black truncate flex items-center justify-between">
-                  <span>Dota ID: {account.dotaAccountId}</span>
+                  <span>Dota ID: {activeDotaId}</span>
                   <button 
                     onClick={() => onNavigate('dota_game_profile', account.pbgId)}
                     className="text-[9px] text-[#7C3AED] hover:underline font-black uppercase"
@@ -350,7 +428,7 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
                 </div>
                 <div className="text-[10px] text-stone-600 truncate flex items-center gap-1">
                   <a 
-                    href={account.openDotaProfile || `https://www.opendota.com/players/${account.dotaAccountId}`} 
+                    href={activeOpenDotaProfile || `https://www.opendota.com/players/${activeDotaId}`} 
                     target="_blank" 
                     rel="noreferrer"
                     className="text-blue-700 hover:underline flex items-center gap-1"
@@ -560,7 +638,16 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
           <ConnectedDotaIdentity
             targetUserId={account.googleUid}
             isOwner={isOwner}
+            onIdentityUpdated={handleIdentityUpdated}
             onOpenGameProfile={() => onNavigate('dota_game_profile', account.pbgId)}
+          />
+
+          {/* Connected Discord Identity Section (OAuth 2.0 & Direct Connection) */}
+          <ConnectedDiscordIdentity
+            targetUserId={account.googleUid}
+            isOwner={isOwner}
+            account={account}
+            onIdentityUpdated={() => refreshAccount()}
           />
         </div>
       )}
@@ -784,6 +871,7 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
               <ConnectedDotaIdentity
                 targetUserId={account.googleUid}
                 isOwner={isOwner}
+                onIdentityUpdated={handleIdentityUpdated}
                 onOpenGameProfile={() => onNavigate('dota_game_profile', account.pbgId)}
               />
 
@@ -1137,6 +1225,14 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
                 <span>{account.discordLinked ? 'Manage Discord Link' : 'Connect Discord (OAuth)'}</span>
               </button>
             </div>
+
+            {/* Connected Discord Identity Card */}
+            <ConnectedDiscordIdentity
+              targetUserId={account.googleUid}
+              isOwner={isOwner}
+              account={account}
+              onIdentityUpdated={() => refreshAccount()}
+            />
 
             {/* Section 6: Dynamic Discord Roles */}
             <div className="border-2 border-black p-5 space-y-4 bg-white">

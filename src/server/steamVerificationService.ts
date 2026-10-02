@@ -56,6 +56,8 @@ const inMemoryClaims = new Map<string, SteamIdentityClaim>();
 const inMemoryPrivateAccounts = new Map<string, PrivatePlayerAccount>();
 const inMemoryActiveRegistrations = new Map<string, Set<string>>();
 
+const isTestEnv = () => process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
+
 export function _resetSteamVerificationInMemoryStore() {
   inMemoryClaims.clear();
   inMemoryPrivateAccounts.clear();
@@ -85,21 +87,23 @@ export async function checkActiveTournamentLock(userId: string): Promise<boolean
     return true;
   }
 
-  try {
-    const db = getAdminDb();
-    const snap = await db.collection('registrations')
-      .where('userId', '==', userId)
-      .get();
+  if (!isTestEnv()) {
+    try {
+      const db = getAdminDb();
+      const snap = await db.collection('registrations')
+        .where('userId', '==', userId)
+        .get();
 
-    for (const doc of snap.docs) {
-      const data = doc.data();
-      const status = data?.status || 'REGISTERED';
-      if (['REGISTERED', 'UNDER_REVIEW', 'VERIFIED'].includes(status)) {
-        return true;
+      for (const doc of snap.docs) {
+        const data = doc.data();
+        const status = data?.status || 'REGISTERED';
+        if (['REGISTERED', 'UNDER_REVIEW', 'VERIFIED'].includes(status)) {
+          return true;
+        }
       }
+    } catch {
+      // If Firestore is offline, check fallback
     }
-  } catch (err) {
-    // If Firestore is offline, check fallback
   }
 
   return false;
@@ -125,11 +129,13 @@ export async function linkSteamAccountAuthoritative(
     throw new Error('STEAM_VALIDATION_FAILED: Could not derive Dota Account ID from Steam64');
   }
 
-  let db: any;
-  try {
-    db = getAdminDb();
-  } catch {
-    db = null;
+  let db: any = null;
+  if (!isTestEnv()) {
+    try {
+      db = getAdminDb();
+    } catch {
+      db = null;
+    }
   }
 
   // 1. Enforce 1:1 Steam account uniqueness: check steamIdentityClaims/{steamId64}
@@ -173,9 +179,36 @@ export async function linkSteamAccountAuthoritative(
     );
   }
 
-  // 3. Query OpenDota player telemetry (with graceful degradation for privacy or network issues)
+  // 3. Query official Valve Steam Web API (if STEAM_WEB_API_KEY configured)
   let personaName = `Dota Player ${dotaAccountId}`;
   let avatarUrl = `https://api.dicebear.com/7.x/bottts/svg?seed=${dotaAccountId}`;
+  let steamProfileUrl = `https://steamcommunity.com/profiles/${steamId64}`;
+
+  const steamApiKey = process.env.STEAM_WEB_API_KEY;
+  if (steamApiKey) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
+      const valveRes = await fetch(
+        `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0002/?key=${steamApiKey}&steamids=${steamId64}`,
+        { signal: controller.signal }
+      );
+      clearTimeout(timeout);
+      if (valveRes.ok) {
+        const valveData = await valveRes.json();
+        const player = valveData?.response?.players?.[0];
+        if (player) {
+          if (player.personaname) personaName = player.personaname;
+          if (player.avatarfull || player.avatarmedium) avatarUrl = player.avatarfull || player.avatarmedium;
+          if (player.profileurl) steamProfileUrl = player.profileurl;
+        }
+      }
+    } catch {
+      // Graceful fallback to OpenDota or defaults
+    }
+  }
+
+  // 4. Query OpenDota player telemetry (with graceful degradation for privacy or network issues)
   let isOpenDotaAvailable = false;
   let isPublicMatchData = false;
   let rankTier: number | null = null;
@@ -200,8 +233,8 @@ export async function linkSteamAccountAuthoritative(
       const data = await res.json();
       if (data && data.profile) {
         isOpenDotaAvailable = true;
-        if (data.profile.personaname) personaName = data.profile.personaname;
-        if (data.profile.avatarfull) avatarUrl = data.profile.avatarfull;
+        if (data.profile.personaname && !steamApiKey) personaName = data.profile.personaname;
+        if (data.profile.avatarfull && !steamApiKey) avatarUrl = data.profile.avatarfull;
         rankTier = data.rank_tier ?? null;
         leaderboardRank = data.leaderboard_rank ?? null;
         // Public match data check
@@ -232,7 +265,7 @@ export async function linkSteamAccountAuthoritative(
     steamVerifiedAt: now,
     steamPersonaName: personaName,
     steamAvatarUrl: avatarUrl,
-    steamProfileUrl: `https://steamcommunity.com/profiles/${steamId64}`,
+    steamProfileUrl,
     openDotaUrl: `https://www.opendota.com/players/${dotaAccountId}`,
     openDotaAvailable: isOpenDotaAvailable,
     publicMatchData: isPublicMatchData ? 'PUBLIC' : 'PRIVATE',
@@ -290,11 +323,13 @@ export async function unlinkSteamAccountAuthoritative(userId: string): Promise<v
     );
   }
 
-  let db: any;
-  try {
-    db = getAdminDb();
-  } catch {
-    db = null;
+  let db: any = null;
+  if (!isTestEnv()) {
+    try {
+      db = getAdminDb();
+    } catch {
+      db = null;
+    }
   }
 
   let currentAccount: PrivatePlayerAccount | null = inMemoryPrivateAccounts.get(userId) || null;
@@ -361,7 +396,7 @@ export async function unlinkSteamAccountAuthoritative(userId: string): Promise<v
  */
 export async function getPublicPlayerSafeProfile(userId: string): Promise<PublicPlayerSafeProfile> {
   let privateAcc = inMemoryPrivateAccounts.get(userId);
-  if (!privateAcc) {
+  if (!privateAcc && !isTestEnv()) {
     try {
       const db = getAdminDb();
       const doc = await db.collection('privatePlayerAccounts').doc(userId).get();
@@ -406,7 +441,7 @@ export async function getPublicPlayerSafeProfile(userId: string): Promise<Public
  */
 export async function getPrivatePlayerAccount(userId: string): Promise<PrivatePlayerAccount | null> {
   let privateAcc = inMemoryPrivateAccounts.get(userId);
-  if (!privateAcc) {
+  if (!privateAcc && !isTestEnv()) {
     try {
       const db = getAdminDb();
       const doc = await db.collection('privatePlayerAccounts').doc(userId).get();

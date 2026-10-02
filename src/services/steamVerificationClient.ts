@@ -197,22 +197,52 @@ export async function startSteamVerificationFlow(
     throw new SteamVerificationError('STEAM_PROVIDER_UNAVAILABLE', 'Failed to reach Steam verification service.');
   }
 
+  // Clear any existing stored result
+  try {
+    localStorage.removeItem('pbg_steam_link_result');
+  } catch {}
+
+  const flowStartTime = Date.now() - 500;
+
+  // Check initial state to differentiate prior links
+  let initialUpdatedAt = 0;
+  try {
+    const initStatus = await fetchSteamLinkStatus(getIdToken);
+    if (initStatus.isOwner && initStatus.account?.steamOwnershipVerified) {
+      initialUpdatedAt = initStatus.account.updatedAt || 0;
+    }
+  } catch {}
+
   // Navigate popup to Steam
   popup.location.href = redirectUrl;
 
-  // Await postMessage from callback or detect manual window closure
+  // Await result via BroadcastChannel, storage event, postMessage, or polling
   return new Promise<SteamVerificationResult>((resolve, reject) => {
     let checkInterval: any = null;
+    let channel: BroadcastChannel | null = null;
+    let handled = false;
+    let isPollingServer = false;
 
     const cleanup = () => {
+      handled = true;
       window.removeEventListener('message', handleMessage);
+      window.removeEventListener('storage', handleStorage);
+      if (channel) {
+        try { channel.close(); } catch {}
+      }
       if (checkInterval) clearInterval(checkInterval);
+      try {
+        localStorage.removeItem('pbg_steam_link_result');
+      } catch {}
+      try {
+        if (popup && !popup.closed) {
+          popup.close();
+        }
+      } catch {}
     };
 
-    const handleMessage = (event: MessageEvent) => {
-      // Validate origin if not local
-      const data = event.data;
-      if (!data || typeof data !== 'object') return;
+    const processResultData = (data: any) => {
+      if (handled || !data || typeof data !== 'object') return;
 
       if (data.type === 'STEAM_LINK_SUCCESS') {
         cleanup();
@@ -228,15 +258,111 @@ export async function startSteamVerificationFlow(
       }
     };
 
+    const checkServerVerification = async (): Promise<boolean> => {
+      if (handled || isPollingServer) return false;
+      isPollingServer = true;
+      try {
+        const status = await fetchSteamLinkStatus(getIdToken);
+        if (status.isOwner && status.account && status.account.steamOwnershipVerified) {
+          const acc = status.account;
+          if (acc.steamId64 && (acc.updatedAt > initialUpdatedAt || acc.updatedAt >= flowStartTime)) {
+            processResultData({
+              type: 'STEAM_LINK_SUCCESS',
+              steamId64: acc.steamId64,
+              dotaAccountId: acc.dotaAccountId,
+              personaName: acc.steamPersonaName
+            });
+            return true;
+          }
+        }
+      } catch {
+        // Continue polling
+      } finally {
+        isPollingServer = false;
+      }
+      return false;
+    };
+
+    const handleMessage = (event: MessageEvent) => {
+      processResultData(event.data);
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === 'pbg_steam_link_result' && event.newValue) {
+        try {
+          const parsed = JSON.parse(event.newValue);
+          processResultData(parsed);
+        } catch {}
+      }
+    };
+
+    // 1. Listen via postMessage
     window.addEventListener('message', handleMessage);
 
-    // Poll for user closing popup
-    checkInterval = setInterval(() => {
-      if (popup && popup.closed) {
-        cleanup();
-        reject(new SteamVerificationError('UNKNOWN_ERROR', 'Steam verification window was closed.'));
+    // 2. Listen via Storage event
+    window.addEventListener('storage', handleStorage);
+
+    // 3. Listen via BroadcastChannel
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        channel = new BroadcastChannel('pbg_steam_auth');
+        channel.onmessage = (event) => {
+          processResultData(event.data);
+        };
       }
-    }, 500);
+    } catch {}
+
+    // 4. Poll for storage, server state, and window closure
+    let pollCount = 0;
+    checkInterval = setInterval(async () => {
+      if (handled) return;
+      pollCount++;
+
+      // A. Check localStorage for result
+      try {
+        const stored = localStorage.getItem('pbg_steam_link_result');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && (parsed.timestamp || 0) >= flowStartTime) {
+            processResultData(parsed);
+            return;
+          }
+        }
+      } catch {}
+
+      // B. Authoritatively poll server status every 1.2s (survives cross-origin iframe / severed opener)
+      if (pollCount % 3 === 0) {
+        const verified = await checkServerVerification();
+        if (verified) return;
+      }
+
+      // C. Check if popup was closed
+      if (popup && popup.closed) {
+        // When popup closes, perform a final server check after a tiny tick
+        setTimeout(async () => {
+          if (handled) return;
+
+          // Final server verification check
+          const verified = await checkServerVerification();
+          if (verified) return;
+
+          // Final localStorage check
+          try {
+            const stored = localStorage.getItem('pbg_steam_link_result');
+            if (stored) {
+              const parsed = JSON.parse(stored);
+              if (parsed && (parsed.timestamp || 0) >= flowStartTime) {
+                processResultData(parsed);
+                return;
+              }
+            }
+          } catch {}
+
+          cleanup();
+          reject(new SteamVerificationError('UNKNOWN_ERROR', 'Steam verification window was closed.'));
+        }, 350);
+      }
+    }, 400);
   });
 }
 
