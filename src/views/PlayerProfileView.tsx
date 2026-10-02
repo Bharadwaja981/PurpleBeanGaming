@@ -17,6 +17,7 @@ import {
 import { Player, ViewType } from '../types/tournament';
 import { tournamentService } from '../services/firebaseService';
 import { dotaPlayerRegistry } from '../domain/dotaPlayerEngine';
+import { SteamVerificationCard } from '../components/SteamVerificationCard';
 
 interface PlayerProfileViewProps {
   playerId?: string;
@@ -25,6 +26,7 @@ interface PlayerProfileViewProps {
 
 export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewProps) {
   const [player, setPlayer] = useState<Player | undefined>(undefined);
+  const currentUser = tournamentService.getCurrentUser();
 
   useEffect(() => {
     if (playerId) {
@@ -107,6 +109,15 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
           <span>Back to All Players</span>
         </button>
       </div>
+
+      {player.id === currentUser.id && (
+        <div className="space-y-2">
+          <div className="font-mono text-[10px] font-black uppercase text-stone-600">
+            Connected Game Identity · Verify your Dota 2 ownership
+          </div>
+          <SteamVerificationCard />
+        </div>
+      )}
 
       {/* Main Profile Header */}
       <div className="bg-white border-[3.5px] border-black shadow-[8px_8px_0px_0px_#000] p-6 sm:p-8 space-y-6">
