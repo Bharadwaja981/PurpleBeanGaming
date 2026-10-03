@@ -925,7 +925,8 @@ const handleDiscordAuthStart = async (req: Request, res: Response) => {
       stateToken
     });
   } catch (err: any) {
-    return res.status(err.message === 'SIGN_IN_REQUIRED' ? 401 : 500).json({
+    const isAuthErr = err.code === 'SIGN_IN_REQUIRED' || (err.message && err.message.includes('SIGN_IN_REQUIRED'));
+    return res.status(isAuthErr ? 401 : 500).json({
       success: false,
       error: err.code || 'DISCORD_AUTH_START_FAILED',
       message: err.message || 'Failed to initialize Discord authorization.'

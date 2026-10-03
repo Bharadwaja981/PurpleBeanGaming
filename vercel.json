@@ -7,11 +7,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "/api"
-    },
-    {
-      "source": "/api",
-      "destination": "/api"
+      "destination": "https://purplebeangaming-api-243967175289.europe-west1.run.app/api/$1"
     },
     {
       "source": "/((?!api(?:/|$)).*)",

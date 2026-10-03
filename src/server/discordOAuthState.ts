@@ -28,6 +28,7 @@ const STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 export const ALLOWED_PBG_ORIGINS: readonly string[] = Object.freeze([
   'https://purplebeangaming.com',
   'https://www.purplebeangaming.com',
+  'https://purplebeangaming-api-243967175289.europe-west1.run.app',
   'https://ais-dev-peyssjszcbcksxhcpybipw-243967175289.europe-west1.run.app',
   'https://ais-pre-peyssjszcbcksxhcpybipw-243967175289.europe-west1.run.app',
   'http://localhost:3000',
