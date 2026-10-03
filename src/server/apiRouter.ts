@@ -66,9 +66,10 @@ function broadcastToAuctionRoom(tournamentId: string, eventType: string, payload
 }
 
 apiRouter.get('/health', (_req: Request, res: Response) => {
-  res.json({
+  res.status(200).json({
+    ok: true,
+    service: 'purplebeangaming-api',
     status: 'ok',
-    service: 'Purple Bean Gaming API',
     timestamp: new Date().toISOString()
   });
 });

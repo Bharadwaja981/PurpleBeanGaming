@@ -71,9 +71,10 @@ async function startServer() {
 
   // Health check endpoint (for Cloud Run and monitoring probes)
   app.get('/api/health', (_req, res) => {
-    res.json({
+    res.status(200).json({
+      ok: true,
+      service: 'purplebeangaming-api',
       status: 'ok',
-      service: 'Purple Bean Gaming Authoritative Server',
       environment: isDev ? 'development' : 'production',
       port: PORT,
       timestamp: new Date().toISOString()

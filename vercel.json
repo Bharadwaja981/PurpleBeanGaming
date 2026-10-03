@@ -6,8 +6,8 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
-      "source": "/api/(.*)",
-      "destination": "/api/$1"
+      "source": "/api/:path*",
+      "destination": "https://ais-pre-peyssjszcbcksxhcpybipw-243967175289.europe-west1.run.app/api/:path*"
     },
     {
       "source": "/(.*)",

@@ -21,8 +21,18 @@ app.use('/api', apiRouter);
 app.use('/', apiRouter);
 
 // Health check and root ping for Vercel deployment
+app.get(['/api/health', '/health'], (_req: Request, res: Response) => {
+  res.status(200).json({
+    ok: true,
+    service: 'purplebeangaming-api',
+    status: 'ok',
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.get('/api', (_req: Request, res: Response) => {
   res.json({
+    ok: true,
     status: 'ok',
     service: 'Purple Bean Gaming API (Vercel Serverless)',
     timestamp: new Date().toISOString()
@@ -31,6 +41,7 @@ app.get('/api', (_req: Request, res: Response) => {
 
 app.get('/', (_req: Request, res: Response) => {
   res.json({
+    ok: true,
     status: 'ok',
     service: 'Purple Bean Gaming API (Vercel Serverless Root)',
     timestamp: new Date().toISOString()
