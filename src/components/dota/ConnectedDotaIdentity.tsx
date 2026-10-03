@@ -22,10 +22,12 @@ import {
 } from '../../services/steamVerificationClient';
 import { auth } from '../../services/firebaseConfig';
 import { pbgAccountRegistry } from '../../domain/pbgAccountRegistry';
+import { PBGPlayerAccount } from '../../types/pbgAccount';
 
 interface ConnectedDotaIdentityProps {
   targetUserId?: string;
   isOwner: boolean;
+  account?: PBGPlayerAccount;
   onIdentityUpdated?: (dotaAccountId: string | null) => void;
   onOpenGameProfile?: (dotaAccountId: string) => void;
 }
@@ -33,6 +35,7 @@ interface ConnectedDotaIdentityProps {
 export function ConnectedDotaIdentity({
   targetUserId,
   isOwner,
+  account,
   onIdentityUpdated,
   onOpenGameProfile
 }: ConnectedDotaIdentityProps) {
@@ -44,6 +47,31 @@ export function ConnectedDotaIdentity({
   const [privateAccount, setPrivateAccount] = useState<PrivateAccountStatus | null>(null);
   const [publicProfile, setPublicProfile] = useState<PublicProfileStatus | null>(null);
 
+  // Authoritative local player account from prop or client PBG registry
+  const getResolvedAccount = (): PBGPlayerAccount | undefined => {
+    if (account) return account;
+    if (targetUserId) {
+      const byUid = pbgAccountRegistry.getAccountByUid(targetUserId);
+      if (byUid) return byUid;
+      const byPbg = pbgAccountRegistry.getAccountByPbgId(targetUserId);
+      if (byPbg) return byPbg;
+      const byEmail = pbgAccountRegistry.getAccountByEmail(targetUserId);
+      if (byEmail) return byEmail;
+    }
+    const currentAuth = auth.currentUser;
+    if (isOwner && currentAuth) {
+      const byAuthUid = pbgAccountRegistry.getAccountByUid(currentAuth.uid);
+      if (byAuthUid) return byAuthUid;
+      if (currentAuth.email) {
+        const byAuthEmail = pbgAccountRegistry.getAccountByEmail(currentAuth.email);
+        if (byAuthEmail) return byAuthEmail;
+      }
+    }
+    return undefined;
+  };
+
+  const resolvedAccount = getResolvedAccount();
+
   // Helper to obtain current user's Firebase token
   const getIdToken = async (): Promise<string> => {
     const user = auth.currentUser;
@@ -54,35 +82,113 @@ export function ConnectedDotaIdentity({
   const loadStatus = async () => {
     setLoading(true);
     setErrorMessage(null);
+    const currentResolved = getResolvedAccount();
+
     try {
       const data = await fetchSteamLinkStatus(
         auth.currentUser ? getIdToken : undefined,
-        targetUserId
+        targetUserId || currentResolved?.googleUid
       );
+
       if (data.isOwner && data.account) {
-        setPrivateAccount(data.account);
-        const user = auth.currentUser;
-        if (user && data.account.steamOwnershipVerified && data.account.dotaAccountId && data.account.steamId64) {
-          pbgAccountRegistry.verifyAndLinkDotaAccount(user.uid, {
-            steamId64: data.account.steamId64,
-            dotaAccountId: data.account.dotaAccountId,
-            steamPersonaName: data.account.steamPersonaName,
-            steamAvatar: data.account.steamAvatarUrl,
-            steamProfileUrl: data.account.steamProfileUrl,
-            publicMatchDataStatus: data.account.publicMatchData || 'PUBLIC',
-            rankTier: data.account.rankTier,
-            leaderboardRank: data.account.leaderboardRank
-          });
-          if (onIdentityUpdated) {
-            onIdentityUpdated(data.account.dotaAccountId);
+        if (data.account.steamOwnershipVerified && data.account.dotaAccountId) {
+          setPrivateAccount(data.account);
+          const user = auth.currentUser;
+          if (user && data.account.steamId64) {
+            pbgAccountRegistry.verifyAndLinkDotaAccount(user.uid, {
+              steamId64: data.account.steamId64,
+              dotaAccountId: data.account.dotaAccountId,
+              steamPersonaName: data.account.steamPersonaName,
+              steamAvatar: data.account.steamAvatarUrl,
+              steamProfileUrl: data.account.steamProfileUrl,
+              publicMatchDataStatus: data.account.publicMatchData || 'PUBLIC',
+              rankTier: data.account.rankTier,
+              leaderboardRank: data.account.leaderboardRank
+            });
+            if (onIdentityUpdated) {
+              onIdentityUpdated(data.account.dotaAccountId);
+            }
           }
+        } else if (currentResolved && (currentResolved.dotaAccountVerified || currentResolved.dotaOwnershipVerified) && currentResolved.dotaAccountId) {
+          // If server returns empty unlinked default (e.g. cold Vercel serverless function or unauthenticated probe),
+          // preserve authoritative verified identity from local PBG registry to match top card
+          setPrivateAccount({
+            userId: targetUserId || currentResolved.googleUid,
+            steamId64: currentResolved.steamId || null,
+            steamId32: currentResolved.dotaAccountId,
+            dotaAccountId: currentResolved.dotaAccountId,
+            verificationStatus: 'VERIFIED',
+            steamOwnershipVerified: true,
+            steamPersonaName: currentResolved.steamPersonaName || currentResolved.dotaDisplayName,
+            steamAvatarUrl: currentResolved.dotaAvatar || currentResolved.avatarUrl,
+            steamProfileUrl: currentResolved.steamProfileUrl,
+            openDotaUrl: currentResolved.openDotaProfile,
+            publicMatchData: currentResolved.publicMatchDataStatus === 'PUBLIC' ? 'PUBLIC' : 'PRIVATE',
+            rankTier: currentResolved.dotaRankTier,
+            leaderboardRank: currentResolved.dotaLeaderboardRank,
+            updatedAt: Date.now()
+          });
+        } else {
+          setPrivateAccount(data.account);
         }
       } else if (data.profile) {
-        setPublicProfile(data.profile);
+        if (data.profile.steamOwnershipVerified && data.profile.dotaAccountId) {
+          setPublicProfile(data.profile);
+        } else if (currentResolved && (currentResolved.dotaAccountVerified || currentResolved.dotaOwnershipVerified) && currentResolved.dotaAccountId) {
+          setPublicProfile({
+            userId: targetUserId || currentResolved.googleUid,
+            steamAccountLinked: true,
+            steamOwnershipVerified: true,
+            dotaAccountId: currentResolved.dotaAccountId,
+            steamId64Masked: currentResolved.steamId ? maskSteamId64(currentResolved.steamId) : null,
+            openDotaUrl: currentResolved.openDotaProfile || null,
+            profileUrl: currentResolved.steamProfileUrl || null,
+            publicMatchData: currentResolved.publicMatchDataStatus === 'PUBLIC' ? 'PUBLIC' : 'PRIVATE',
+            steamPersonaName: currentResolved.steamPersonaName || currentResolved.dotaDisplayName,
+            steamAvatarUrl: currentResolved.dotaAvatar || currentResolved.avatarUrl,
+            rankTier: currentResolved.dotaRankTier
+          });
+        } else {
+          setPublicProfile(data.profile);
+        }
       }
     } catch (err: any) {
-      // In offline or fallback mode
       console.warn('[ConnectedDotaIdentity] Status fetch note:', err);
+      // Fallback directly to resolvedAccount so the card is never unlinked if registry has verified data
+      if (currentResolved && (currentResolved.dotaAccountVerified || currentResolved.dotaOwnershipVerified) && currentResolved.dotaAccountId) {
+        if (isOwner) {
+          setPrivateAccount({
+            userId: targetUserId || currentResolved.googleUid,
+            steamId64: currentResolved.steamId || null,
+            steamId32: currentResolved.dotaAccountId,
+            dotaAccountId: currentResolved.dotaAccountId,
+            verificationStatus: 'VERIFIED',
+            steamOwnershipVerified: true,
+            steamPersonaName: currentResolved.steamPersonaName || currentResolved.dotaDisplayName,
+            steamAvatarUrl: currentResolved.dotaAvatar || currentResolved.avatarUrl,
+            steamProfileUrl: currentResolved.steamProfileUrl,
+            openDotaUrl: currentResolved.openDotaProfile,
+            publicMatchData: currentResolved.publicMatchDataStatus === 'PUBLIC' ? 'PUBLIC' : 'PRIVATE',
+            rankTier: currentResolved.dotaRankTier,
+            leaderboardRank: currentResolved.dotaLeaderboardRank,
+            updatedAt: Date.now()
+          });
+        } else {
+          setPublicProfile({
+            userId: targetUserId || currentResolved.googleUid,
+            steamAccountLinked: true,
+            steamOwnershipVerified: true,
+            dotaAccountId: currentResolved.dotaAccountId,
+            steamId64Masked: currentResolved.steamId ? maskSteamId64(currentResolved.steamId) : null,
+            openDotaUrl: currentResolved.openDotaProfile || null,
+            profileUrl: currentResolved.steamProfileUrl || null,
+            publicMatchData: currentResolved.publicMatchDataStatus === 'PUBLIC' ? 'PUBLIC' : 'PRIVATE',
+            steamPersonaName: currentResolved.steamPersonaName || currentResolved.dotaDisplayName,
+            steamAvatarUrl: currentResolved.dotaAvatar || currentResolved.avatarUrl,
+            rankTier: currentResolved.dotaRankTier
+          });
+        }
+      }
     } finally {
       setLoading(false);
     }
@@ -90,7 +196,11 @@ export function ConnectedDotaIdentity({
 
   useEffect(() => {
     loadStatus();
-  }, [targetUserId, isOwner]);
+    const unsub = pbgAccountRegistry.subscribe(() => {
+      loadStatus();
+    });
+    return unsub;
+  }, [targetUserId, isOwner, account?.dotaAccountId, account?.dotaAccountVerified]);
 
   const handleVerifyWithSteam = async () => {
     if (!auth.currentUser) {
@@ -172,19 +282,38 @@ export function ConnectedDotaIdentity({
   };
 
   const isVerified = isOwner 
-    ? Boolean(privateAccount?.steamOwnershipVerified && privateAccount?.dotaAccountId)
-    : Boolean(publicProfile?.steamOwnershipVerified && publicProfile?.dotaAccountId);
+    ? Boolean(
+        (privateAccount?.steamOwnershipVerified && privateAccount?.dotaAccountId) ||
+        (resolvedAccount?.dotaAccountVerified && resolvedAccount?.dotaAccountId) ||
+        (resolvedAccount?.dotaOwnershipVerified && resolvedAccount?.dotaAccountId)
+      )
+    : Boolean(
+        (publicProfile?.steamOwnershipVerified && publicProfile?.dotaAccountId) ||
+        (resolvedAccount?.dotaAccountVerified && resolvedAccount?.dotaAccountId) ||
+        (resolvedAccount?.dotaOwnershipVerified && resolvedAccount?.dotaAccountId)
+      );
 
   const steamId64Display = isOwner
-    ? (privateAccount?.steamId64 ? maskSteamId64(privateAccount.steamId64) : '•••••••••••••••••')
-    : (publicProfile?.steamId64Masked || '•••••••••••••••••');
+    ? (privateAccount?.steamId64 
+        ? maskSteamId64(privateAccount.steamId64) 
+        : (resolvedAccount?.steamId ? maskSteamId64(resolvedAccount.steamId) : '•••••••••••••••••'))
+    : (publicProfile?.steamId64Masked || (resolvedAccount?.steamId ? maskSteamId64(resolvedAccount.steamId) : '•••••••••••••••••'));
 
-  const dotaAccountId = isOwner ? privateAccount?.dotaAccountId : publicProfile?.dotaAccountId;
-  const personaName = isOwner ? privateAccount?.steamPersonaName : publicProfile?.steamPersonaName;
-  const avatarUrl = isOwner ? privateAccount?.steamAvatarUrl : publicProfile?.steamAvatarUrl;
+  const dotaAccountId = isOwner 
+    ? (privateAccount?.dotaAccountId || resolvedAccount?.dotaAccountId) 
+    : (publicProfile?.dotaAccountId || resolvedAccount?.dotaAccountId);
+
+  const personaName = isOwner 
+    ? (privateAccount?.steamPersonaName || resolvedAccount?.steamPersonaName || resolvedAccount?.dotaDisplayName) 
+    : (publicProfile?.steamPersonaName || resolvedAccount?.steamPersonaName || resolvedAccount?.dotaDisplayName);
+
+  const avatarUrl = isOwner 
+    ? (privateAccount?.steamAvatarUrl || resolvedAccount?.dotaAvatar || resolvedAccount?.avatarUrl) 
+    : (publicProfile?.steamAvatarUrl || resolvedAccount?.dotaAvatar || resolvedAccount?.avatarUrl);
+
   const publicMatchData = isOwner 
-    ? (privateAccount?.publicMatchData || 'PRIVATE')
-    : (publicProfile?.publicMatchData || 'PRIVATE');
+    ? (privateAccount?.publicMatchData || resolvedAccount?.publicMatchDataStatus || 'PUBLIC')
+    : (publicProfile?.publicMatchData || resolvedAccount?.publicMatchDataStatus || 'PUBLIC');
 
   return (
     <div className="border-[3.5px] border-black bg-white shadow-[6px_6px_0px_0px_#000] overflow-hidden">

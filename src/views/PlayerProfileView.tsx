@@ -661,6 +661,7 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
           <ConnectedDotaIdentity
             targetUserId={account.googleUid}
             isOwner={isOwner}
+            account={account}
             onIdentityUpdated={handleIdentityUpdated}
             onOpenGameProfile={() => onNavigate('dota_game_profile', account.pbgId)}
           />
@@ -894,6 +895,7 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
               <ConnectedDotaIdentity
                 targetUserId={account.googleUid}
                 isOwner={isOwner}
+                account={account}
                 onIdentityUpdated={handleIdentityUpdated}
                 onOpenGameProfile={() => onNavigate('dota_game_profile', account.pbgId)}
               />

@@ -780,10 +780,12 @@ apiRouter.get('/steam/link/status', async (req: Request, res: Response) => {
 
   // Check if caller provided authorization
   let callerUid: string | null = null;
+  let callerEmail: string | null = null;
   if (req.headers.authorization) {
     try {
       const user = await verifyFirebaseBearerToken(req.headers.authorization);
       callerUid = user.uid;
+      callerEmail = user.email || null;
     } catch {
       // Unauthenticated caller
     }
@@ -791,7 +793,10 @@ apiRouter.get('/steam/link/status', async (req: Request, res: Response) => {
 
   // If caller is owner requesting their own status
   if (callerUid && (!targetUserId || targetUserId === callerUid)) {
-    const privateAcc = await getPrivatePlayerAccount(callerUid);
+    let privateAcc = await getPrivatePlayerAccount(callerUid);
+    if (!privateAcc && callerEmail) {
+      privateAcc = await getPrivatePlayerAccount(callerEmail);
+    }
     return res.json({
       success: true,
       isOwner: true,
