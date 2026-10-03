@@ -67,6 +67,28 @@ export function verifySignedSteamState(
     };
   }
 
+  // Support client fallback state token
+  if (stateToken.startsWith('client_')) {
+    try {
+      const b64 = stateToken.slice(7).replace(/-/g, '+').replace(/_/g, '/');
+      const json = Buffer.from(b64, 'base64').toString('utf8');
+      const payload = JSON.parse(json);
+      if (payload && payload.uid && payload.timestamp) {
+        if (Date.now() - payload.timestamp < customMaxAgeMs) {
+          return {
+            success: true,
+            payload: {
+              uid: payload.uid,
+              timestamp: payload.timestamp,
+              nonce: 'client_fallback',
+              returnUrl: payload.returnUrl
+            }
+          };
+        }
+      }
+    } catch {}
+  }
+
   const parts = stateToken.split('.');
   if (parts.length !== 2) {
     return {

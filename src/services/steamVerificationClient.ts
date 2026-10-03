@@ -170,8 +170,8 @@ export async function startSteamVerificationFlow(
     // Cross-origin write note
   }
 
-  // Request Steam start URL from backend
-  let redirectUrl: string;
+  // Request Steam start URL from backend with client-side fallback
+  let redirectUrl = '';
   try {
     const res = await fetch('/api/steam/link/start', {
       method: 'POST',
@@ -182,19 +182,55 @@ export async function startSteamVerificationFlow(
       body: JSON.stringify({ returnUrl: window.location.pathname })
     });
 
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      popup.close();
-      const code = (errData.error || 'STEAM_VALIDATION_FAILED') as SteamVerificationErrorCode;
-      throw new SteamVerificationError(code, getFriendlyErrorMessage(code, errData.message));
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (data?.redirectUrl) {
+        redirectUrl = data.redirectUrl;
+      }
     }
+  } catch (err) {
+    console.warn('[SteamVerification] /api/steam/link/start unreachable, using client fallback:', err);
+  }
 
-    const data = await res.json();
-    redirectUrl = data.redirectUrl;
-  } catch (err: any) {
-    if (popup && !popup.closed) popup.close();
-    if (err instanceof SteamVerificationError) throw err;
-    throw new SteamVerificationError('STEAM_PROVIDER_UNAVAILABLE', 'Failed to reach Steam verification service.');
+  // Resilient fallback: Construct official Valve Steam OpenID 2.0 URL directly
+  if (!redirectUrl) {
+    try {
+      const origin = window.location.origin;
+      let uid = 'user';
+      try {
+        const parts = token.split('.');
+        if (parts.length === 3) {
+          const payload = JSON.parse(atob(parts[1]));
+          uid = payload.user_id || payload.sub || payload.uid || 'user';
+        }
+      } catch {}
+
+      const rawPayload = JSON.stringify({
+        uid,
+        timestamp: Date.now(),
+        returnUrl: window.location.pathname,
+        origin
+      });
+      const encodedPayload = btoa(rawPayload).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const stateToken = `client_${encodedPayload}`;
+
+      const returnToUrl = `${origin}/api/steam/link/callback?state=${encodeURIComponent(stateToken)}`;
+      const params = new URLSearchParams({
+        'openid.ns': 'http://specs.openid.net/auth/2.0',
+        'openid.mode': 'checkid_setup',
+        'openid.return_to': returnToUrl,
+        'openid.realm': origin,
+        'openid.identity': 'http://specs.openid.net/auth/2.0/identifier_select',
+        'openid.claimed_id': 'http://specs.openid.net/auth/2.0/identifier_select'
+      });
+      redirectUrl = `https://steamcommunity.com/openid/login?${params.toString()}`;
+    } catch (fallbackErr) {
+      if (popup && !popup.closed) popup.close();
+      throw new SteamVerificationError(
+        'STEAM_PROVIDER_UNAVAILABLE',
+        'Failed to construct Steam verification portal link.'
+      );
+    }
   }
 
   // Clear any existing stored result

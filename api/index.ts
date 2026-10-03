@@ -4,14 +4,35 @@ import { apiRouter } from '../src/server/apiRouter';
 const app = express();
 app.use(express.json());
 
-// Mount the API router
+// Enable CORS for web clients
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// Mount the API router for both `/api` prefix AND `/` root prefix
+// (Vercel serverless mounts can pass either /api/steam/... or /steam/...)
 app.use('/api', apiRouter);
+app.use('/', apiRouter);
 
 // Health check and root ping for Vercel deployment
 app.get('/api', (_req: Request, res: Response) => {
   res.json({
     status: 'ok',
     service: 'Purple Bean Gaming API (Vercel Serverless)',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/', (_req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    service: 'Purple Bean Gaming API (Vercel Serverless Root)',
     timestamp: new Date().toISOString()
   });
 });

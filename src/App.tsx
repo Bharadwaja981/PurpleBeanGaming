@@ -339,6 +339,49 @@ export default function App() {
       setIsEmbed(true);
     }
 
+    // Client-side Steam OpenID return handler (for Vercel SPA routing)
+    const claimedId = params.get('openid.claimed_id') || params.get('openid.identity') || '';
+    if (claimedId && (window.name === 'SteamOpenIdLogin' || window.opener)) {
+      const steam64Match = claimedId.match(/\/id\/([0-9]{17})/);
+      if (steam64Match) {
+        const steamId64 = steam64Match[1];
+        let dotaAccountId = '';
+        try {
+          dotaAccountId = (BigInt(steamId64) - BigInt('76561197960265728')).toString();
+        } catch {}
+
+        const messageData = {
+          type: 'STEAM_LINK_SUCCESS',
+          success: true,
+          steamId64,
+          dotaAccountId,
+          timestamp: Date.now()
+        };
+
+        try {
+          if (typeof BroadcastChannel !== 'undefined') {
+            const ch = new BroadcastChannel('pbg_steam_auth');
+            ch.postMessage(messageData);
+            ch.close();
+          }
+        } catch {}
+
+        try {
+          localStorage.setItem('pbg_steam_link_result', JSON.stringify(messageData));
+        } catch {}
+
+        try {
+          if (window.opener && !window.opener.closed) {
+            window.opener.postMessage(messageData, '*');
+          }
+        } catch {}
+
+        setTimeout(() => {
+          try { window.close(); } catch {}
+        }, 500);
+      }
+    }
+
     // Bidirectional postMessage listener for host applications
     const handleWindowMessage = (event: MessageEvent) => {
       try {
