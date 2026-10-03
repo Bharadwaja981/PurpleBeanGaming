@@ -67,15 +67,15 @@ export function AppLaunchSplashScreen({
   const displayProgress = Math.min(100, Math.max(0, Math.round(internalProgress)));
 
   return (
-    <div className="fixed inset-0 z-[100] bg-[#FDFBF7] flex flex-col items-center justify-center p-4 sm:p-6 overflow-hidden select-none">
+    <div className="fixed inset-0 z-[100] bg-[#FDFBF7] dark:bg-[#0C0A14] flex flex-col items-center justify-center p-4 sm:p-6 overflow-hidden select-none">
       {/* Neo-brutalist Background Geometry Accents */}
       <div className="absolute -top-12 -left-12 w-48 h-48 bg-[#FFE600] border-[3.5px] border-black rotate-12 -z-10 shadow-[6px_6px_0px_0px_#000]" />
-      <div className="absolute -bottom-16 -right-16 w-64 h-64 bg-[#F3E8FF] border-[3.5px] border-black -rotate-6 -z-10 shadow-[6px_6px_0px_0px_#000]" />
+      <div className="absolute -bottom-16 -right-16 w-64 h-64 bg-[#F3E8FF] dark:bg-[#1C1635] border-[3.5px] border-black -rotate-6 -z-10 shadow-[6px_6px_0px_0px_#000]" />
       <div className="absolute top-1/4 -right-8 w-24 h-24 bg-[#5CE1E6] border-[3px] border-black rotate-45 -z-10 opacity-70" />
       <div className="absolute bottom-1/4 -left-6 w-20 h-20 bg-[#FF90E8] border-[3px] border-black -rotate-12 -z-10 opacity-70" />
 
       {/* Main Centered Branded Launch Container (Matches Reference Image Screen 1) */}
-      <div className="relative w-full max-w-lg bg-white border-[4px] border-black shadow-[10px_10px_0px_0px_#000] p-8 sm:p-12 text-center space-y-8 animate-in zoom-in-95 duration-200">
+      <div className="relative w-full max-w-lg bg-white dark:bg-[#18152B] border-[4px] border-black shadow-[10px_10px_0px_0px_#000] p-8 sm:p-12 text-center space-y-8 animate-in zoom-in-95 duration-200">
         {/* Top Mini Tag */}
         <div className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#FFE600] text-black border-2 border-black font-mono text-[11px] font-black uppercase tracking-wider shadow-[2px_2px_0px_0px_#000]">
           <Zap className="w-3 h-3 fill-black" />

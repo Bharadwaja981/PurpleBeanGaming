@@ -490,12 +490,18 @@ export function Navigation({
               {isDarkMode ? (
                 <>
                   <Sun className="w-3.5 h-3.5 text-[#FFE600] fill-[#FFE600] shrink-0" />
-                  <span className="hidden sm:inline font-mono text-[11px] font-black tracking-wider text-[#FFE600]">LIGHT</span>
+                  <span className="font-mono text-[11px] font-black tracking-wider text-[#FFE600]">
+                    <span className="inline sm:hidden">LT</span>
+                    <span className="hidden sm:inline">LIGHT</span>
+                  </span>
                 </>
               ) : (
                 <>
                   <Moon className="w-3.5 h-3.5 text-black fill-black shrink-0" />
-                  <span className="hidden sm:inline font-mono text-[11px] font-black tracking-wider text-black">DARK</span>
+                  <span className="font-mono text-[11px] font-black tracking-wider text-black">
+                    <span className="inline sm:hidden">DK</span>
+                    <span className="hidden sm:inline">DARK</span>
+                  </span>
                 </>
               )}
             </button>

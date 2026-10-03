@@ -79,14 +79,12 @@ class ThemeManager {
   private init() {
     if (typeof window === 'undefined') return;
 
-    // 1. Determine Initial Color Mode
+    // 1. Determine Initial Color Mode: Light mode is default
     const savedMode = localStorage.getItem(THEME_MODE_KEY) as ColorMode | null;
     if (savedMode === 'dark' || savedMode === 'light') {
       this.mode = savedMode;
     } else {
-      // Check system preference
-      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      this.mode = prefersDark ? 'dark' : 'light';
+      this.mode = 'light';
     }
 
     // 2. Determine Palette Index
@@ -100,17 +98,6 @@ class ThemeManager {
 
     // Apply to DOM immediately
     this.applyToDOM();
-
-    // Listen for OS preference changes if not explicitly overridden by user
-    if (window.matchMedia) {
-      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
-        if (!localStorage.getItem(THEME_MODE_KEY)) {
-          this.mode = e.matches ? 'dark' : 'light';
-          this.applyToDOM();
-          this.notify();
-        }
-      });
-    }
   }
 
   public getMode(): ColorMode {

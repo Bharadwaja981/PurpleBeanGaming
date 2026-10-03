@@ -89,6 +89,12 @@
   color: #E4E4E7;
 }
 
+.dark .bg-stone-300:not([data-keep-light="true"]) {
+  background-color: #363056 !important;
+  color: #E4E4E7;
+}
+
+/* Hover States for Dark Mode — Prevents Light Flash on Hover */
 .dark .hover\:bg-stone-50:hover {
   background-color: #1D1933 !important;
 }
@@ -101,15 +107,50 @@
   background-color: #342D5A !important;
 }
 
+.dark .hover\:bg-stone-300:hover {
+  background-color: #3F376A !important;
+}
+
 .dark .hover\:bg-white:hover {
   background-color: #24203E !important;
+}
+
+.dark .hover\:bg-\[\#FFF9E6\]:hover,
+.dark .hover\:bg-\[\#FFFBEB\]:hover,
+.dark .hover\:bg-\[\#FFFDE8\]:hover,
+.dark .hover\:bg-\[\#FFFDEB\]:hover,
+.dark .hover\:bg-\[\#FFF4E5\]:hover {
+  background-color: #282244 !important;
+}
+
+.dark .hover\:bg-\[\#F3E8FF\]:hover,
+.dark .hover\:bg-purple-50:hover {
+  background-color: #2C234C !important;
+}
+
+.dark .hover\:bg-emerald-50:hover {
+  background-color: rgba(16, 185, 129, 0.2) !important;
+}
+
+.dark .hover\:bg-amber-50:hover,
+.dark .hover\:bg-yellow-50:hover {
+  background-color: rgba(245, 158, 11, 0.2) !important;
+}
+
+.dark .hover\:bg-red-50:hover {
+  background-color: rgba(239, 68, 68, 0.2) !important;
+}
+
+.dark .hover\:bg-blue-50:hover {
+  background-color: rgba(59, 130, 246, 0.2) !important;
 }
 
 /* Pale Tint Surfaces -> Deep Violet-Slate in Dark Mode */
 .dark .bg-\[\#FFFBEB\],
 .dark .bg-\[\#FFF9E6\],
 .dark .bg-\[\#FFFDE8\],
-.dark .bg-\[\#FFFDEB\] {
+.dark .bg-\[\#FFFDEB\],
+.dark .bg-\[\#FFF4E5\] {
   background-color: #19162B !important;
 }
 
@@ -123,10 +164,21 @@
   color: #6EE7B7;
 }
 
+.dark .bg-emerald-100 {
+  background-color: rgba(16, 185, 129, 0.18) !important;
+  color: #6EE7B7 !important;
+}
+
 .dark .bg-amber-50,
 .dark .bg-yellow-50 {
   background-color: rgba(245, 158, 11, 0.12) !important;
   color: #FCD34D;
+}
+
+.dark .bg-amber-100,
+.dark .bg-yellow-100 {
+  background-color: rgba(245, 158, 11, 0.18) !important;
+  color: #FCD34D !important;
 }
 
 .dark .bg-red-50 {
@@ -134,14 +186,31 @@
   color: #FCA5A5;
 }
 
+.dark .bg-red-100,
+.dark .bg-rose-100 {
+  background-color: rgba(239, 68, 68, 0.18) !important;
+  color: #FCA5A5 !important;
+}
+
 .dark .bg-blue-50 {
   background-color: rgba(59, 130, 246, 0.12) !important;
   color: #93C5FD;
 }
 
+.dark .bg-blue-100,
+.dark .bg-sky-100 {
+  background-color: rgba(59, 130, 246, 0.18) !important;
+  color: #93C5FD !important;
+}
+
 .dark .bg-purple-50 {
   background-color: rgba(124, 58, 237, 0.12) !important;
   color: #C4B5FD;
+}
+
+.dark .bg-purple-100 {
+  background-color: rgba(124, 58, 237, 0.18) !important;
+  color: #DDD6FE !important;
 }
 
 .dark .bg-cyan-50 {
@@ -159,12 +228,13 @@
   border-color: #2E294B !important;
 }
 
-.dark table tr.hover\:bg-stone-50:hover {
+.dark table tr.hover\:bg-stone-50:hover,
+.dark table tr:hover {
   background-color: #221D3D !important;
 }
 
 /* Text Adaptations for Dark Mode (Preserves Vibrant Neo-Brutalist Accent Badges) */
-.dark .text-black:not(.bg-\[\#FFE600\]):not(.bg-\[\#70FFAF\]):not(.bg-\[\#5CE1E6\]):not(.bg-\[\#FFDE59\]):not(.bg-\[\#FF90E8\]):not([data-keep-color="true"]) {
+.dark .text-black:not(.bg-\[\#FFE600\]):not(.bg-\[\#70FFAF\]):not(.bg-\[\#5CE1E6\]):not(.bg-\[\#FFDE59\]):not(.bg-\[\#FF90E8\]):not(.bg-yellow-400):not(.bg-emerald-400):not([data-keep-color="true"]) {
   color: #F4F4F5;
 }
 
@@ -175,11 +245,76 @@
 
 .dark .text-stone-700,
 .dark .text-stone-600 {
-  color: #A1A1AA !important;
+  color: #B4B4C0 !important;
 }
 
 .dark .text-stone-500 {
-  color: #71717A !important;
+  color: #9494A4 !important;
+}
+
+.dark .text-stone-400 {
+  color: #A1A1B2 !important;
+}
+
+/* High Contrast Colored Text Adaptations for Dark Mode */
+.dark .text-purple-700,
+.dark .text-purple-800 {
+  color: #C4B5FD !important;
+}
+
+.dark .text-\[\#7C3AED\] {
+  color: #A78BFA !important;
+}
+
+.dark .text-emerald-600,
+.dark .text-emerald-700,
+.dark .text-emerald-800,
+.dark .text-emerald-900,
+.dark .text-emerald-950 {
+  color: #6EE7B7 !important;
+}
+
+.dark .text-amber-700,
+.dark .text-amber-800,
+.dark .text-amber-900,
+.dark .text-amber-950 {
+  color: #FCD34D !important;
+}
+
+.dark .text-red-600,
+.dark .text-red-700,
+.dark .text-red-800,
+.dark .text-red-900,
+.dark .text-red-950 {
+  color: #FCA5A5 !important;
+}
+
+.dark .text-blue-600,
+.dark .text-blue-700,
+.dark .text-blue-800,
+.dark .text-blue-900 {
+  color: #93C5FD !important;
+}
+
+/* Maintain Jet-Black High Contrast Text on Vibrant Cyber Badges in Both Modes */
+.dark .bg-\[\#FFE600\], .dark .bg-\[\#FFE600\] *,
+.dark .bg-\[\#70FFAF\], .dark .bg-\[\#70FFAF\] *,
+.dark .bg-\[\#5CE1E6\], .dark .bg-\[\#5CE1E6\] *,
+.dark .bg-\[\#FFDE59\], .dark .bg-\[\#FFDE59\] *,
+.dark .bg-\[\#FF90E8\], .dark .bg-\[\#FF90E8\] *,
+.dark .bg-yellow-400, .dark .bg-yellow-400 *,
+.dark .bg-emerald-400, .dark .bg-emerald-400 * {
+  color: #000000 !important;
+}
+
+.dark .bg-\[\#FFE600\] svg,
+.dark .bg-\[\#70FFAF\] svg,
+.dark .bg-\[\#5CE1E6\] svg,
+.dark .bg-\[\#FFDE59\] svg,
+.dark .bg-\[\#FF90E8\] svg,
+.dark .bg-yellow-400 svg,
+.dark .bg-emerald-400 svg {
+  stroke: #000000 !important;
 }
 
 /* Dark Mode Borders & Dividers */
@@ -188,16 +323,23 @@
 }
 
 .dark .border-stone-200,
-.dark .border-stone-300 {
+.dark .border-stone-300,
+.dark .border-stone-400 {
   border-color: #2E294A !important;
 }
 
+.dark .border-black\/10,
+.dark .border-black\/20 {
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
 .dark .divide-stone-100 > :not([hidden]) ~ :not([hidden]),
-.dark .divide-stone-200 > :not([hidden]) ~ :not([hidden]) {
+.dark .divide-stone-200 > :not([hidden]) ~ :not([hidden]),
+.dark .divide-stone-300 > :not([hidden]) ~ :not([hidden]) {
   border-color: #272242 !important;
 }
 
-/* Dark Mode Inputs & Textareas */
+/* Dark Mode Inputs, Selects & Textareas */
 .dark input:not([type="checkbox"]):not([type="radio"]),
 .dark select,
 .dark textarea {
@@ -206,9 +348,14 @@
   border-color: #494174 !important;
 }
 
+.dark select option {
+  background-color: #171527 !important;
+  color: #F4F4F5 !important;
+}
+
 .dark input::placeholder,
 .dark textarea::placeholder {
-  color: #71717A !important;
+  color: #8E8E9F !important;
 }
 
 /* Neo-Brutalist Hard Offset Shadows on Dark */

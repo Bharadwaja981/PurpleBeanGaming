@@ -49,7 +49,8 @@ import { AuctionDraft } from './components/AuctionDraft';
 import { OrganiserDashboardView } from './views/OrganiserDashboardView';
 import { AdminDashboardView } from './views/AdminDashboardView';
 import { NotFoundView } from './views/NotFoundView';
-import { themeManager, ColorMode, ThemePalette } from './services/themeManager';
+import { themeManager, ColorMode, ThemePalette, PBG_PALETTES } from './services/themeManager';
+import { SideThemeToggle } from './components/SideThemeToggle';
 
 import { Trophy, Shield, Swords, Users, Heart, ArrowUpRight, Flame, MapPin, Key, Loader2, Zap, Sun, Moon } from 'lucide-react';
 
@@ -348,7 +349,7 @@ export default function App() {
         if (data.type === 'PB_NAVIGATE' && data.view) {
           handleNavigate(data.view as ViewType, data.entityId);
         } else if (data.type === 'PB_SET_THEME' && typeof data.themeIdx === 'number') {
-          setThemeIdx(data.themeIdx % THEMES.length);
+          themeManager.setPaletteIndex(data.themeIdx % PBG_PALETTES.length);
         } else if (data.type === 'PB_OPEN_BRANDKIT') {
           setIsBrandKitOpen(true);
         }
@@ -908,6 +909,14 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Floating Side Dock Light & Dark Mode Quick Toggle */}
+      <SideThemeToggle
+        isDarkMode={colorMode === 'dark'}
+        onToggleDarkMode={handleToggleDarkMode}
+        currentPalette={currentPalette}
+        onCyclePalette={handleCycleTheme}
+      />
     </div>
   );
 }
