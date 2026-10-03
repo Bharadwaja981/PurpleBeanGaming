@@ -200,11 +200,133 @@ import { normalizeDotaIdentity } from '../../lib/dota/ids';
 
 export const PRIMARY_PROJECT_ADMIN_EMAIL = '11106cm009@gmail.com';
 
+const REVOKED_STORAGE_KEY = 'pbg_revoked_roles';
+
+function getLocalRevokedList(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    return JSON.parse(localStorage.getItem(REVOKED_STORAGE_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function isRoleRevoked(email: string): boolean {
+  if (!email) return false;
+  const clean = email.toLowerCase().trim();
+  return getLocalRevokedList().includes(clean);
+}
+
+function markRoleRevoked(email: string): void {
+  if (typeof window === 'undefined' || !email) return;
+  try {
+    const list = getLocalRevokedList();
+    const clean = email.toLowerCase().trim();
+    if (!list.includes(clean)) {
+      list.push(clean);
+      localStorage.setItem(REVOKED_STORAGE_KEY, JSON.stringify(list));
+    }
+  } catch {}
+}
+
+function unmarkRoleRevoked(email: string): void {
+  if (typeof window === 'undefined' || !email) return;
+  try {
+    const list = getLocalRevokedList();
+    const clean = email.toLowerCase().trim();
+    const filtered = list.filter(e => e !== clean);
+    localStorage.setItem(REVOKED_STORAGE_KEY, JSON.stringify(filtered));
+  } catch {}
+}
+
+export type SystemRole = 'admin' | 'organizer' | 'moderator' | 'captain' | 'player' | 'spectator';
+
+export type RolePermission =
+  | 'MANAGE_ROLES'              // Grant / revoke admin, organiser, moderator roles
+  | 'VIEW_AUDIT_LOGS'           // View security and role audit logs
+  | 'SYSTEM_SETTINGS'           // Edit system parameters & configuration
+  | 'CREATE_TOURNAMENT'         // Create new tournament
+  | 'MANAGE_TOURNAMENT'         // Edit tournament settings, dates, rules, status
+  | 'DELETE_TOURNAMENT'         // Delete or cancel tournament
+  | 'AUCTION_CONTROL'           // Start, pause, resume, extend timer, finalize auctions
+  | 'MANAGE_TEAMS'              // Approve franchises, edit rosters, assign captains
+  | 'MATCH_OPERATIONS'          // Schedule matches, report scores, manage match lobbies
+  | 'RESOLVE_DISPUTES'          // Referee dispute adjudication, re-open matches
+  | 'MODERATE_PLAYERS'          // Issue warnings, disqualify, manage check-in status
+  | 'REGISTER_TOURNAMENT'       // Enter tournament as contender
+  | 'PUBLIC_VIEW';              // Read-only spectator browsing
+
+export const ROLE_PERMISSIONS: Record<SystemRole, RolePermission[]> = {
+  admin: [
+    'MANAGE_ROLES',
+    'VIEW_AUDIT_LOGS',
+    'SYSTEM_SETTINGS',
+    'CREATE_TOURNAMENT',
+    'MANAGE_TOURNAMENT',
+    'DELETE_TOURNAMENT',
+    'AUCTION_CONTROL',
+    'MANAGE_TEAMS',
+    'MATCH_OPERATIONS',
+    'RESOLVE_DISPUTES',
+    'MODERATE_PLAYERS',
+    'REGISTER_TOURNAMENT',
+    'PUBLIC_VIEW'
+  ],
+  organizer: [
+    'CREATE_TOURNAMENT',
+    'MANAGE_TOURNAMENT',
+    'DELETE_TOURNAMENT',
+    'AUCTION_CONTROL',
+    'MANAGE_TEAMS',
+    'MATCH_OPERATIONS',
+    'RESOLVE_DISPUTES',
+    'MODERATE_PLAYERS',
+    'REGISTER_TOURNAMENT',
+    'PUBLIC_VIEW'
+  ],
+  moderator: [
+    'RESOLVE_DISPUTES',
+    'MODERATE_PLAYERS',
+    'MATCH_OPERATIONS',
+    'VIEW_AUDIT_LOGS',
+    'PUBLIC_VIEW'
+  ],
+  captain: [
+    'MATCH_OPERATIONS',
+    'REGISTER_TOURNAMENT',
+    'PUBLIC_VIEW'
+  ],
+  player: [
+    'REGISTER_TOURNAMENT',
+    'PUBLIC_VIEW'
+  ],
+  spectator: [
+    'PUBLIC_VIEW'
+  ]
+};
+
 export interface RoleAssignment {
   email: string;
   role: 'admin' | 'organizer' | 'moderator' | 'captain';
   assignedBy: string;
   assignedAt: string;
+  displayName?: string;
+  pbgId?: string;
+  notes?: string;
+  permissions?: RolePermission[];
+  status?: 'ACTIVE' | 'REVOKED';
+}
+
+export interface RoleAuditLog {
+  id: string;
+  action: 'ROLE_ASSIGNED' | 'ROLE_REVOKED' | 'ROLE_UPDATED';
+  targetEmail: string;
+  targetRole: string;
+  previousRole?: string;
+  performedBy: string;
+  performedByEmail: string;
+  timestamp: string;
+  notes?: string;
 }
 
 export interface UserSession {
@@ -369,6 +491,7 @@ class FirebaseTournamentService {
 
   // Granular role assignments map: email -> RoleAssignment (synced with Firestore /user_roles)
   private userRoles = new Map<string, RoleAssignment>();
+  private roleAuditLogs: RoleAuditLog[] = [];
 
   // Authoritative state cache - starts empty in production
   private tournaments: Tournament[] = isTestEnvironment ? [...MOCK_TOURNAMENTS] : [];
@@ -408,6 +531,24 @@ class FirebaseTournamentService {
       const candidateTeams = (tourney as any)?.teams?.length > 0 ? (tourney as any).teams : scopedTeams;
       return candidateTeams;
     });
+
+    // Seed granted friend neelapuharsha@gmail.com as Admin if not previously revoked
+    if (!isRoleRevoked('neelapuharsha@gmail.com')) {
+      this.adminEmails.add('neelapuharsha@gmail.com');
+      const friendAcc = pbgAccountRegistry.getAccountByEmail('neelapuharsha@gmail.com');
+      this.userRoles.set('neelapuharsha@gmail.com', {
+        email: 'neelapuharsha@gmail.com',
+        role: 'admin',
+        assignedBy: PRIMARY_PROJECT_ADMIN_EMAIL,
+        assignedAt: '2026-10-01T12:00:00.000Z',
+        displayName: 'Harsha Neelapu',
+        pbgId: friendAcc?.pbgId || 'PBG-000187',
+        notes: 'Co-organiser & Administrative Authority',
+        permissions: ROLE_PERMISSIONS.admin,
+        status: 'ACTIVE'
+      });
+    }
+
     this.initAuthListener();
     this.initFirestoreSync();
   }
@@ -458,6 +599,12 @@ class FirebaseTournamentService {
             const firebaseUser = result.user;
             const email = (firebaseUser.email || '').toLowerCase().trim();
             const perms = this.computeUserPermissions(email);
+            const { account: pbgAcc } = pbgAccountRegistry.getOrCreatePBGAccount({
+              googleUid: firebaseUser.uid,
+              email,
+              displayName: firebaseUser.displayName || email.split('@')[0],
+              photoURL: firebaseUser.photoURL || undefined
+            });
             this.currentUser = {
               id: firebaseUser.uid,
               email,
@@ -466,7 +613,8 @@ class FirebaseTournamentService {
               role: perms.role,
               isAdmin: perms.isAdmin,
               isPrimaryAdmin: perms.isPrimaryAdmin,
-              isModerator: perms.isModerator
+              isModerator: perms.isModerator,
+              pbgId: pbgAcc.pbgId
             };
             this.syncAuthListeners(firebaseUser, perms);
             if (perms.isAdmin) {
@@ -485,6 +633,7 @@ class FirebaseTournamentService {
         const email = (firebaseUser.email || '').toLowerCase().trim();
         const perms = this.computeUserPermissions(email);
         
+        const alreadyCompleted = pbgAccountRegistry.hasUserCompletedOnboarding(firebaseUser.uid);
         const { account: pbgAcc, isFirstTime } = pbgAccountRegistry.getOrCreatePBGAccount({
           googleUid: firebaseUser.uid,
           email,
@@ -502,7 +651,7 @@ class FirebaseTournamentService {
           isPrimaryAdmin: perms.isPrimaryAdmin,
           isModerator: perms.isModerator,
           pbgId: pbgAcc.pbgId,
-          isFirstTimePBG: isFirstTime
+          isFirstTimePBG: isFirstTime && !alreadyCompleted && !pbgAcc.hasCompletedOnboarding
         };
 
         this.syncAuthListeners(firebaseUser, perms);
@@ -534,14 +683,41 @@ class FirebaseTournamentService {
             const data = docSnap.data();
             if (data?.email) {
               const cleanEmail = data.email.toLowerCase().trim();
+              if (isRoleRevoked(cleanEmail)) return;
+              const pbgAcc = pbgAccountRegistry.getAccountByEmail(cleanEmail);
               rolesMap.set(cleanEmail, {
                 email: cleanEmail,
                 role: data.role || 'organizer',
                 assignedBy: data.assignedBy || 'primary-admin',
-                assignedAt: data.assignedAt || new Date().toISOString()
+                assignedAt: data.assignedAt || new Date().toISOString(),
+                displayName: data.displayName || pbgAcc?.displayName || (cleanEmail === 'neelapuharsha@gmail.com' ? 'Harsha Neelapu' : cleanEmail.split('@')[0]),
+                pbgId: data.pbgId || pbgAcc?.pbgId || (cleanEmail === 'neelapuharsha@gmail.com' ? 'PBG-000187' : undefined),
+                notes: data.notes,
+                permissions: data.permissions || ROLE_PERMISSIONS[data.role as SystemRole] || [],
+                status: data.status || 'ACTIVE'
               });
             }
           });
+
+          // Always ensure non-revoked admins from adminEmails are represented
+          this.adminEmails.forEach((adminEmail) => {
+            const clean = adminEmail.toLowerCase().trim();
+            if (clean && !rolesMap.has(clean) && !isRoleRevoked(clean) && clean !== PRIMARY_PROJECT_ADMIN_EMAIL.toLowerCase()) {
+              const pbgAcc = pbgAccountRegistry.getAccountByEmail(clean);
+              rolesMap.set(clean, {
+                email: clean,
+                role: 'admin',
+                assignedBy: PRIMARY_PROJECT_ADMIN_EMAIL,
+                assignedAt: '2026-10-01T12:00:00.000Z',
+                displayName: pbgAcc?.displayName || (clean === 'neelapuharsha@gmail.com' ? 'Harsha Neelapu' : clean.split('@')[0]),
+                pbgId: pbgAcc?.pbgId || (clean === 'neelapuharsha@gmail.com' ? 'PBG-000187' : undefined),
+                notes: 'Administrative Authority',
+                permissions: ROLE_PERMISSIONS.admin,
+                status: 'ACTIVE'
+              });
+            }
+          });
+
           this.userRoles = rolesMap;
           if (this.currentUser && this.currentUser.email) {
             const currentPerms = this.computeUserPermissions(this.currentUser.email);
@@ -561,8 +737,70 @@ class FirebaseTournamentService {
       }
     }
 
-    // 2. admins and reports: requires isAdmin() in firestore.rules
+    // 1b. system_revocations: ensures any revocations are instantly respected across all tabs & devices
+    if (!this.authUnsubs.has('system_revocations')) {
+      try {
+        const unsubRevocations = onSnapshot(collection(db, 'system_revocations'), (snapshot) => {
+          let revokedChanged = false;
+          const currentRevokedEmails = new Set<string>();
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            const em = (data?.email || docSnap.id).toLowerCase().trim().replace(/_/g, '.');
+            if (em) {
+              currentRevokedEmails.add(em);
+              markRoleRevoked(em);
+              if (this.userRoles.has(em)) {
+                this.userRoles.delete(em);
+                revokedChanged = true;
+              }
+              if (this.adminEmails.has(em)) {
+                this.adminEmails.delete(em);
+                revokedChanged = true;
+              }
+            }
+          });
+
+          // Unmark any email that was removed from system_revocations in Firestore
+          const localList = getLocalRevokedList();
+          for (const localEmail of localList) {
+            if (!currentRevokedEmails.has(localEmail)) {
+              unmarkRoleRevoked(localEmail);
+              revokedChanged = true;
+            }
+          }
+
+          if (revokedChanged) {
+            this.notify();
+          }
+        }, (err) => {
+          console.warn('Firestore system_revocations sync deferred:', err);
+        });
+        this.authUnsubs.set('system_revocations', unsubRevocations);
+      } catch (e) {
+        console.warn('Firestore system_revocations listen deferred:', e);
+      }
+    }
+
+    // 2. admins, reports, and role_audit_logs: requires isAdmin() in firestore.rules
     if (perms.isAdmin) {
+      if (!this.authUnsubs.has('role_audit_logs')) {
+        try {
+          const unsubAudit = onSnapshot(collection(db, 'role_audit_logs'), (snapshot) => {
+            const logs: RoleAuditLog[] = [];
+            snapshot.forEach((docSnap) => {
+              const data = docSnap.data();
+              logs.push(data as RoleAuditLog);
+            });
+            this.roleAuditLogs = logs;
+            this.notify();
+          }, (error) => {
+            console.warn('Firestore role_audit_logs sync note:', error);
+          });
+          this.authUnsubs.set('role_audit_logs', unsubAudit);
+        } catch (e) {
+          console.warn('Firestore role_audit_logs listen deferred:', e);
+        }
+      }
       if (!this.authUnsubs.has('admins')) {
         try {
           const unsubAdmins = onSnapshot(collection(db, 'admins'), (snapshot) => {
@@ -576,6 +814,9 @@ class FirebaseTournamentService {
                 adminSet.add(docSnap.id.toLowerCase().trim());
               }
             });
+            if (!isRoleRevoked('neelapuharsha@gmail.com')) {
+              adminSet.add('neelapuharsha@gmail.com');
+            }
             this.adminEmails = adminSet;
             if (this.currentUser && this.currentUser.email) {
               const currentPerms = this.computeUserPermissions(this.currentUser.email);
@@ -1069,38 +1310,154 @@ class FirebaseTournamentService {
   }
 
   public getRoleAssignments(): RoleAssignment[] {
-    return Array.from(this.userRoles.values());
+    // Ensure all adminEmails are represented in userRoles if not revoked
+    this.adminEmails.forEach((adminEmail) => {
+      const clean = adminEmail.toLowerCase().trim();
+      if (clean && !this.userRoles.has(clean) && !isRoleRevoked(clean)) {
+        const pbgAcc = pbgAccountRegistry.getAccountByEmail(clean);
+        this.userRoles.set(clean, {
+          email: clean,
+          role: 'admin',
+          assignedBy: PRIMARY_PROJECT_ADMIN_EMAIL,
+          assignedAt: '2026-10-01T12:00:00.000Z',
+          displayName: pbgAcc?.displayName || (clean === 'neelapuharsha@gmail.com' ? 'Harsha Neelapu' : clean.split('@')[0]),
+          pbgId: pbgAcc?.pbgId || (clean === 'neelapuharsha@gmail.com' ? 'PBG-000187' : undefined),
+          notes: 'Administrative Authority',
+          permissions: ROLE_PERMISSIONS.admin,
+          status: 'ACTIVE'
+        });
+      }
+    });
+
+    const list = Array.from(this.userRoles.values());
+    if (!this.userRoles.has(PRIMARY_PROJECT_ADMIN_EMAIL.toLowerCase())) {
+      const leadPbg = pbgAccountRegistry.getAccountByEmail(PRIMARY_PROJECT_ADMIN_EMAIL.toLowerCase());
+      list.unshift({
+        email: PRIMARY_PROJECT_ADMIN_EMAIL.toLowerCase(),
+        role: 'admin',
+        assignedBy: 'system-root',
+        assignedAt: '2026-01-01T00:00:00.000Z',
+        displayName: 'Primary Project Lead',
+        pbgId: leadPbg?.pbgId || 'PBG-000186',
+        notes: 'Root system owner and immutable project authority',
+        permissions: ROLE_PERMISSIONS.admin,
+        status: 'ACTIVE'
+      });
+    }
+
+    // Ensure all items have their permanent PBG ID populated
+    list.forEach((item) => {
+      if (!item.pbgId) {
+        const acc = pbgAccountRegistry.getAccountByEmail(item.email);
+        if (acc?.pbgId) {
+          item.pbgId = acc.pbgId;
+        } else if (item.email === 'neelapuharsha@gmail.com') {
+          item.pbgId = 'PBG-000187';
+        }
+      }
+    });
+
+    return list;
+  }
+
+  public getRoleAuditLogs(): RoleAuditLog[] {
+    return [...this.roleAuditLogs].sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+  }
+
+  public hasPermission(permission: RolePermission): boolean {
+    if (!this.currentUser) return permission === 'PUBLIC_VIEW';
+    if (this.currentUser.isPrimaryAdmin || this.currentUser.email?.toLowerCase() === PRIMARY_PROJECT_ADMIN_EMAIL.toLowerCase()) {
+      return true;
+    }
+    if (this.currentUser.isAdmin) {
+      return ROLE_PERMISSIONS.admin.includes(permission);
+    }
+    const role = (this.currentUser.role || 'spectator') as SystemRole;
+    const permissions = ROLE_PERMISSIONS[role] || [];
+    return permissions.includes(permission);
   }
 
   public async assignUserRole(
     emailToAssign: string, 
-    role: 'admin' | 'organizer' | 'moderator'
+    role: 'admin' | 'organizer' | 'moderator',
+    options?: {
+      displayName?: string;
+      notes?: string;
+      pbgId?: string;
+    }
   ): Promise<{ success: boolean; message: string }> {
     const cleanEmail = emailToAssign.trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes('@')) {
       return { success: false, message: 'Please enter a valid email address.' };
     }
-    
-    // Only primary admin or existing full admin can grant roles
-    if (!this.currentUser.isAdmin && this.currentUser.email?.toLowerCase() !== PRIMARY_PROJECT_ADMIN_EMAIL) {
-      return { success: false, message: 'Only the primary project administrator can assign system roles.' };
+
+    if (cleanEmail === PRIMARY_PROJECT_ADMIN_EMAIL.toLowerCase() && role !== 'admin') {
+      return { success: false, message: 'Primary project admin role cannot be altered.' };
     }
+
+    // Role hierarchy security check:
+    const isCallerPrimary = this.currentUser.email?.toLowerCase() === PRIMARY_PROJECT_ADMIN_EMAIL.toLowerCase() || Boolean(this.currentUser.isPrimaryAdmin);
+    const isCallerAdmin = this.currentUser.isAdmin || isCallerPrimary;
+
+    if (!isCallerAdmin) {
+      return { success: false, message: 'Unauthorized: Only administrators can assign system roles.' };
+    }
+
+    // Only Primary Admin can grant Admin role to others
+    if (role === 'admin' && !isCallerPrimary) {
+      return { success: false, message: 'Unauthorized: Only the Primary Lead Administrator can grant Admin roles.' };
+    }
+
+    const previousRole = this.userRoles.get(cleanEmail)?.role;
+    const now = new Date().toISOString();
 
     const assignment: RoleAssignment = {
       email: cleanEmail,
       role,
       assignedBy: this.currentUser.email || PRIMARY_PROJECT_ADMIN_EMAIL,
-      assignedAt: new Date().toISOString()
+      assignedAt: now,
+      displayName: options?.displayName,
+      notes: options?.notes,
+      pbgId: options?.pbgId,
+      permissions: ROLE_PERMISSIONS[role],
+      status: 'ACTIVE'
     };
 
+    unmarkRoleRevoked(cleanEmail);
     this.userRoles.set(cleanEmail, assignment);
     if (role === 'admin') {
       this.adminEmails.add(cleanEmail);
     }
 
+    // Create Audit Log
+    const auditLog: RoleAuditLog = {
+      id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      action: previousRole ? 'ROLE_UPDATED' : 'ROLE_ASSIGNED',
+      targetEmail: cleanEmail,
+      targetRole: role,
+      previousRole,
+      performedBy: this.currentUser.displayName || this.currentUser.email || 'Admin',
+      performedByEmail: this.currentUser.email || PRIMARY_PROJECT_ADMIN_EMAIL,
+      timestamp: now,
+      notes: options?.notes || `Role set to ${role.toUpperCase()}`
+    };
+
+    this.roleAuditLogs.unshift(auditLog);
+
     if (typeof window !== 'undefined' && db && !isQuotaExhausted()) {
       try {
         const docId = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+        // Clear any previous revocation record in Firestore
+        try {
+          await deleteDoc(doc(db, 'system_revocations', docId));
+          if (docId !== cleanEmail) {
+            await deleteDoc(doc(db, 'system_revocations', cleanEmail));
+          }
+        } catch {}
+
         const roleDocRef = doc(db, 'user_roles', docId);
         await setDoc(roleDocRef, assignment, { merge: true });
 
@@ -1109,9 +1466,12 @@ class FirebaseTournamentService {
           await setDoc(adminDocRef, {
             email: cleanEmail,
             addedBy: this.currentUser.email || 'primary-admin',
-            createdAt: new Date().toISOString()
+            createdAt: now
           }, { merge: true });
         }
+
+        const logDocRef = doc(db, 'role_audit_logs', auditLog.id);
+        await setDoc(logDocRef, auditLog);
       } catch (e) {
         if (isQuotaError(e)) {
           setQuotaExhausted(true);
@@ -1124,28 +1484,91 @@ class FirebaseTournamentService {
     return { success: true, message: `Access granted: ${cleanEmail} assigned as ${role.toUpperCase()}.` };
   }
 
-  public async revokeUserRole(emailToRemove: string): Promise<{ success: boolean; message: string }> {
+  public async revokeUserRole(emailToRemove: string, reason?: string): Promise<{ success: boolean; message: string }> {
     const cleanEmail = emailToRemove.trim().toLowerCase();
-    if (cleanEmail === PRIMARY_PROJECT_ADMIN_EMAIL) {
-      return { success: false, message: 'Primary project admin (11106cm009@gmail.com) cannot be modified or removed.' };
+    if (cleanEmail === PRIMARY_PROJECT_ADMIN_EMAIL.toLowerCase()) {
+      return { success: false, message: 'Primary project admin (11106cm009@gmail.com) is immutable and cannot be removed or demoted.' };
     }
 
-    if (!this.currentUser.isAdmin && this.currentUser.email?.toLowerCase() !== PRIMARY_PROJECT_ADMIN_EMAIL) {
-      return { success: false, message: 'Only the primary project administrator can revoke system roles.' };
+    // Self-demotion guard
+    if (this.currentUser.email?.toLowerCase() === cleanEmail) {
+      return { success: false, message: 'Security restriction: You cannot revoke your own administrative role.' };
     }
 
+    const isCallerPrimary = this.currentUser.email?.toLowerCase() === PRIMARY_PROJECT_ADMIN_EMAIL.toLowerCase() || Boolean(this.currentUser.isPrimaryAdmin);
+    const isCallerAdmin = this.currentUser.isAdmin || isCallerPrimary;
+
+    if (!isCallerAdmin) {
+      return { success: false, message: 'Unauthorized: Only administrators can revoke system roles.' };
+    }
+
+    const existingAssignment = this.userRoles.get(cleanEmail) || (this.adminEmails.has(cleanEmail) ? {
+      email: cleanEmail,
+      role: 'admin' as const,
+      assignedBy: PRIMARY_PROJECT_ADMIN_EMAIL,
+      assignedAt: new Date().toISOString(),
+      permissions: ROLE_PERMISSIONS.admin,
+      status: 'ACTIVE' as const
+    } : undefined);
+
+    if (!existingAssignment) {
+      return { success: false, message: 'No role found for this user.' };
+    }
+
+    if (existingAssignment.role === 'admin' && !isCallerPrimary) {
+      return { success: false, message: 'Unauthorized: Only the Primary Lead Administrator can revoke Admin roles.' };
+    }
+
+    const previousRole = existingAssignment.role;
+    const now = new Date().toISOString();
+
+    markRoleRevoked(cleanEmail);
     this.userRoles.delete(cleanEmail);
     this.adminEmails.delete(cleanEmail);
 
-    try {
-      const docId = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
-      const roleDocRef = doc(db, 'user_roles', docId);
-      await deleteDoc(roleDocRef);
+    // Create Audit Log
+    const auditLog: RoleAuditLog = {
+      id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      action: 'ROLE_REVOKED',
+      targetEmail: cleanEmail,
+      targetRole: 'player',
+      previousRole,
+      performedBy: this.currentUser.displayName || this.currentUser.email || 'Admin',
+      performedByEmail: this.currentUser.email || PRIMARY_PROJECT_ADMIN_EMAIL,
+      timestamp: now,
+      notes: reason || `Revoked ${previousRole.toUpperCase()} role`
+    };
 
-      const adminDocRef = doc(db, 'admins', docId);
-      await deleteDoc(adminDocRef);
-    } catch (e) {
-      console.warn('Firestore revokeUserRole note:', e);
+    this.roleAuditLogs.unshift(auditLog);
+
+    if (typeof window !== 'undefined' && db && !isQuotaExhausted()) {
+      try {
+        const docId = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, '_');
+        await setDoc(doc(db, 'system_revocations', docId), {
+          email: cleanEmail,
+          revokedAt: now,
+          revokedBy: this.currentUser.email || PRIMARY_PROJECT_ADMIN_EMAIL,
+          reason: reason || 'Access Revoked'
+        }, { merge: true });
+
+        const roleDocRef = doc(db, 'user_roles', docId);
+        await deleteDoc(roleDocRef);
+
+        const adminDocRef = doc(db, 'admins', docId);
+        await deleteDoc(adminDocRef);
+
+        if (docId !== cleanEmail) {
+          try {
+            await deleteDoc(doc(db, 'user_roles', cleanEmail));
+            await deleteDoc(doc(db, 'admins', cleanEmail));
+          } catch {}
+        }
+
+        const logDocRef = doc(db, 'role_audit_logs', auditLog.id);
+        await setDoc(logDocRef, auditLog);
+      } catch (e) {
+        console.warn('Firestore revokeUserRole note:', e);
+      }
     }
 
     this.notify();
@@ -1730,28 +2153,68 @@ class FirebaseTournamentService {
       this.userRoles.get(user.id)?.role === 'captain' ||
       (curEmail && this.userRoles.get(curEmail)?.role === 'captain');
 
+    let resolvedPbgId = user.pbgId;
+    if (!resolvedPbgId && curEmail && user.id !== 'guest-spectator') {
+      const pbgAcc = pbgAccountRegistry.getOrCreatePBGAccount({
+        googleUid: user.id,
+        email: curEmail,
+        displayName: user.displayName
+      }).account;
+      resolvedPbgId = pbgAcc.pbgId;
+    }
+
     if (isAppointedCaptain && user.role !== 'organizer' && !user.isAdmin) {
       const capTeam = this.teams.find(t => t.captainId === user.id || (curEmail && (t as any).captainEmail?.toLowerCase() === curEmail));
       this.currentUser = {
         ...user,
+        pbgId: resolvedPbgId,
         role: 'captain',
         teamId: user.teamId || capTeam?.id,
         teamName: user.teamName || capTeam?.name
       };
     } else {
-      this.currentUser = { ...user };
+      this.currentUser = {
+        ...user,
+        pbgId: resolvedPbgId
+      };
     }
 
     this.notify();
     return this.currentUser;
   }
 
+  public setCurrentUser(user: UserSession): UserSession {
+    this.currentUser = { ...user };
+    this.notify();
+    return this.currentUser;
+  }
+
   public getCurrentPBGAccount(): PBGPlayerAccount | undefined {
     if (this.currentUser && this.currentUser.id && this.currentUser.id !== 'guest-spectator') {
-      const acc = pbgAccountRegistry.getAccountByUid(this.currentUser.id);
+      let acc = pbgAccountRegistry.getAccountByUid(this.currentUser.id);
+      if (!acc && this.currentUser.email) {
+        acc = pbgAccountRegistry.getAccountByEmail(this.currentUser.email);
+      }
+      if (!acc && this.currentUser.pbgId) {
+        acc = pbgAccountRegistry.getAccountByPbgId(this.currentUser.pbgId);
+      }
       if (acc) return acc;
     }
-    return pbgAccountRegistry.getAccountByPbgId('PBG-000184');
+    return undefined;
+  }
+
+  public markOnboardingCompleted(uid?: string): void {
+    const targetUid = uid || (this.currentUser && this.currentUser.id);
+    if (targetUid && targetUid !== 'guest-spectator') {
+      pbgAccountRegistry.completeOnboarding(targetUid);
+      if (this.currentUser && this.currentUser.id === targetUid) {
+        this.currentUser = {
+          ...this.currentUser,
+          isFirstTimePBG: false
+        };
+        this.notify();
+      }
+    }
   }
 
   public async signInWithGoogle(): Promise<{ user: UserSession; error: any; cancelled?: boolean }> {
@@ -1779,6 +2242,7 @@ class FirebaseTournamentService {
         const email = (fbUser.email || '').toLowerCase().trim();
         const perms = this.computeUserPermissions(email);
         
+        const alreadyCompleted = pbgAccountRegistry.hasUserCompletedOnboarding(fbUser.uid);
         const { account: pbgAcc, isFirstTime } = pbgAccountRegistry.getOrCreatePBGAccount({
           googleUid: fbUser.uid,
           email,
@@ -1796,7 +2260,7 @@ class FirebaseTournamentService {
           isPrimaryAdmin: perms.isPrimaryAdmin,
           isModerator: perms.isModerator,
           pbgId: pbgAcc.pbgId,
-          isFirstTimePBG: isFirstTime
+          isFirstTimePBG: isFirstTime && !alreadyCompleted && !pbgAcc.hasCompletedOnboarding
         };
 
         if (perms.isAdmin) {

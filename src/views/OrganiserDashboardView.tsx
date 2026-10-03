@@ -14,7 +14,8 @@ import {
   Calendar, 
   Plus, 
   RefreshCw,
-  Crown
+  Crown,
+  Key
 } from 'lucide-react';
 import { Tournament, ViewType } from '../types/tournament';
 import { tournamentService, tournamentToConfig } from '../services/firebaseService';
@@ -175,16 +176,29 @@ export function OrganiserDashboardView({
               </span>
             </div>
 
-            {onOpenCreateTournament && (
-              <button
-                type="button"
-                onClick={onOpenCreateTournament}
-                className="px-4 py-2 bg-[#FFE600] hover:bg-[#FFDE59] active:translate-x-0.5 active:translate-y-0.5 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-2 cursor-pointer transition-all shrink-0"
-              >
-                <Plus className="w-4 h-4 stroke-[3]" />
-                <span>+ Create Tournament</span>
-              </button>
-            )}
+            <div className="flex flex-wrap items-center gap-2">
+              {(currentUser.isAdmin || currentUser.isPrimaryAdmin) && (
+                <button
+                  type="button"
+                  onClick={() => onNavigate('admin_dashboard')}
+                  className="px-3.5 py-2 bg-white hover:bg-stone-100 active:translate-x-0.5 active:translate-y-0.5 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer transition-all shrink-0"
+                >
+                  <Key className="w-3.5 h-3.5 text-purple-700" />
+                  <span>Roles &amp; Access Dashboard</span>
+                </button>
+              )}
+
+              {onOpenCreateTournament && (
+                <button
+                  type="button"
+                  onClick={onOpenCreateTournament}
+                  className="px-4 py-2 bg-[#FFE600] hover:bg-[#FFDE59] active:translate-x-0.5 active:translate-y-0.5 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-2 cursor-pointer transition-all shrink-0"
+                >
+                  <Plus className="w-4 h-4 stroke-[3]" />
+                  <span>+ Create Tournament</span>
+                </button>
+              )}
+            </div>
           </div>
 
           <h1 className="text-3xl sm:text-5xl font-black uppercase tracking-tight font-sans">

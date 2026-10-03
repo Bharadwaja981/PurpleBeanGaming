@@ -47,9 +47,11 @@ import { RegisteredPlayersView } from './views/RegisteredPlayersView';
 import { CaptainSelectionView } from './views/CaptainSelectionView';
 import { AuctionDraft } from './components/AuctionDraft';
 import { OrganiserDashboardView } from './views/OrganiserDashboardView';
+import { AdminDashboardView } from './views/AdminDashboardView';
 import { NotFoundView } from './views/NotFoundView';
+import { themeManager, ColorMode, ThemePalette } from './services/themeManager';
 
-import { Trophy, Shield, Swords, Users, Heart, ArrowUpRight, Flame, MapPin, Key, Loader2, Zap } from 'lucide-react';
+import { Trophy, Shield, Swords, Users, Heart, ArrowUpRight, Flame, MapPin, Key, Loader2, Zap, Sun, Moon } from 'lucide-react';
 
 const THEMES = [
   { name: 'Purple Bean', bg: 'bg-[#F3E8FF]', accent: 'bg-[#7C3AED]', card: 'bg-white', tag: 'bg-[#FFE600]' },
@@ -62,9 +64,19 @@ const THEMES = [
 export default function App() {
   const [currentView, setCurrentView] = useState<ViewType>('home');
   const [activeEntityId, setActiveEntityId] = useState<string | undefined>(undefined);
-  const [themeIdx, setThemeIdx] = useState(0);
+  const [colorMode, setColorMode] = useState<ColorMode>(() => themeManager.getMode());
+  const [currentPalette, setCurrentPalette] = useState<ThemePalette>(() => themeManager.getPalette());
   const [selectedGame, setSelectedGame] = useState<CompetitiveGame>('All Games');
   const [isEmbed, setIsEmbed] = useState(false);
+
+  // Subscribe to ThemeManager
+  useEffect(() => {
+    const unsubTheme = themeManager.subscribe((mode, palette) => {
+      setColorMode(mode);
+      setCurrentPalette(palette);
+    });
+    return unsubTheme;
+  }, []);
 
   // Loading Screen States
   const [isInitialLaunchLoading, setIsInitialLaunchLoading] = useState(true);
@@ -114,10 +126,19 @@ export default function App() {
         const pbgAcc = tournamentService.getCurrentPBGAccount() || pbgAccountRegistry.getAccountByUid(curUser.id);
         if (pbgAcc) {
           setOnboardingAccount(pbgAcc);
-          // Automatically prompt first-time onboarding if new account or flagged
-          const hasShownOnboarding = sessionStorage.getItem(`pbg_onboarded_${curUser.id}`);
-          if (curUser.isFirstTimePBG && !hasShownOnboarding) {
+          // Automatically prompt first-time onboarding ONLY if truly brand-new and never completed/dismissed
+          const alreadyCompleted = pbgAccountRegistry.hasUserCompletedOnboarding(curUser.id);
+          const hasShownOnboarding = typeof window !== 'undefined' && (
+            localStorage.getItem(`pbg_onboarded_${curUser.id}`) === 'true' ||
+            localStorage.getItem(`pbg_onboarding_completed_${curUser.id}`) === 'true' ||
+            sessionStorage.getItem(`pbg_onboarded_${curUser.id}`) === 'true'
+          );
+          if (curUser.isFirstTimePBG && !alreadyCompleted && !pbgAcc.hasCompletedOnboarding && !hasShownOnboarding) {
             sessionStorage.setItem(`pbg_onboarded_${curUser.id}`, 'true');
+            try {
+              localStorage.setItem(`pbg_onboarded_${curUser.id}`, 'true');
+              localStorage.setItem(`pbg_onboarding_completed_${curUser.id}`, 'true');
+            } catch {}
             setIsOnboardingOpen(true);
           }
         }
@@ -132,7 +153,7 @@ export default function App() {
         setTimeout(() => setSignOutNotice(null), 4000);
       } else {
         // Enforce protected view restrictions
-        const restrictedViews: ViewType[] = ['organiser_dashboard', 'captain_selection'];
+        const restrictedViews: ViewType[] = ['organiser_dashboard', 'captain_selection', 'admin_dashboard'];
         if (isNowGuest && restrictedViews.includes(currentView)) {
           handleNavigate('home');
         }
@@ -241,7 +262,6 @@ export default function App() {
     return unsub;
   }, []);
 
-  const currentTheme = THEMES[themeIdx];
   const unreadCount = notifications.filter((n) => n.unread).length;
 
   // External App URL parameters, pathname parsing & postMessage synchronization
@@ -358,6 +378,8 @@ export default function App() {
         setCurrentView('tournament_detail');
       } else if (p === '/tournaments' || p === '/tournaments/') {
         setCurrentView('tournaments');
+      } else if (p === '/admin' || p === '/admin/') {
+        setCurrentView('admin_dashboard');
       } else if (p === '/') {
         setCurrentView('home');
       }
@@ -386,6 +408,8 @@ export default function App() {
           window.history.pushState({ view, entityId }, '', `/tournaments/${entityId}/auction`);
         } else if (view === 'tournament_detail' && entityId) {
           window.history.pushState({ view, entityId }, '', `/tournaments/${entityId}`);
+        } else if (view === 'admin_dashboard') {
+          window.history.pushState({ view }, '', '/admin');
         } else if (view === 'organiser_dashboard') {
           window.history.pushState({ view, entityId }, '', entityId ? `/tournaments/${entityId}?manage=true` : '/tournaments?manage=true');
         } else if (view === 'dota_match_detail' && entityId) {
@@ -425,7 +449,11 @@ export default function App() {
   };
 
   const handleCycleTheme = () => {
-    setThemeIdx((prev) => (prev + 1) % THEMES.length);
+    themeManager.cyclePalette();
+  };
+
+  const handleToggleDarkMode = () => {
+    themeManager.toggleMode();
   };
 
   const handleMarkAllNotificationsRead = () => {
@@ -444,9 +472,13 @@ export default function App() {
 
   return (
     <div 
-      className={`min-h-screen w-full transition-colors duration-200 ${currentTheme.bg} selection:bg-black selection:text-white flex flex-col`}
+      className={`min-h-screen w-full transition-colors duration-200 ${
+        colorMode === 'dark' ? currentPalette.darkBg : currentPalette.lightBg
+      } ${colorMode === 'dark' ? 'text-stone-100' : 'text-black'} selection:bg-[#FFE600] selection:text-black flex flex-col`}
       style={{
-        backgroundImage: `radial-gradient(rgba(0,0,0,0.08) 1px, transparent 1px)`,
+        backgroundImage: colorMode === 'dark'
+          ? `radial-gradient(rgba(255,255,255,0.08) 1px, transparent 1px)`
+          : `radial-gradient(rgba(0,0,0,0.08) 1px, transparent 1px)`,
         backgroundSize: '24px 24px',
       }}
     >
@@ -516,8 +548,10 @@ export default function App() {
           if (acc) setOnboardingAccount(acc);
           setIsOnboardingOpen(true);
         }}
-        activeThemeName={currentTheme.name}
+        activeThemeName={currentPalette.name}
         onCycleTheme={handleCycleTheme}
+        isDarkMode={colorMode === 'dark'}
+        onToggleDarkMode={handleToggleDarkMode}
         selectedGame={selectedGame}
         onSelectGame={(g) => setSelectedGame(g)}
       />
@@ -674,6 +708,10 @@ export default function App() {
                 />
               )}
 
+              {currentView === 'admin_dashboard' && (
+                <AdminDashboardView onNavigate={handleNavigate} />
+              )}
+
               {currentView === 'register' && (
                 <TournamentsView 
                   onNavigate={handleNavigate} 
@@ -705,6 +743,7 @@ export default function App() {
                 'draft',
                 'draft_results',
                 'organiser_dashboard',
+                'admin_dashboard',
                 'register',
                 'dota_game_profile',
                 'dota_match_detail',
@@ -785,9 +824,19 @@ export default function App() {
       {isOnboardingOpen && onboardingAccount && (
         <FirstTimeOnboardingModal
           isOpen={isOnboardingOpen}
-          onClose={() => setIsOnboardingOpen(false)}
+          onClose={() => {
+            if (onboardingAccount?.googleUid) {
+              pbgAccountRegistry.completeOnboarding(onboardingAccount.googleUid);
+              tournamentService.markOnboardingCompleted(onboardingAccount.googleUid);
+            }
+            setIsOnboardingOpen(false);
+          }}
           account={onboardingAccount}
           onComplete={(acc) => {
+            if (acc.googleUid) {
+              pbgAccountRegistry.completeOnboarding(acc.googleUid);
+              tournamentService.markOnboardingCompleted(acc.googleUid);
+            }
             setOnboardingAccount(acc);
             setIsOnboardingOpen(false);
           }}
@@ -824,6 +873,24 @@ export default function App() {
               <button onClick={() => handleNavigate('rankings')} className="hover:underline cursor-pointer">Rankings</button>
               <span>·</span>
               <button onClick={() => handleNavigate('organiser_dashboard')} className="hover:underline cursor-pointer">Organiser Desk</button>
+              <span>·</span>
+              <button
+                onClick={handleToggleDarkMode}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-stone-100 hover:bg-[#FFE600] text-black border-2 border-black shadow-[2px_2px_0px_0px_#000] cursor-pointer active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all font-mono text-[11px] font-black uppercase"
+                title={colorMode === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+              >
+                {colorMode === 'dark' ? (
+                  <>
+                    <Sun className="w-3 h-3 text-[#FFE600] fill-[#FFE600]" />
+                    <span>Light Mode</span>
+                  </>
+                ) : (
+                  <>
+                    <Moon className="w-3 h-3 text-black fill-black" />
+                    <span>Dark Mode</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
 

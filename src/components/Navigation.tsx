@@ -24,7 +24,9 @@ import {
   Zap,
   AlertCircle,
   Plus,
-  Sparkles
+  Sparkles,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { ViewType, CompetitiveGame, Match, Tournament } from '../types/tournament';
 import { PurpleBeanLogo } from './PurpleBeanLogo';
@@ -51,6 +53,8 @@ interface NavigationProps {
   onOpenRegister: () => void;
   activeThemeName: string;
   onCycleTheme: () => void;
+  isDarkMode?: boolean;
+  onToggleDarkMode?: () => void;
   selectedGame?: CompetitiveGame;
   onSelectGame?: (game: CompetitiveGame) => void;
   onOpenBrandKit?: () => void;
@@ -69,6 +73,8 @@ export function Navigation({
   onOpenRegister,
   activeThemeName,
   onCycleTheme,
+  isDarkMode = false,
+  onToggleDarkMode,
   selectedGame = 'All Games',
   onSelectGame,
   onOpenBrandKit,
@@ -229,7 +235,7 @@ export function Navigation({
   const isAuthenticated = currentUser.id !== 'guest-spectator' && Boolean(currentUser.email);
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b-[3.5px] border-black bg-white shadow-[0px_4px_0px_0px_#000]">
+    <header className="sticky top-0 z-40 w-full border-b-[3.5px] border-black dark:border-stone-800 bg-white dark:bg-[#141222] shadow-[0px_4px_0px_0px_#000] transition-colors">
       {/* 1. Top Bar / Live Status Ticker (Real Data Driven) */}
       <div className="bg-black text-white px-3 sm:px-4 py-1 flex items-center justify-between text-xs font-mono font-bold tracking-tight">
         <div className="flex items-center gap-2 overflow-hidden text-ellipsis whitespace-nowrap min-w-0">
@@ -282,6 +288,26 @@ export function Navigation({
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3 shrink-0 ml-2">
+          {onToggleDarkMode && (
+            <button
+              onClick={onToggleDarkMode}
+              className="flex items-center gap-1 text-[11px] text-stone-300 hover:text-white cursor-pointer transition-colors"
+              title={isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            >
+              {isDarkMode ? (
+                <>
+                  <Sun className="w-3 h-3 text-[#FFE600] fill-[#FFE600]" />
+                  <span>Mode: Dark</span>
+                </>
+              ) : (
+                <>
+                  <Moon className="w-3 h-3 text-[#5CE1E6] fill-[#5CE1E6]" />
+                  <span>Mode: Light</span>
+                </>
+              )}
+            </button>
+          )}
+          <span className="text-stone-600 hidden sm:inline">·</span>
           <button
             onClick={onCycleTheme}
             className="flex items-center gap-1 text-[11px] text-stone-300 hover:text-white cursor-pointer transition-colors"
@@ -423,11 +449,21 @@ export function Navigation({
                 <>
                   <MenuSeparator />
                   <MenuHeader>Staff Portals</MenuHeader>
+                  {isProjectAdmin && (
+                    <MenuItem
+                      icon={Key}
+                      label="Role &amp; Access Control (RBAC)"
+                      badge="Admin"
+                      badgeColor="bg-[#FFE600] text-black"
+                      selected={currentView === 'admin_dashboard'}
+                      onClick={() => onNavigate('admin_dashboard')}
+                    />
+                  )}
                   <MenuItem
                     icon={Shield}
                     label="Organiser &amp; Referee Desk"
-                    badge="Admin"
-                    badgeColor="bg-[#FFE600] text-black"
+                    badge="Organiser"
+                    badgeColor="bg-[#70FFAF] text-black"
                     selected={currentView === 'organiser_dashboard'}
                     onClick={() => onNavigate('organiser_dashboard')}
                   />
@@ -437,8 +473,34 @@ export function Navigation({
           </div>
         </nav>
 
-        {/* Right: Actions (Search, Notifications, Join CTA, User Profile) */}
+        {/* Right: Actions (Theme Toggle, Search, Notifications, Join CTA, User Profile) */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
+          {/* Light / Dark Mode Toggle (Neo-Brutalist Match to Site Design) */}
+          {onToggleDarkMode && (
+            <button
+              onClick={onToggleDarkMode}
+              className={`flex items-center gap-1.5 border-2 px-2 sm:px-2.5 py-1.5 font-mono text-xs font-black uppercase transition-all cursor-pointer ${
+                isDarkMode
+                  ? 'bg-[#1E1B2E] hover:bg-[#2B2644] text-[#FFE600] border-[#FFE600] shadow-[2px_2px_0px_0px_#FFE600]'
+                  : 'bg-[#FFE600] hover:bg-[#FFDE59] text-black border-black shadow-[2px_2px_0px_0px_#000]'
+              } active:translate-x-0.5 active:translate-y-0.5 active:shadow-none`}
+              title={isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+              aria-label={isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            >
+              {isDarkMode ? (
+                <>
+                  <Sun className="w-3.5 h-3.5 text-[#FFE600] fill-[#FFE600] shrink-0" />
+                  <span className="hidden sm:inline font-mono text-[11px] font-black tracking-wider text-[#FFE600]">LIGHT</span>
+                </>
+              ) : (
+                <>
+                  <Moon className="w-3.5 h-3.5 text-black fill-black shrink-0" />
+                  <span className="hidden sm:inline font-mono text-[11px] font-black tracking-wider text-black">DARK</span>
+                </>
+              )}
+            </button>
+          )}
+
           {/* Search Button */}
           <button
             onClick={onOpenSearch}
@@ -500,7 +562,7 @@ export function Navigation({
 
                 {/* PBG ID Badge */}
                 <span className="text-[9px] font-mono px-1 py-0.2 border border-black uppercase font-black bg-[#FFE600] text-black">
-                  {currentUser.pbgId || tournamentService.getCurrentPBGAccount()?.pbgId || 'PBG-000184'}
+                  {currentUser.pbgId || tournamentService.getCurrentPBGAccount()?.pbgId || 'PBG-MEMBER'}
                 </span>
 
                 <ChevronDown className={`w-3 h-3 text-stone-700 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
@@ -514,7 +576,7 @@ export function Navigation({
                   {currentUser.displayName || 'Guest Spectator'}
                 </span>
                 <span className="text-[9px] font-mono px-1 py-0.2 border border-black font-black uppercase bg-[#FFE600] text-black shrink-0">
-                  {currentUser.pbgId || tournamentService.getCurrentPBGAccount()?.pbgId || 'PBG-000184'}
+                  {currentUser.pbgId || tournamentService.getCurrentPBGAccount()?.pbgId || 'PBG-MEMBER'}
                 </span>
               </div>
               {currentUser.email ? (
@@ -546,6 +608,16 @@ export function Navigation({
 
             {/* Account Actions */}
             <div className="py-1">
+              {isProjectAdmin && (
+                <MenuItem
+                  icon={Key}
+                  label="Role & Access Control Console"
+                  badge="RBAC"
+                  badgeColor="bg-[#FFE600] text-black"
+                  onClick={() => onNavigate('admin_dashboard')}
+                />
+              )}
+
               {isOrganiserUser && (
                 <MenuItem
                   icon={Shield}
@@ -568,7 +640,7 @@ export function Navigation({
 
               <MenuItem
                 icon={User}
-                label={`PBG Player Profile (${currentUser.pbgId || tournamentService.getCurrentPBGAccount()?.pbgId || 'PBG-000184'})`}
+                label={`PBG Player Profile (${currentUser.pbgId || tournamentService.getCurrentPBGAccount()?.pbgId || 'My Profile'})`}
                 badge="Identity"
                 badgeColor="bg-[#FFE600] text-black"
                 onClick={() => onNavigate('player_profile', currentUser.pbgId || currentUser.id)}
@@ -631,6 +703,16 @@ export function Navigation({
                   onClick={onOpenAdminCredentials}
                 />
               )}
+
+              {onToggleDarkMode && (
+                <MenuItem
+                  icon={isDarkMode ? Sun : Moon}
+                  label={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+                  badge={isDarkMode ? "DARK" : "LIGHT"}
+                  badgeColor={isDarkMode ? "bg-[#FFE600] text-black" : "bg-stone-200 text-stone-800"}
+                  onClick={onToggleDarkMode}
+                />
+              )}
             </div>
 
             <MenuSeparator />
@@ -690,7 +772,7 @@ export function Navigation({
             className="fixed inset-0 bg-black/60 z-[90] backdrop-blur-[1px] animate-in fade-in duration-150"
             onClick={() => setMobileDrawerOpen(false)}
           />
-          <div className="fixed inset-x-0 bottom-0 max-h-[88vh] bg-white border-t-[3.5px] border-black shadow-[0_-8px_0px_0px_#000] z-[100] rounded-t-2xl p-4 flex flex-col animate-in slide-in-from-bottom duration-200">
+          <div className="fixed inset-x-0 bottom-0 max-h-[88vh] bg-white dark:bg-[#151324] border-t-[3.5px] border-black dark:border-stone-700 shadow-[0_-8px_0px_0px_#000] z-[100] rounded-t-2xl p-4 flex flex-col animate-in slide-in-from-bottom duration-200">
             <div className="w-12 h-1.5 bg-stone-300 rounded-full mx-auto mb-3" />
             <div className="flex items-center justify-between pb-3 border-b-2 border-black mb-3">
               <div className="flex items-center gap-2">
@@ -758,6 +840,50 @@ export function Navigation({
                 </div>
               )}
 
+              {/* Theme & Display Mode Toggle (Mobile) */}
+              <div className="py-3 border-b-2 border-black">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-mono text-[10px] font-black uppercase text-stone-500 block">
+                    Appearance &amp; Contrast
+                  </span>
+                  <button
+                    onClick={onCycleTheme}
+                    className="font-mono text-[10px] font-bold text-[#7C3AED] dark:text-[#FFE600] hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Palette className="w-3 h-3" />
+                    <span>Palette: {activeThemeName}</span>
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => {
+                      if (!isDarkMode && onToggleDarkMode) onToggleDarkMode();
+                    }}
+                    className={`px-3 py-2 font-mono text-xs font-black uppercase border-2 flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                      isDarkMode
+                        ? 'bg-[#1E1B2E] text-[#FFE600] border-[#FFE600] shadow-[2px_2px_0px_0px_#FFE600]'
+                        : 'bg-stone-100 text-stone-600 border-stone-300 hover:bg-stone-200'
+                    }`}
+                  >
+                    <Moon className="w-4 h-4 fill-current" />
+                    <span>Dark Mode</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (isDarkMode && onToggleDarkMode) onToggleDarkMode();
+                    }}
+                    className={`px-3 py-2 font-mono text-xs font-black uppercase border-2 flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                      !isDarkMode
+                        ? 'bg-[#FFE600] text-black border-black shadow-[2px_2px_0px_0px_#000]'
+                        : 'bg-stone-100 text-stone-600 border-stone-300 hover:bg-stone-200'
+                    }`}
+                  >
+                    <Sun className="w-4 h-4 fill-current" />
+                    <span>Light Mode</span>
+                  </button>
+                </div>
+              </div>
+
               {/* Action Buttons in Mobile Drawer */}
               <div className="pt-3 space-y-2">
                 <button
@@ -794,6 +920,19 @@ export function Navigation({
                   >
                     <Plus className="w-4 h-4 text-black" />
                     <span>+ Create New Tournament</span>
+                  </button>
+                )}
+
+                {isProjectAdmin && (
+                  <button
+                    onClick={() => {
+                      onNavigate('admin_dashboard');
+                      setMobileDrawerOpen(false);
+                    }}
+                    className="w-full py-2.5 bg-[#FFE600] hover:bg-[#FFDE59] text-black border-2 border-black shadow-[2px_2px_0px_0px_#000] font-mono text-xs font-black uppercase flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Key className="w-4 h-4" />
+                    <span>Role &amp; Access Control (RBAC)</span>
                   </button>
                 )}
 

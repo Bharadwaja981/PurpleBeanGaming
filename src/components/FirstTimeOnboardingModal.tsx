@@ -148,7 +148,13 @@ export function FirstTimeOnboardingModal({
     setCurrentStep(6);
   };
 
+  const handleDismiss = () => {
+    pbgAccountRegistry.completeOnboarding(account.googleUid);
+    onClose();
+  };
+
   const handleFinish = () => {
+    pbgAccountRegistry.completeOnboarding(account.googleUid);
     const finalAcc = pbgAccountRegistry.getAccountByUid(account.googleUid) || account;
     if (onComplete) onComplete(finalAcc);
     onClose();
@@ -169,8 +175,18 @@ export function FirstTimeOnboardingModal({
                 PURPLE BEAN GAMING · FIRST-TIME ONBOARDING
               </span>
             </div>
-            <div className="text-stone-500 font-mono text-[11px]">
-              Step {currentStep} of 6
+            <div className="flex items-center gap-3">
+              <div className="text-stone-500 font-mono text-[11px]">
+                Step {currentStep} of 6
+              </div>
+              <button
+                type="button"
+                onClick={handleDismiss}
+                className="p-1 hover:bg-stone-100 border border-black cursor-pointer text-stone-700 hover:text-black"
+                title="Dismiss Walkthrough"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
           </div>
 

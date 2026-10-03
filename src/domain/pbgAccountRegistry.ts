@@ -8,7 +8,7 @@
 
 import { PBGPlayerAccount, DotaRolePosition } from '../types/pbgAccount';
 import { db, isQuotaExhausted } from '../services/firebaseConfig';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, collection, onSnapshot } from 'firebase/firestore';
 
 const STORAGE_KEY = 'pbg_player_accounts_v1';
 const PBG_COUNTER_KEY = 'pbg_player_id_counter_v1';
@@ -20,14 +20,20 @@ export class PBGAccountRegistry {
   private dotaIdIndex: Map<string, string> = new Map(); // dotaAccountId -> googleUid
   private steamIdIndex: Map<string, string> = new Map(); // steamId -> googleUid
   private listeners: Set<() => void> = new Set();
-  private nextPbgNumber: number = 184; // Matches example baseline seed (PBG-000184)
+  private nextPbgNumber: number = 189; // Baseline sequences start at 189 after 184-188
 
   constructor() {
+    this.loadFromStorage();
+    this.initFirestoreSync();
+  }
+
+  public reload(): void {
     this.loadFromStorage();
   }
 
   private loadFromStorage(): void {
-    if (typeof window === 'undefined') return;
+    const hasStorage = typeof localStorage !== 'undefined';
+    if (!hasStorage && typeof window === 'undefined') return;
 
     try {
       const savedCounter = localStorage.getItem(PBG_COUNTER_KEY);
@@ -46,6 +52,10 @@ export class PBGAccountRegistry {
           if (acc.pbgId === 'PBG-000185' && acc.dotaAccountId === '383650106') {
             acc.dotaAccountId = '185000000';
             acc.steamId = '76561198000000185';
+          }
+          // Existing accounts loaded from storage have already been established
+          if (acc.hasCompletedOnboarding === undefined) {
+            acc.hasCompletedOnboarding = true;
           }
           this.accounts.set(acc.googleUid, acc);
           this.pbgIdIndex.set(acc.pbgId, acc.googleUid);
@@ -75,6 +85,8 @@ export class PBGAccountRegistry {
           country: 'India',
           region: 'Pan India',
           city: 'Mumbai',
+          hasCompletedOnboarding: true,
+          onboardingCompletedAt: new Date(Date.now() - 30 * 86400000).toISOString(),
 
           // Discord Account Identity (OAuth Authorized)
           discordUserId: '123456789012345678',
@@ -224,6 +236,8 @@ export class PBGAccountRegistry {
           country: 'India',
           region: 'Pan India',
           city: 'Bengaluru',
+          hasCompletedOnboarding: true,
+          onboardingCompletedAt: new Date(Date.now() - 14 * 86400000).toISOString(),
 
           discordUserId: '383650106123456789',
           discordUsername: 'robinhood_dota',
@@ -307,8 +321,270 @@ export class PBGAccountRegistry {
         }
         this.saveToStorage();
       }
+
+      // Ensure Harsha Neelapu is seeded with a strictly unique permanent PBG ID
+      const friendEmail = 'neelapuharsha@gmail.com';
+      let friendAccount = this.getAccountByEmail(friendEmail);
+      if (!friendAccount) {
+        friendAccount = {
+          pbgId: 'PBG-000187',
+          googleUid: 'google_uid_neelapuharsha_000186',
+          email: friendEmail,
+          displayName: 'Harsha Neelapu',
+          avatarUrl: 'https://api.dicebear.com/7.x/bottts/svg?seed=HarshaNeelapu',
+          createdAt: '2026-09-25T15:43:21.383Z',
+          updatedAt: new Date().toISOString(),
+          accountStatus: 'ACTIVE',
+          country: 'India',
+          region: 'Pan India',
+          city: 'Hyderabad',
+          hasCompletedOnboarding: true,
+          onboardingCompletedAt: '2026-09-25T15:43:21.383Z',
+
+          discordUserId: undefined,
+          discordUsername: undefined,
+          discordDisplayName: undefined,
+          discordAvatar: undefined,
+          discordLinked: false,
+          discordLinkedAt: undefined,
+
+          steamId: undefined,
+          dotaAccountId: '186000000',
+          dotaDisplayName: 'Harsha Neelapu',
+          dotaAvatar: 'https://api.dicebear.com/7.x/bottts/svg?seed=HarshaNeelapu',
+          steamPersonaName: 'Harsha Neelapu',
+          steamProfileUrl: undefined,
+          openDotaProfile: undefined,
+          dotaAccountLinked: false,
+          dotaAccountVerified: false,
+          dotaOwnershipVerified: false,
+          dotaOwnershipVerifiedAt: undefined,
+          dotaLinkedAt: undefined,
+          publicMatchDataStatus: 'UNKNOWN',
+          dotaConnectionStatus: 'NOT_LINKED',
+          lastOpenDotaSync: undefined,
+          lastSuccessfulDataSync: undefined,
+          dotaRankTier: null,
+          dotaLeaderboardRank: null,
+          dotaCountryCode: 'IN',
+
+          declaredMmr: 4250,
+          tournamentMmr: 4250,
+          primaryRole: 'Position 3 — Offlane',
+          secondaryRole: 'Position 4 — Soft Support',
+          purpleBeanRating: 'TIER_2',
+
+          tournamentCount: 1,
+          matchesCount: 6,
+          winsCount: 4,
+          lossesCount: 2,
+          teamsCount: 1,
+          captainCount: 0,
+          tournamentHistory: [],
+          teamHistory: [],
+          matchHistory: [],
+          captainHistory: [],
+          achievements: []
+        };
+
+        this.accounts.set(friendAccount.googleUid, friendAccount);
+        this.pbgIdIndex.set(friendAccount.pbgId, friendAccount.googleUid);
+      } else {
+        // Enforce canonical PBG-000187 on Harsha Neelapu
+        if (friendAccount.pbgId !== 'PBG-000187') {
+          this.pbgIdIndex.delete(friendAccount.pbgId);
+          friendAccount.pbgId = 'PBG-000187';
+          this.pbgIdIndex.set(friendAccount.pbgId, friendAccount.googleUid);
+        }
+      }
+
+      // Ensure Primary Lead (11106cm009@gmail.com) holds PBG-000186
+      const leadEmail = '11106cm009@gmail.com';
+      const existingLead = this.getAccountByEmail(leadEmail) || this.accounts.get('wUyRsN0f40bYdyCpLp6UNeIJjpD3');
+      if (!existingLead) {
+        const newLeadAcc: PBGPlayerAccount = {
+          pbgId: 'PBG-000186',
+          googleUid: 'wUyRsN0f40bYdyCpLp6UNeIJjpD3',
+          email: leadEmail,
+          displayName: 'Bharadwaja Anisetti',
+          avatarUrl: 'https://lh3.googleusercontent.com/a/ACg8ocJn4hLtlN-XO5jrSZnUtsIpEalWwHIuYLuTjDne6LNz8AXdUI8=s96-c',
+          createdAt: '2026-10-02T12:31:42.265Z',
+          updatedAt: new Date().toISOString(),
+          accountStatus: 'ACTIVE',
+          country: 'India',
+          region: 'Pan India',
+          city: 'Mumbai',
+          hasCompletedOnboarding: true,
+          onboardingCompletedAt: '2026-10-02T15:25:44.557Z',
+          dotaAccountId: '383650106',
+          steamId: '76561198343915834',
+          steamPersonaName: 'Robinhood',
+          dotaDisplayName: 'Robinhood',
+          dotaAccountLinked: true,
+          dotaAccountVerified: true,
+          dotaOwnershipVerified: true,
+          publicMatchDataStatus: 'PUBLIC',
+          dotaConnectionStatus: 'CONNECTED_DATA_AVAILABLE',
+          discordLinked: true,
+          discordUserId: '522114011307966464',
+          discordUsername: 'robinhood28',
+          discordDisplayName: 'Robinhood',
+          purpleBeanRating: 'UNRATED',
+          tournamentCount: 0,
+          matchesCount: 0,
+          winsCount: 0,
+          lossesCount: 0,
+          teamsCount: 0,
+          captainCount: 0,
+          tournamentHistory: [],
+          teamHistory: [],
+          matchHistory: [],
+          captainHistory: [],
+          achievements: []
+        };
+        this.accounts.set(newLeadAcc.googleUid, newLeadAcc);
+        this.pbgIdIndex.set(newLeadAcc.pbgId, newLeadAcc.googleUid);
+      } else if (existingLead.pbgId !== 'PBG-000186') {
+        this.pbgIdIndex.delete(existingLead.pbgId);
+        existingLead.pbgId = 'PBG-000186';
+        this.pbgIdIndex.set('PBG-000186', existingLead.googleUid);
+      }
+
+      // Ensure Santhosh Myana (myana.santhosh@gmail.com) holds PBG-000188
+      const santhoshEmail = 'myana.santhosh@gmail.com';
+      const existingSanthosh = this.getAccountByEmail(santhoshEmail) || this.accounts.get('dCZd7IjKpxYDBjTQe5FUhccuX583');
+      if (!existingSanthosh) {
+        const newSanthoshAcc: PBGPlayerAccount = {
+          pbgId: 'PBG-000188',
+          googleUid: 'dCZd7IjKpxYDBjTQe5FUhccuX583',
+          email: santhoshEmail,
+          displayName: 'Santhosh Myana',
+          avatarUrl: 'https://lh3.googleusercontent.com/a/ACg8ocKEMfUhTi1ata0in6B1QrYHiFJykqUeoCiE-nuE6wwM6lUCch-Y=s96-c',
+          createdAt: '2026-10-02T15:44:36.857Z',
+          updatedAt: new Date().toISOString(),
+          accountStatus: 'ACTIVE',
+          country: 'India',
+          region: 'Pan India',
+          city: 'Mumbai',
+          hasCompletedOnboarding: true,
+          dotaAccountLinked: false,
+          dotaAccountVerified: false,
+          dotaOwnershipVerified: false,
+          publicMatchDataStatus: 'UNKNOWN',
+          dotaConnectionStatus: 'NOT_LINKED',
+          discordLinked: false,
+          purpleBeanRating: 'UNRATED',
+          tournamentCount: 0,
+          matchesCount: 0,
+          winsCount: 0,
+          lossesCount: 0,
+          teamsCount: 0,
+          captainCount: 0,
+          tournamentHistory: [],
+          teamHistory: [],
+          matchHistory: [],
+          captainHistory: [],
+          achievements: []
+        };
+        this.accounts.set(newSanthoshAcc.googleUid, newSanthoshAcc);
+        this.pbgIdIndex.set(newSanthoshAcc.pbgId, newSanthoshAcc.googleUid);
+      } else if (existingSanthosh.pbgId !== 'PBG-000188') {
+        this.pbgIdIndex.delete(existingSanthosh.pbgId);
+        existingSanthosh.pbgId = 'PBG-000188';
+        this.pbgIdIndex.set('PBG-000188', existingSanthosh.googleUid);
+      }
+
+      // STRICT UNIQUE PBG ID INVARIANT ENFORCEMENT & SELF-HEALING:
+      // If any duplicate PBG ID exists in storage, the authentic owner keeps the ID
+      // and duplicate accounts receive a brand-new permanent unique PBG ID!
+      const assignedIds = new Map<string, string>(); // pbgId -> googleUid
+      for (const acc of Array.from(this.accounts.values())) {
+        if (!acc.pbgId) {
+          acc.pbgId = this.allocateNextPbgId();
+          acc.updatedAt = new Date().toISOString();
+        } else if (assignedIds.has(acc.pbgId) && assignedIds.get(acc.pbgId) !== acc.googleUid) {
+          // Collision detected! The authentic earlier account keeps the ID, duplicate gets a new unique ID
+          const collisionPbgId = acc.pbgId;
+          const newUniquePbgId = this.allocateNextPbgId();
+          console.warn(`[PBG ID Collision Fixed] Reassigning duplicate PBG ID ${collisionPbgId} on ${acc.displayName} (${acc.email}) to unique ${newUniquePbgId}`);
+          this.pbgIdIndex.delete(collisionPbgId);
+          acc.pbgId = newUniquePbgId;
+          acc.updatedAt = new Date().toISOString();
+          this.syncToFirestore(acc);
+        }
+        assignedIds.set(acc.pbgId, acc.googleUid);
+        this.pbgIdIndex.set(acc.pbgId, acc.googleUid);
+      }
+
+      const highestNumber = this.getHighestPbgNumber();
+      if (this.nextPbgNumber <= highestNumber) {
+        this.nextPbgNumber = highestNumber + 1;
+      }
+      if (this.nextPbgNumber < 189) {
+        this.nextPbgNumber = 189;
+      }
+      this.saveToStorage();
     } catch (e) {
       console.warn('Failed to load PBG accounts from localStorage:', e);
+    }
+  }
+
+  /**
+   * Real-time bidirectional Firestore synchronization for PBG Player Accounts & sequence counters.
+   * Guarantees all connected clients, tabs, and devices immediately reflect unique permanent accounts.
+   */
+  private initFirestoreSync(): void {
+    if (typeof window === 'undefined' || !db) return;
+
+    try {
+      // 1. Real-time sync of all persistent player accounts in Firestore
+      onSnapshot(collection(db, 'pbgAccounts'), (snapshot) => {
+        let changed = false;
+        snapshot.forEach((docSnap) => {
+          const acc = docSnap.data() as PBGPlayerAccount;
+          if (acc && acc.pbgId && acc.googleUid) {
+            const existingUid = this.pbgIdIndex.get(acc.pbgId);
+            if (existingUid && existingUid !== acc.googleUid) {
+              console.warn(`[Firestore PBG Sync] Reconciling PBG ID ${acc.pbgId} for ${acc.email}`);
+            }
+            this.accounts.set(acc.googleUid, acc);
+            this.pbgIdIndex.set(acc.pbgId, acc.googleUid);
+            if (acc.discordUserId) this.discordIdIndex.set(acc.discordUserId, acc.googleUid);
+            if (acc.dotaAccountId) this.dotaIdIndex.set(acc.dotaAccountId, acc.googleUid);
+            if (acc.steamId) this.steamIdIndex.set(acc.steamId, acc.googleUid);
+            changed = true;
+          }
+        });
+
+        if (changed) {
+          const highestNumber = this.getHighestPbgNumber();
+          if (this.nextPbgNumber <= highestNumber) {
+            this.nextPbgNumber = highestNumber + 1;
+          }
+          this.saveToStorage();
+          this.notify();
+        }
+      }, (err) => {
+        console.warn('Firestore pbgAccounts sync listener deferred:', err);
+      });
+
+      // 2. Real-time sync of centralized sequence counter
+      onSnapshot(doc(db, 'system_counters', 'pbg_counter'), (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          if (typeof data?.currentCounter === 'number') {
+            const nextVal = data.currentCounter + 1;
+            if (nextVal > this.nextPbgNumber) {
+              this.nextPbgNumber = nextVal;
+              this.saveToStorage();
+            }
+          }
+        }
+      }, (err) => {
+        console.warn('Firestore pbg_counter sync listener deferred:', err);
+      });
+    } catch (e) {
+      console.warn('Firestore sync init error:', e);
     }
   }
 
@@ -347,16 +623,51 @@ export class PBGAccountRegistry {
   }
 
   /**
-   * Generates a new unique, permanent PBG ID
+   * Scans all accounts in memory to discover the highest allocated PBG numerical index
    */
-  private allocateNextPbgId(): string {
+  public getHighestPbgNumber(): number {
+    let highest = 184;
+    for (const acc of this.accounts.values()) {
+      if (!acc.pbgId) continue;
+      const match = acc.pbgId.match(/^PBG-(\d+)$/i);
+      if (match) {
+        const val = parseInt(match[1], 10);
+        if (!isNaN(val) && val > highest) {
+          highest = val;
+        }
+      }
+    }
+    return highest;
+  }
+
+  /**
+   * Generates a guaranteed globally UNIQUE, permanent PBG ID
+   * Invariant: Never produces an ID that matches any existing account in memory or index!
+   */
+  public allocateNextPbgId(): string {
+    const highestUsed = this.getHighestPbgNumber();
+    if (this.nextPbgNumber <= highestUsed) {
+      this.nextPbgNumber = highestUsed + 1;
+    }
     let candidate = this.formatPbgId(this.nextPbgNumber);
-    while (this.pbgIdIndex.has(candidate)) {
+    while (
+      this.pbgIdIndex.has(candidate) ||
+      Array.from(this.accounts.values()).some((a) => a.pbgId?.toUpperCase() === candidate.toUpperCase())
+    ) {
       this.nextPbgNumber += 1;
       candidate = this.formatPbgId(this.nextPbgNumber);
     }
+    const allocatedNum = this.nextPbgNumber;
     this.nextPbgNumber += 1;
     this.saveToStorage();
+
+    if (typeof window !== 'undefined' && db && !isQuotaExhausted()) {
+      setDoc(doc(db, 'system_counters', 'pbg_counter'), {
+        currentCounter: allocatedNum,
+        updatedAt: new Date().toISOString()
+      }, { merge: true }).catch(() => {});
+    }
+
     return candidate;
   }
 
@@ -419,8 +730,15 @@ export class PBGAccountRegistry {
     country?: string;
     region?: string;
   }): { account: PBGPlayerAccount; isFirstTime: boolean } {
-    const existing = this.accounts.get(params.googleUid);
+    const cleanEmail = params.email.toLowerCase().trim();
+    const existing = this.accounts.get(params.googleUid) || this.getAccountByEmail(cleanEmail);
     if (existing) {
+      if (existing.googleUid !== params.googleUid) {
+        this.accounts.delete(existing.googleUid);
+        existing.googleUid = params.googleUid;
+        this.accounts.set(params.googleUid, existing);
+        this.pbgIdIndex.set(existing.pbgId, params.googleUid);
+      }
       // Sync Google profile updates if provided
       let changed = false;
       if (params.photoURL && params.photoURL !== existing.avatarUrl) {
@@ -435,18 +753,21 @@ export class PBGAccountRegistry {
       return { account: existing, isFirstTime: false };
     }
 
+    // Check if user has already completed or dismissed onboarding in local persistence
+    const alreadyCompleted = this.hasUserCompletedOnboarding(params.googleUid);
+
     // Allocate permanent unique PBG ID (e.g. PBG-000184)
     const newPbgId = this.allocateNextPbgId();
     const now = new Date().toISOString();
     const defaultDisplayName = 
       params.displayName || 
-      params.email.split('@')[0].replace(/[._]/g, ' ') || 
+      cleanEmail.split('@')[0].replace(/[._]/g, ' ') || 
       'PBG Player';
 
     const newAccount: PBGPlayerAccount = {
       pbgId: newPbgId,
       googleUid: params.googleUid,
-      email: params.email.toLowerCase().trim(),
+      email: cleanEmail,
       displayName: defaultDisplayName,
       avatarUrl: params.photoURL || `https://api.dicebear.com/7.x/bottts/svg?seed=${params.googleUid}`,
       createdAt: now,
@@ -455,6 +776,8 @@ export class PBGAccountRegistry {
       country: params.country || 'India',
       region: params.region || 'Pan India',
       city: 'Mumbai',
+      hasCompletedOnboarding: alreadyCompleted,
+      onboardingCompletedAt: alreadyCompleted ? now : undefined,
 
       // Discord Identity (initially empty)
       discordUserId: undefined,
@@ -514,7 +837,72 @@ export class PBGAccountRegistry {
     this.syncToFirestore(newAccount);
 
     this.notify();
-    return { account: newAccount, isFirstTime: true };
+    return { account: newAccount, isFirstTime: !alreadyCompleted };
+  }
+
+  /**
+   * Checks whether a user has already completed or dismissed the onboarding walkthrough.
+   * Prevents re-opening the wizard on subsequent logins.
+   */
+  public hasUserCompletedOnboarding(googleUid: string): boolean {
+    if (!googleUid) return true;
+    const acc = this.accounts.get(googleUid);
+    if (acc?.hasCompletedOnboarding) return true;
+    
+    // Check if account has any existing activity (credentials, tournament history, match stats, or custom roles)
+    if (acc) {
+      if (acc.dotaAccountId || acc.steamId || acc.discordUserId || acc.matchesCount > 0 || acc.tournamentCount > 0) {
+        return true;
+      }
+      if (acc.declaredMmr && acc.declaredMmr > 0) return true;
+      if (acc.primaryRole || acc.secondaryRole) return true;
+      // If account was created earlier than the current session, it's not a first-time login
+      if (acc.createdAt && (Date.now() - new Date(acc.createdAt).getTime() > 60000)) {
+        return true;
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        if (
+          localStorage.getItem(`pbg_onboarded_${googleUid}`) === 'true' ||
+          localStorage.getItem(`pbg_onboarding_completed_${googleUid}`) === 'true' ||
+          (acc?.pbgId && localStorage.getItem(`pbg_onboarded_${acc.pbgId}`) === 'true') ||
+          (acc?.pbgId && localStorage.getItem(`pbg_onboarding_completed_${acc.pbgId}`) === 'true') ||
+          sessionStorage.getItem(`pbg_onboarded_${googleUid}`) === 'true'
+        ) {
+          return true;
+        }
+      } catch {}
+    }
+    return false;
+  }
+
+  /**
+   * Marks onboarding walkthrough as completed permanently in memory, localStorage, and Firestore.
+   */
+  public completeOnboarding(googleUid: string): PBGPlayerAccount | undefined {
+    const acc = this.accounts.get(googleUid);
+    if (acc) {
+      acc.hasCompletedOnboarding = true;
+      acc.onboardingCompletedAt = new Date().toISOString();
+      acc.updatedAt = new Date().toISOString();
+      this.saveToStorage();
+      this.syncToFirestore(acc);
+      this.notify();
+    }
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(`pbg_onboarded_${googleUid}`, 'true');
+        localStorage.setItem(`pbg_onboarding_completed_${googleUid}`, 'true');
+        sessionStorage.setItem(`pbg_onboarded_${googleUid}`, 'true');
+        if (acc?.pbgId) {
+          localStorage.setItem(`pbg_onboarded_${acc.pbgId}`, 'true');
+          localStorage.setItem(`pbg_onboarding_completed_${acc.pbgId}`, 'true');
+        }
+      } catch {}
+    }
+    return acc;
   }
 
   /**
@@ -876,15 +1264,7 @@ export class PBGAccountRegistry {
       }
     }
     if (!acc) {
-      for (const a of this.accounts.values()) {
-        if (a.pbgId === 'PBG-000186') {
-          acc = a;
-          acc.googleUid = googleUid;
-          this.accounts.set(googleUid, acc);
-          this.pbgIdIndex.set(acc.pbgId, googleUid);
-          break;
-        }
-      }
+      acc = this.getAccountByEmail(googleUid);
     }
     if (!acc) return null;
 
@@ -1144,6 +1524,33 @@ export class PBGAccountRegistry {
     }
 
     return this.accounts.get(googleUid);
+  }
+
+  /**
+   * Permanently deletes a PBG player account upon user request
+   */
+  public async deleteAccount(googleUid: string): Promise<{ success: boolean; message: string }> {
+    const acc = this.accounts.get(googleUid);
+    if (!acc) {
+      return { success: false, message: 'Account not found.' };
+    }
+    const pbgId = acc.pbgId;
+    this.accounts.delete(googleUid);
+    this.pbgIdIndex.delete(pbgId);
+    if (acc.discordUserId) this.discordIdIndex.delete(acc.discordUserId);
+    if (acc.dotaAccountId) this.dotaIdIndex.delete(acc.dotaAccountId);
+    if (acc.steamId) this.steamIdIndex.delete(acc.steamId);
+    this.saveToStorage();
+
+    if (typeof window !== 'undefined' && db && !isQuotaExhausted()) {
+      try {
+        await deleteDoc(doc(db, 'pbgAccounts', googleUid));
+      } catch (e) {
+        console.warn('Firestore account deletion note:', e);
+      }
+    }
+    this.notify();
+    return { success: true, message: `Account ${pbgId} permanently deleted.` };
   }
 }
 

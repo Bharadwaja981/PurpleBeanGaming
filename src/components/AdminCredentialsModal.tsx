@@ -14,17 +14,20 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { tournamentService, PRIMARY_PROJECT_ADMIN_EMAIL } from '../services/firebaseService';
+import { ViewType } from '../types/tournament';
 
 export interface AdminCredentialsModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenBrandKit?: () => void;
+  onNavigate?: (view: ViewType, entityId?: string) => void;
 }
 
 export function AdminCredentialsModal({
   isOpen,
   onClose,
-  onOpenBrandKit
+  onOpenBrandKit,
+  onNavigate
 }: AdminCredentialsModalProps) {
   const currentUser = tournamentService.getCurrentUser();
   const isPrimary = currentUser.email?.toLowerCase() === PRIMARY_PROJECT_ADMIN_EMAIL.toLowerCase();
@@ -104,9 +107,24 @@ export function AdminCredentialsModal({
 
           {/* Primary Lead Organiser Security Card */}
           <div className="border-2 border-black p-4 bg-[#70FFAF]/20 space-y-2.5 shadow-[3px_3px_0px_0px_#000]">
-            <div className="flex items-center gap-2 font-black text-black">
-              <ShieldCheck className="w-4 h-4 text-emerald-800" />
-              <span className="uppercase">Canonical Lead Organiser</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 font-black text-black">
+                <ShieldCheck className="w-4 h-4 text-emerald-800" />
+                <span className="uppercase">Canonical Lead Organiser</span>
+              </div>
+              {onNavigate && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onNavigate('admin_dashboard');
+                  }}
+                  className="px-2.5 py-1 bg-[#FFE600] hover:bg-yellow-400 text-black border border-black font-black uppercase text-[10px] shadow-[1px_1px_0px_0px_#000] cursor-pointer flex items-center gap-1"
+                >
+                  <Key className="w-3 h-3 text-black" />
+                  <span>Open Role Console →</span>
+                </button>
+              )}
             </div>
             <p className="text-[11px] text-stone-700 leading-relaxed">
               The primary project administrator is canonically anchored to <strong className="text-black">{PRIMARY_PROJECT_ADMIN_EMAIL}</strong>. Signing in with this Google account unlocks authoritative tournament lifecycle transitions, captain appointment approvals, and referee moderation.

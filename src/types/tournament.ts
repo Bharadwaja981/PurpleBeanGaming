@@ -460,6 +460,7 @@ export type ViewType =
   | 'draft'
   | 'draft_results'
   | 'organiser_dashboard'
+  | 'admin_dashboard'
   | 'dota_game_profile'
   | 'dota_match_detail'
   | 'not_found';

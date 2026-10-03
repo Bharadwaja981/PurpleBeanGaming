@@ -67,8 +67,17 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
       if (byPbg) return byPbg;
       const byUid = pbgAccountRegistry.getAccountByUid(playerId);
       if (byUid) return byUid;
+      const byEmail = pbgAccountRegistry.getAccountByEmail(playerId);
+      if (byEmail) return byEmail;
     }
-    return tournamentService.getCurrentPBGAccount() || pbgAccountRegistry.getAccountByPbgId('PBG-000184')!;
+    const cur = tournamentService.getCurrentPBGAccount();
+    if (cur) return cur;
+    const session = tournamentService.getCurrentUser();
+    if (session.email) {
+      const byEmail = pbgAccountRegistry.getAccountByEmail(session.email);
+      if (byEmail) return byEmail;
+    }
+    return pbgAccountRegistry.getAccountByPbgId('PBG-000184')!;
   });
 
   const [activeTab, setActiveTab] = useState<ProfileTab>('overview');
@@ -76,9 +85,12 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
   const [copiedDiscordId, setCopiedDiscordId] = useState(false);
 
   const currentUser = tournamentService.getCurrentPBGAccount();
+  const sessionUser = tournamentService.getCurrentUser();
   const isOwner = !playerId || 
     (currentUser?.googleUid === account.googleUid) || 
     (currentUser?.pbgId === account.pbgId) ||
+    (sessionUser.pbgId === account.pbgId) ||
+    (sessionUser.email && sessionUser.email.toLowerCase() === account.email.toLowerCase()) ||
     (auth.currentUser?.uid === account.googleUid);
 
   // Modals state
@@ -100,13 +112,24 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
         setAccount(byUid);
         return;
       }
+      const byEmail = pbgAccountRegistry.getAccountByEmail(playerId);
+      if (byEmail) {
+        setAccount(byEmail);
+        return;
+      }
     }
     const cur = tournamentService.getCurrentPBGAccount();
     if (cur) {
       setAccount(cur);
     } else {
-      const base = pbgAccountRegistry.getAccountByPbgId('PBG-000184');
-      if (base) setAccount(base);
+      const session = tournamentService.getCurrentUser();
+      const byEmail = session.email ? pbgAccountRegistry.getAccountByEmail(session.email) : undefined;
+      if (byEmail) {
+        setAccount(byEmail);
+      } else {
+        const base = pbgAccountRegistry.getAccountByPbgId('PBG-000184');
+        if (base) setAccount(base);
+      }
     }
   };
 
@@ -1377,9 +1400,17 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
       {isOnboardingModalOpen && (
         <FirstTimeOnboardingModal
           isOpen={isOnboardingModalOpen}
-          onClose={() => setIsOnboardingModalOpen(false)}
+          onClose={() => {
+            pbgAccountRegistry.completeOnboarding(account.googleUid);
+            tournamentService.markOnboardingCompleted(account.googleUid);
+            setIsOnboardingModalOpen(false);
+          }}
           account={account}
-          onComplete={(updated) => setAccount(updated)}
+          onComplete={(updated) => {
+            pbgAccountRegistry.completeOnboarding(updated.googleUid);
+            tournamentService.markOnboardingCompleted(updated.googleUid);
+            setAccount(updated);
+          }}
         />
       )}
     </div>

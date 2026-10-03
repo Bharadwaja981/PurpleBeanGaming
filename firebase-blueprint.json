@@ -145,6 +145,39 @@
         "updatedAt": { "type": "number" }
       },
       "required": ["userId", "verificationStatus", "steamOwnershipVerified", "updatedAt"]
+    },
+    "userRole": {
+      "title": "UserRole",
+      "description": "Role-based access control assignment record",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "enum": ["admin", "organizer", "moderator", "captain"] },
+        "assignedBy": { "type": "string", "maxLength": 128 },
+        "assignedAt": { "type": "string", "format": "date-time" },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "pbgId": { "type": "string", "maxLength": 32 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "status": { "type": "string", "enum": ["ACTIVE", "REVOKED"] }
+      },
+      "required": ["email", "role", "assignedBy", "assignedAt"]
+    },
+    "roleAuditLog": {
+      "title": "RoleAuditLog",
+      "description": "Security audit record of RBAC role mutations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "action": { "type": "string", "enum": ["ROLE_ASSIGNED", "ROLE_REVOKED", "ROLE_UPDATED"] },
+        "targetEmail": { "type": "string", "maxLength": 128 },
+        "targetRole": { "type": "string", "maxLength": 32 },
+        "previousRole": { "type": "string", "maxLength": 32 },
+        "performedBy": { "type": "string", "maxLength": 128 },
+        "performedByEmail": { "type": "string", "maxLength": 128 },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "notes": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["id", "action", "targetEmail", "targetRole", "performedBy", "performedByEmail", "timestamp"]
     }
   },
   "firestore": {
@@ -175,6 +208,14 @@
     "/privatePlayerAccounts/{userId}": {
       "schema": "#/entities/privatePlayerAccount",
       "description": "Private Steam verification state"
+    },
+    "/user_roles/{roleDocId}": {
+      "schema": "#/entities/userRole",
+      "description": "Role-based access control assignments"
+    },
+    "/role_audit_logs/{logId}": {
+      "schema": "#/entities/roleAuditLog",
+      "description": "Immutable security logs of administrative role grants and revocations"
     }
   }
 }

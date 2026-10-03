@@ -42,6 +42,8 @@ export interface PBGPlayerAccount {
   country: string;
   region: string;
   city?: string;
+  hasCompletedOnboarding?: boolean;
+  onboardingCompletedAt?: string;
 
   // Discord Account Identity (OAuth Authorized)
   discord?: {

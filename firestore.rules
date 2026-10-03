@@ -65,6 +65,17 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // 8. User Roles & RBAC (Read: isSignedIn; Write: isAdmin)
+    match /user_roles/{roleDocId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // 9. Role Audit Logs (Read/Write: isAdmin)
+    match /role_audit_logs/{logId} {
+      allow read, write: if isAdmin();
+    }
+
     match /{document=**} {
       allow read, write: if true;
     }

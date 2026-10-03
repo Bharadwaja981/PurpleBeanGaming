@@ -1,5 +1,7 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *, .dark, .dark *));
+
 @layer base {
   html, body {
     overflow-x: hidden;
@@ -20,6 +22,16 @@
   }
 }
 
+/* Dark Mode Global Variables & Base */
+.dark {
+  color-scheme: dark;
+}
+
+.dark body {
+  background-color: #0F0E17;
+  color: #F4F4F5;
+}
+
 /* Custom Neo-Brutalist Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
@@ -32,13 +44,188 @@
   border-top: 2px solid #000;
 }
 
+.dark ::-webkit-scrollbar-track {
+  background: #141220;
+  border-left: 2px solid #3F3965;
+  border-top: 2px solid #3F3965;
+}
+
 ::-webkit-scrollbar-thumb {
   background: #000;
   border: 1px solid #ffe600;
 }
 
+.dark ::-webkit-scrollbar-thumb {
+  background: #7C3AED;
+  border: 1px solid #FFE600;
+}
+
 ::-webkit-scrollbar-thumb:hover {
   background: #7c3aed;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #9061F9;
+}
+
+/* Global Neo-Brutalist Dark Theme Transformations */
+.dark .bg-white:not([data-keep-light="true"]) {
+  background-color: #171527 !important;
+  color: #F4F4F5;
+}
+
+.dark .bg-stone-50:not([data-keep-light="true"]) {
+  background-color: #121020 !important;
+  color: #E4E4E7;
+}
+
+.dark .bg-stone-100:not([data-keep-light="true"]) {
+  background-color: #201C36 !important;
+  color: #E4E4E7;
+}
+
+.dark .bg-stone-200:not([data-keep-light="true"]) {
+  background-color: #2B2648 !important;
+  color: #E4E4E7;
+}
+
+.dark .hover\:bg-stone-50:hover {
+  background-color: #1D1933 !important;
+}
+
+.dark .hover\:bg-stone-100:hover {
+  background-color: #282346 !important;
+}
+
+.dark .hover\:bg-stone-200:hover {
+  background-color: #342D5A !important;
+}
+
+.dark .hover\:bg-white:hover {
+  background-color: #24203E !important;
+}
+
+/* Pale Tint Surfaces -> Deep Violet-Slate in Dark Mode */
+.dark .bg-\[\#FFFBEB\],
+.dark .bg-\[\#FFF9E6\],
+.dark .bg-\[\#FFFDE8\],
+.dark .bg-\[\#FFFDEB\] {
+  background-color: #19162B !important;
+}
+
+.dark .bg-\[\#E2E8F0\] {
+  background-color: #201C38 !important;
+}
+
+/* Colored Tint Containers -> Subtle Translucent Glows in Dark Mode */
+.dark .bg-emerald-50 {
+  background-color: rgba(16, 185, 129, 0.12) !important;
+  color: #6EE7B7;
+}
+
+.dark .bg-amber-50,
+.dark .bg-yellow-50 {
+  background-color: rgba(245, 158, 11, 0.12) !important;
+  color: #FCD34D;
+}
+
+.dark .bg-red-50 {
+  background-color: rgba(239, 68, 68, 0.12) !important;
+  color: #FCA5A5;
+}
+
+.dark .bg-blue-50 {
+  background-color: rgba(59, 130, 246, 0.12) !important;
+  color: #93C5FD;
+}
+
+.dark .bg-purple-50 {
+  background-color: rgba(124, 58, 237, 0.12) !important;
+  color: #C4B5FD;
+}
+
+.dark .bg-cyan-50 {
+  background-color: rgba(6, 182, 212, 0.12) !important;
+  color: #67E8F9;
+}
+
+/* Tables & Modals Dark Mode Support */
+.dark table th {
+  background-color: #1D1934 !important;
+  color: #E4E4E7 !important;
+}
+
+.dark table td {
+  border-color: #2E294B !important;
+}
+
+.dark table tr.hover\:bg-stone-50:hover {
+  background-color: #221D3D !important;
+}
+
+/* Text Adaptations for Dark Mode (Preserves Vibrant Neo-Brutalist Accent Badges) */
+.dark .text-black:not(.bg-\[\#FFE600\]):not(.bg-\[\#70FFAF\]):not(.bg-\[\#5CE1E6\]):not(.bg-\[\#FFDE59\]):not(.bg-\[\#FF90E8\]):not([data-keep-color="true"]) {
+  color: #F4F4F5;
+}
+
+.dark .text-stone-900,
+.dark .text-stone-800 {
+  color: #E4E4E7 !important;
+}
+
+.dark .text-stone-700,
+.dark .text-stone-600 {
+  color: #A1A1AA !important;
+}
+
+.dark .text-stone-500 {
+  color: #71717A !important;
+}
+
+/* Dark Mode Borders & Dividers */
+.dark .border-black:not([data-keep-border="true"]) {
+  border-color: #383259 !important;
+}
+
+.dark .border-stone-200,
+.dark .border-stone-300 {
+  border-color: #2E294A !important;
+}
+
+.dark .divide-stone-100 > :not([hidden]) ~ :not([hidden]),
+.dark .divide-stone-200 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #272242 !important;
+}
+
+/* Dark Mode Inputs & Textareas */
+.dark input:not([type="checkbox"]):not([type="radio"]),
+.dark select,
+.dark textarea {
+  background-color: #131122 !important;
+  color: #F4F4F5 !important;
+  border-color: #494174 !important;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #71717A !important;
+}
+
+/* Neo-Brutalist Hard Offset Shadows on Dark */
+.dark .shadow-\[2px_2px_0px_0px_\#000\] {
+  box-shadow: 2px 2px 0px 0px #000 !important;
+}
+
+.dark .shadow-\[4px_4px_0px_0px_\#000\] {
+  box-shadow: 4px 4px 0px 0px #000 !important;
+}
+
+.dark .shadow-\[6px_6px_0px_0px_\#000\] {
+  box-shadow: 6px 6px 0px 0px #000 !important;
+}
+
+.dark .shadow-\[8px_8px_0px_0px_\#000\] {
+  box-shadow: 8px 8px 0px 0px #000 !important;
 }
 
 /* Responsive Table & Bracket Scroller Helpers */
