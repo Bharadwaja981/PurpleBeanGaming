@@ -7,10 +7,14 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://ais-pre-peyssjszcbcksxhcpybipw-243967175289.europe-west1.run.app/api/$1"
+      "destination": "/api"
     },
     {
-      "source": "/(.*)",
+      "source": "/api",
+      "destination": "/api"
+    },
+    {
+      "source": "/((?!api(?:/|$)).*)",
       "destination": "/index.html"
     }
   ]

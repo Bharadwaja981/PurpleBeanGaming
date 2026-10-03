@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Production Cloud Run Deployment Script
+# Service Name: purplebeangaming-api
+#
+# Enables unauthenticated invocation at infrastructure level so Vercel can proxy
+# all /api/* requests without Google AI Studio cookie challenges.
+# Protected endpoints continue to enforce Firebase Bearer tokens, Discord OAuth
+# constraints, and referee/admin permissions.
+# ==============================================================================
+set -euo pipefail
+
+SERVICE_NAME="purplebeangaming-api"
+REGION="${GCP_REGION:-europe-west1}"
+PROJECT_ID="${GCP_PROJECT_ID:-$(gcloud config get-value project 2>/dev/null || echo '')}"
+
+if [ -z "$PROJECT_ID" ]; then
+  echo "Error: GCP Project ID is not set. Run: gcloud config set project YOUR_PROJECT_ID"
+  exit 1
+fi
+
+echo "==> Deploying $SERVICE_NAME to Google Cloud Run..."
+echo "    Project: $PROJECT_ID"
+echo "    Region:  $REGION"
+
+# Deploy container to Cloud Run with public invocation enabled
+gcloud run deploy "$SERVICE_NAME" \
+  --source . \
+  --project "$PROJECT_ID" \
+  --region "$REGION" \
+  --platform managed \
+  --allow-unauthenticated \
+  --set-env-vars "NODE_ENV=production,DISCORD_REDIRECT_URI=https://www.purplebeangaming.com/api/auth/discord/callback,DISCORD_UNLINK_REVOKES_ROLE=true"
+
+# Explicitly ensure allUsers has roles/run.invoker to guarantee unauthenticated access
+gcloud run services add-iam-policy-binding "$SERVICE_NAME" \
+  --project "$PROJECT_ID" \
+  --region "$REGION" \
+  --member="allUsers" \
+  --role="roles/run.invoker"
+
+SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
+  --project "$PROJECT_ID" \
+  --region "$REGION" \
+  --format="value(status.url)")
+
+echo "=============================================================================="
+echo "Successfully deployed $SERVICE_NAME!"
+echo "Production Cloud Run URL: $SERVICE_URL"
+echo ""
+echo "To route Vercel to this dedicated Cloud Run service, set in vercel.json:"
+echo "  \"rewrites\": ["
+echo "    {"
+echo "      \"source\": \"/api/(.*)\","
+echo "      \"destination\": \"$SERVICE_URL/api/\$1\""
+echo "    },"
+echo "    {"
+echo "      \"source\": \"/(.*)\","
+echo "      \"destination\": \"/index.html\""
+echo "    }"
+echo "  ]"
+echo "=============================================================================="
