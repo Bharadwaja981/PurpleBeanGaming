@@ -40,6 +40,7 @@ import { SelectDropdown, DropdownOption } from './ui/Dropdown';
 import { tournamentService } from '../services/firebaseService';
 import { AdminTournamentPlayerManagerModal } from './AdminTournamentPlayerManagerModal';
 import { DotaTournamentRegistration } from '../domain/dotaPlayerEngine';
+import { AlertModal } from './ui/AlertModal';
 
 interface DynamicOrganiserWorkspaceProps {
   config: TournamentConfig;
@@ -83,6 +84,7 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
   // Player Manager Modal State
   const [showPlayerModal, setShowPlayerModal] = useState(false);
   const [playerModalInitialTab, setPlayerModalInitialTab] = useState<'manual' | 'upload' | 'dummy'>('manual');
+  const [alertModalState, setAlertModalState] = useState<{ isOpen: boolean; title: string; message: string; variant?: 'error' | 'success' | 'info' } | null>(null);
   const [tournamentRegs, setTournamentRegs] = useState(() => 
     tournamentService.getTournamentRegistrations(config.identity.tournamentId)
   );
@@ -183,14 +185,24 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
       refreshState();
       setActiveTab('competition');
     } catch (e: any) {
-      alert(e.message);
+      setAlertModalState({
+        isOpen: true,
+        title: 'Bracket Generation Failed',
+        message: e.message || 'Failed to generate competition bracket.',
+        variant: 'error'
+      });
     }
   };
 
   const handleExecuteScore = (matchId: string) => {
     const res = engine.executeMatchResult(matchId, scoreA, scoreB);
     if (!res.success) {
-      alert(res.error);
+      setAlertModalState({
+        isOpen: true,
+        title: 'Match Result Submission Failed',
+        message: res.error || 'Failed to submit match score.',
+        variant: 'error'
+      });
       return;
     }
     setSelectedMatchId(null);
@@ -1360,6 +1372,17 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
           tournamentName={config.identity.name}
           initialTab={playerModalInitialTab}
           onPlayersUpdated={refreshState}
+        />
+      )}
+
+      {/* Neo-brutalist Alert Notice Modal */}
+      {alertModalState && (
+        <AlertModal
+          isOpen={alertModalState.isOpen}
+          onClose={() => setAlertModalState(null)}
+          title={alertModalState.title}
+          message={alertModalState.message}
+          variant={alertModalState.variant || 'error'}
         />
       )}
     </div>

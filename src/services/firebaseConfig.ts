@@ -12,9 +12,9 @@ import {
 import { initializeFirestore, getFirestore, doc, getDocFromServer, setLogLevel } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
-// Silence internal harmless gRPC idle stream cancellation notices
+// Silence internal harmless transport retry and idle stream cancellation notices
 try {
-  setLogLevel('error');
+  setLogLevel('silent');
 } catch {
   // Ignored in non-browser contexts
 }
@@ -38,11 +38,11 @@ export const activeFirebaseConfig = {
 // Initialize Firebase App
 const app = getApps().length > 0 ? getApp() : initializeApp(activeFirebaseConfig);
 
-// Critical: Specify firestoreDatabaseId with auto-detect long polling to prevent idle stream dropouts
+// Critical: Specify firestoreDatabaseId with forced long polling to prevent WebSocket connection failures in iframes
 export const db = (() => {
   try {
     return initializeFirestore(app, {
-      experimentalAutoDetectLongPolling: true,
+      experimentalForceLongPolling: true,
       ignoreUndefinedProperties: true,
     }, activeFirebaseConfig.firestoreDatabaseId);
   } catch {
@@ -183,8 +183,12 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Trigger initial connection check
-testFirestoreConnection().catch(console.warn);
+// Trigger initial connection check non-blockingly after event loop settles
+if (typeof window !== 'undefined') {
+  setTimeout(() => {
+    testFirestoreConnection().catch(() => {});
+  }, 1500);
+}
 
 export { signInWithPopup, signInWithRedirect, getRedirectResult, fbSignOut, onAuthStateChanged };
 export type { User };

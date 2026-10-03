@@ -12,8 +12,21 @@ import {
   linkDiscordAccountAuthoritative,
   unlinkDiscordAccountAuthoritative,
   getPrivateDiscordAccount,
-  validateDiscordSnowflake
+  validateDiscordSnowflake,
+  reserveDiscordIdentityClaim,
+  rollbackDiscordIdentityReservation,
+  finalizeDiscordAccountAuthoritative,
+  updateDiscordAuthoritativeMembership
 } from './discordVerificationService';
+import {
+  generateSignedDiscordOAuthState,
+  verifyAndConsumeDiscordOAuthState,
+  sanitizeTrustedOrigin
+} from './discordOAuthState';
+import {
+  fetchDiscordUserProfile,
+  provisionDiscordGuildAndRole
+} from './discordProvisioningService';
 
 export const apiRouter = Router();
 
@@ -870,17 +883,20 @@ const handleDiscordAuthStart = async (req: Request, res: Response) => {
   try {
     const user = await verifyFirebaseBearerToken(req.headers.authorization);
     const { returnUrl = '/profile', pbgId } = req.body || {};
+    const rawOrigin = (req.headers.origin as string) || (req.headers.referer ? new URL(req.headers.referer).origin : undefined);
+    const trustedOrigin = sanitizeTrustedOrigin(rawOrigin);
 
-    const stateToken = generateSignedSteamState(user.uid, {
+    const stateToken = generateSignedDiscordOAuthState(user.uid, {
       email: user.email,
       pbgId: pbgId || undefined,
-      returnUrl
+      returnUrl,
+      origin: trustedOrigin
     });
 
     const devUrl = 'https://ais-dev-peyssjszcbcksxhcpybipw-243967175289.europe-west1.run.app';
     const sharedUrl = 'https://ais-pre-peyssjszcbcksxhcpybipw-243967175289.europe-west1.run.app';
     const appUrl = process.env.APP_URL || devUrl;
-    const redirectUri = `${appUrl}/api/auth/discord/callback`;
+    const redirectUri = process.env.DISCORD_REDIRECT_URI || `${appUrl}/api/auth/discord/callback`;
 
     const clientId = process.env.DISCORD_CLIENT_ID || '';
     const isConfigured = Boolean(clientId && process.env.DISCORD_CLIENT_SECRET);
@@ -891,7 +907,7 @@ const handleDiscordAuthStart = async (req: Request, res: Response) => {
         client_id: clientId,
         response_type: 'code',
         redirect_uri: redirectUri,
-        scope: 'identify',
+        scope: 'identify guilds.join',
         state: stateToken
       });
       authUrl = `https://discord.com/oauth2/authorize?${params.toString()}`;
@@ -927,53 +943,91 @@ apiRouter.get('/auth/discord/url', handleDiscordAuthStart);
 const handleDiscordCallback = async (req: Request, res: Response) => {
   const { code, state, error, error_description } = req.query as Record<string, string | undefined>;
 
-  if (error || !code || !state) {
-    const errorMsg = error_description || error || 'Discord authorization was cancelled or denied.';
-    return res.status(200).send(`
+  const devUrl = 'https://ais-dev-peyssjszcbcksxhcpybipw-243967175289.europe-west1.run.app';
+  const appUrl = process.env.APP_URL || devUrl;
+  const redirectUri = process.env.DISCORD_REDIRECT_URI || `${appUrl}/api/auth/discord/callback`;
+
+  // Secure HTML response generator: strictly enforces trusted origin on postMessage, zero secret exposure
+  const sendHtmlResponse = (
+    statusCode: number,
+    isSuccess: boolean,
+    payload: any,
+    trustedOrigin: string,
+    errorHeading?: string,
+    errorBody?: string
+  ) => {
+    return res.status(statusCode).send(`
       <!DOCTYPE html>
       <html>
-        <head><title>Discord Authorization Cancelled</title></head>
-        <body style="font-family: sans-serif; background: #0e0e10; color: #fff; padding: 40px; text-align: center;">
-          <h2 style="color: #ff5555;">Discord Authorization Cancelled</h2>
-          <p style="color: #aaa;">${errorMsg}</p>
+        <head>
+          <title>${isSuccess ? 'Discord Connected — PurpleBeanGaming' : 'Discord Link Error — PurpleBeanGaming'}</title>
+          <style>
+            body { font-family: monospace; background: #0e0e10; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+            .box { background: #18181b; border: 3.5px solid #000; padding: 32px; text-align: center; box-shadow: 8px 8px 0px 0px ${isSuccess ? '#5865F2' : '#ff4444'}; max-width: 440px; }
+            h2 { color: ${isSuccess ? '#5865F2' : '#ff5555'}; margin-top: 0; font-size: 20px; font-weight: 900; text-transform: uppercase; }
+            p { color: #ccc; font-size: 13px; line-height: 1.5; }
+            .avatar { width: 64px; height: 64px; border-radius: 50%; border: 2px solid #000; margin: 10px auto; background: #5865F2; display: block; }
+          </style>
+        </head>
+        <body>
+          <div class="box">
+            ${isSuccess && payload?.avatarUrl ? `<img src="${payload.avatarUrl}" class="avatar" alt="Avatar" />` : ''}
+            <h2>${isSuccess ? 'DISCORD VERIFIED!' : (errorHeading || 'DISCORD ERROR')}</h2>
+            <p>${isSuccess ? `Discord account <strong>@${payload?.discordUsername || payload?.username}</strong> has been linked to your PBG profile.` : (errorBody || 'Failed to complete Discord authorization.')}</p>
+            <p style="color: ${isSuccess ? '#70FFAF' : '#ff9999'}; font-weight: bold;">${isSuccess ? 'Returning to profile...' : 'Closing window...'}</p>
+          </div>
           <script>
-            const payload = { type: 'DISCORD_AUTH_ERROR', error: 'DISCORD_AUTH_DENIED', message: ${JSON.stringify(errorMsg)}, timestamp: Date.now() };
+            const payload = ${JSON.stringify(payload)};
             try { localStorage.setItem('pbg_discord_link_result', JSON.stringify(payload)); } catch(e){}
-            try { const ch = new BroadcastChannel('pbg_discord_auth'); ch.postMessage(payload); ch.close(); } catch(e){}
-            if (window.opener) { window.opener.postMessage(payload, '*'); }
-            setTimeout(() => {
-              if (window.opener) { window.close(); } else { window.location.href = '/profile'; }
-            }, 1800);
+            try {
+              if (typeof BroadcastChannel !== 'undefined') {
+                const ch = new BroadcastChannel('pbg_discord_auth');
+                ch.postMessage(payload);
+                ch.close();
+              }
+            } catch(e){}
+            if (window.opener) {
+              try { window.opener.postMessage(payload, ${JSON.stringify(trustedOrigin)}); } catch(e){}
+              setTimeout(() => window.close(), 600);
+            } else {
+              setTimeout(() => { window.location.href = '/profile'; }, 1000);
+            }
           </script>
         </body>
       </html>
     `);
+  };
+
+  if (error || !code || !state) {
+    const errorMsg = error_description || error || 'Discord authorization was cancelled or denied.';
+    return sendHtmlResponse(200, false, {
+      type: 'DISCORD_AUTH_ERROR',
+      error: 'DISCORD_AUTH_DENIED',
+      message: errorMsg,
+      timestamp: Date.now()
+    }, appUrl, 'DISCORD AUTHORIZATION CANCELLED', errorMsg);
   }
 
-  // Verify HMAC state associated with current PBG user
-  const stateResult = verifySignedSteamState(state);
-  if (!stateResult.success || !stateResult.payload) {
-    return res.status(400).send(`
-      <!DOCTYPE html>
-      <html>
-        <head><title>Invalid OAuth State</title></head>
-        <body style="font-family: sans-serif; background: #0e0e10; color: #fff; padding: 40px; text-align: center;">
-          <h2 style="color: #ff5555;">Security State Expired</h2>
-          <p style="color: #aaa;">The verification session has expired. Please try connecting again from your PBG profile.</p>
-          <p><a href="/profile" style="color: #5865F2;">Return to Profile</a></p>
-        </body>
-      </html>
-    `);
+  // 1. Validate & atomically consume OAuth state (Strict Replay & Tamper Protection)
+  const stateResult = await verifyAndConsumeDiscordOAuthState(state);
+  if (!stateResult.success) {
+    const errorDetails = stateResult.details || 'The verification session has expired or was already used.';
+    return sendHtmlResponse(400, false, {
+      type: 'DISCORD_AUTH_ERROR',
+      error: stateResult.error || 'INVALID_OAUTH_STATE',
+      message: errorDetails,
+      timestamp: Date.now()
+    }, appUrl, 'SECURITY STATE REJECTED', errorDetails);
   }
 
   const userId = stateResult.payload.uid;
   const pbgId = stateResult.payload.pbgId;
-  const returnUrl = stateResult.payload.returnUrl || '/profile';
+  const trustedOrigin = stateResult.payload.origin || appUrl;
   const clientId = process.env.DISCORD_CLIENT_ID;
   const clientSecret = process.env.DISCORD_CLIENT_SECRET;
-  const devUrl = 'https://ais-dev-peyssjszcbcksxhcpybipw-243967175289.europe-west1.run.app';
-  const appUrl = process.env.APP_URL || devUrl;
-  const redirectUri = `${appUrl}/api/auth/discord/callback`;
+  const botToken = process.env.DISCORD_BOT_TOKEN;
+  const guildId = process.env.DISCORD_GUILD_ID || '631715510631006219';
+  const roleId = process.env.DISCORD_PBG_MEMBER_ROLE_ID || '1555885374713237524';
 
   try {
     let discordUserId = '';
@@ -982,7 +1036,7 @@ const handleDiscordCallback = async (req: Request, res: Response) => {
     let discordAvatarUrl: string | null = null;
 
     if (clientId && clientSecret) {
-      // Step 6: Exchange code for access token
+      // Step 6: Exchange code for access token server-side
       const tokenRes = await fetch('https://discord.com/api/v10/oauth2/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -1005,24 +1059,110 @@ const handleDiscordCallback = async (req: Request, res: Response) => {
       const accessToken = tokenData.access_token;
 
       // Step 7: Call GET https://discord.com/api/v10/users/@me
-      const userRes = await fetch('https://discord.com/api/v10/users/@me', {
-        headers: { Authorization: `Bearer ${accessToken}` }
-      });
-
-      if (!userRes.ok) {
-        throw new Error('Failed to retrieve user profile from Discord.');
-      }
-
-      const discordUser = await userRes.json();
-      discordUserId = discordUser.id;
-      discordUsername = discordUser.username;
-      discordGlobalName = discordUser.global_name || null;
-      if (discordUser.avatar) {
-        discordAvatarUrl = `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png`;
+      // Strictly guarantee discord.userId comes from Discord API response.id
+      const userProfile = await fetchDiscordUserProfile(accessToken);
+      discordUserId = userProfile.id;
+      discordUsername = userProfile.username;
+      discordGlobalName = userProfile.global_name || null;
+      if (userProfile.avatar) {
+        discordAvatarUrl = `https://cdn.discordapp.com/avatars/${userProfile.id}/${userProfile.avatar}.png`;
       } else {
-        const defaultIndex = (BigInt(discordUser.id) >> 22n) % 6n;
+        const defaultIndex = (BigInt(userProfile.id) >> 22n) % 6n;
         discordAvatarUrl = `https://cdn.discordapp.com/embed/avatars/${defaultIndex}.png`;
       }
+
+      // STEP 1: ATOMIC IDENTITY RESERVATION BEFORE EXTERNAL SIDE EFFECTS
+      // Checks 1:1 index in Firestore: ensures Discord ID is not already linked to another account
+      try {
+        await reserveDiscordIdentityClaim({
+          userId,
+          pbgId,
+          discordUserId
+        });
+      } catch (reserveErr: any) {
+        return sendHtmlResponse(
+          200,
+          false,
+          {
+            type: 'DISCORD_AUTH_ERROR',
+            error: reserveErr.code || 'DISCORD_ALREADY_LINKED',
+            message: reserveErr.message || 'This Discord account is already linked to another PurpleBeanGaming account.',
+            timestamp: Date.now()
+          },
+          trustedOrigin,
+          'ACCOUNT ALREADY LINKED',
+          reserveErr.message
+        );
+      }
+
+      // STEP 2: EXTERNAL SIDE EFFECTS (GUILD MEMBERSHIP & ROLE PROVISIONING)
+      let guildMember = false;
+      let pbgMemberRole = false;
+
+      if (guildId && botToken) {
+        const provResult = await provisionDiscordGuildAndRole({
+          guildId,
+          botToken,
+          roleId: roleId || undefined,
+          discordUserId,
+          accessToken
+        });
+
+        if (!provResult.success) {
+          // Provisioning failed: ROLLBACK the pending reservation!
+          await rollbackDiscordIdentityReservation(discordUserId, userId);
+          return sendHtmlResponse(
+            200,
+            false,
+            {
+              type: 'DISCORD_AUTH_ERROR',
+              error: provResult.errorCode || 'DISCORD_PROVISIONING_FAILED',
+              message: provResult.errorMessage || 'Failed to join official PBG Discord server or assign PBG Member role.',
+              timestamp: Date.now()
+            },
+            trustedOrigin,
+            'DISCORD GUILD ERROR',
+            provResult.errorMessage
+          );
+        }
+
+        guildMember = provResult.guildMember;
+        pbgMemberRole = provResult.pbgMemberRole;
+      }
+
+      // STEP 3: FINALIZE IDENTITY CLAIM IN FIRESTORE
+      await finalizeDiscordAccountAuthoritative({
+        userId,
+        pbgId,
+        discordUserId,
+        discordUsername,
+        globalName: discordGlobalName,
+        discordAvatarUrl,
+        guildMember,
+        pbgMemberRole,
+        verificationMethod: 'discord_oauth_2'
+      });
+
+      const discordPayload = {
+        userId: discordUserId,
+        username: discordUsername,
+        globalName: discordGlobalName,
+        avatarUrl: discordAvatarUrl,
+        guildMember,
+        pbgMemberRole,
+        connectedAt: Date.now(),
+        verified: true
+      };
+
+      return sendHtmlResponse(200, true, {
+        type: 'DISCORD_AUTH_SUCCESS',
+        discord: discordPayload,
+        discordUserId,
+        discordUsername,
+        discordDisplayName: discordGlobalName || discordUsername,
+        avatarUrl: discordAvatarUrl,
+        timestamp: Date.now()
+      }, trustedOrigin);
     } else {
       // Staging / Demo fallback if credentials are being configured
       const seed = Math.abs(userId.split('').reduce((acc, c) => acc + c.charCodeAt(0), 1000));
@@ -1030,96 +1170,48 @@ const handleDiscordCallback = async (req: Request, res: Response) => {
       discordUsername = (stateResult.payload.email || 'player').split('@')[0];
       discordGlobalName = discordUsername.toUpperCase();
       discordAvatarUrl = `https://cdn.discordapp.com/embed/avatars/${parseInt(discordUserId.slice(-1) || '0', 10) % 5}.png`;
+
+      await linkDiscordAccountAuthoritative({
+        userId,
+        pbgId,
+        discordUserId,
+        discordUsername,
+        globalName: discordGlobalName,
+        discordAvatarUrl,
+        guildMember: true,
+        pbgMemberRole: true,
+        verificationMethod: 'discord_oauth_2'
+      });
+
+      const discordPayload = {
+        userId: discordUserId,
+        username: discordUsername,
+        globalName: discordGlobalName,
+        avatarUrl: discordAvatarUrl,
+        guildMember: true,
+        pbgMemberRole: true,
+        connectedAt: Date.now(),
+        verified: true
+      };
+
+      return sendHtmlResponse(200, true, {
+        type: 'DISCORD_AUTH_SUCCESS',
+        discord: discordPayload,
+        discordUserId,
+        discordUsername,
+        discordDisplayName: discordGlobalName || discordUsername,
+        avatarUrl: discordAvatarUrl,
+        timestamp: Date.now()
+      }, trustedOrigin);
     }
-
-    // Step 9 & 10: Link Discord user ID to the currently authenticated PBG account with 1:1 constraint
-    const linked = await linkDiscordAccountAuthoritative({
-      userId,
-      pbgId,
-      discordUserId,
-      discordUsername,
-      globalName: discordGlobalName,
-      discordAvatarUrl,
-      verificationMethod: 'discord_oauth_2'
-    });
-
-    const discordPayload = {
-      userId: discordUserId,
-      username: discordUsername,
-      globalName: discordGlobalName,
-      avatarUrl: discordAvatarUrl,
-      connectedAt: Date.now(),
-      verified: true
-    };
-
-    return res.status(200).send(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Discord Connected — PurpleBeanGaming</title>
-          <style>
-            body { font-family: monospace; background: #0e0e10; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; }
-            .box { background: #18181b; border: 3.5px solid #000; padding: 32px; text-align: center; box-shadow: 8px 8px 0px 0px #5865F2; max-width: 440px; }
-            h2 { color: #5865F2; margin-top: 0; font-size: 20px; font-weight: 900; text-transform: uppercase; }
-            p { color: #ccc; font-size: 13px; line-height: 1.5; }
-            .avatar { width: 64px; height: 64px; border-radius: 50%; border: 2px solid #000; margin: 10px auto; background: #5865F2; display: block; }
-          </style>
-        </head>
-        <body>
-          <div class="box">
-            ${discordAvatarUrl ? `<img src="${discordAvatarUrl}" class="avatar" alt="Avatar" />` : ''}
-            <h2>DISCORD VERIFIED!</h2>
-            <p>Discord account <strong>@${discordUsername}</strong> has been linked to your PBG profile.</p>
-            <p style="color: #70FFAF; font-weight: bold;">Returning to profile...</p>
-          </div>
-          <script>
-            const payload = {
-              type: 'DISCORD_AUTH_SUCCESS',
-              discord: ${JSON.stringify(discordPayload)},
-              discordUserId: ${JSON.stringify(discordUserId)},
-              discordUsername: ${JSON.stringify(discordUsername)},
-              discordDisplayName: ${JSON.stringify(discordGlobalName || discordUsername)},
-              timestamp: Date.now()
-            };
-            try { localStorage.setItem('pbg_discord_link_result', JSON.stringify(payload)); } catch(e){}
-            try {
-              if (typeof BroadcastChannel !== 'undefined') {
-                const ch = new BroadcastChannel('pbg_discord_auth');
-                ch.postMessage(payload);
-                ch.close();
-              }
-            } catch(e){}
-            if (window.opener) {
-              try { window.opener.postMessage(payload, '*'); } catch(e){}
-              setTimeout(() => window.close(), 600);
-            } else {
-              setTimeout(() => { window.location.href = ${JSON.stringify(returnUrl)}; }, 800);
-            }
-          </script>
-        </body>
-      </html>
-    `);
   } catch (err: any) {
     const errorMsg = err.message || 'Failed to complete Discord authorization.';
-    return res.status(200).send(`
-      <!DOCTYPE html>
-      <html>
-        <head><title>Discord Authorization Error</title></head>
-        <body style="font-family: sans-serif; background: #0e0e10; color: #fff; padding: 40px; text-align: center;">
-          <h2 style="color: #ff5555;">Discord Link Error</h2>
-          <p style="color: #aaa;">${errorMsg}</p>
-          <script>
-            const payload = { type: 'DISCORD_AUTH_ERROR', error: 'DISCORD_LINK_FAILED', message: ${JSON.stringify(errorMsg)}, timestamp: Date.now() };
-            try { localStorage.setItem('pbg_discord_link_result', JSON.stringify(payload)); } catch(e){}
-            try { const ch = new BroadcastChannel('pbg_discord_auth'); ch.postMessage(payload); ch.close(); } catch(e){}
-            if (window.opener) { window.opener.postMessage(payload, '*'); }
-            setTimeout(() => {
-              if (window.opener) { window.close(); } else { window.location.href = '/profile'; }
-            }, 2500);
-          </script>
-        </body>
-      </html>
-    `);
+    return sendHtmlResponse(200, false, {
+      type: 'DISCORD_AUTH_ERROR',
+      error: 'DISCORD_LINK_FAILED',
+      message: errorMsg,
+      timestamp: Date.now()
+    }, trustedOrigin, 'DISCORD AUTHORIZATION FAILED', errorMsg);
   }
 };
 
@@ -1156,18 +1248,74 @@ const handleDiscordStatus = async (req: Request, res: Response) => {
 
     const account = await getPrivateDiscordAccount(targetUserId);
 
+    let guildMember = Boolean(account.discord?.guildMember);
+    let pbgMemberRole = Boolean(account.discord?.pbgMemberRole);
+
+    const guildId = process.env.DISCORD_GUILD_ID || '631715510631006219';
+    const roleId = process.env.DISCORD_PBG_MEMBER_ROLE_ID || '1555885374713237524';
+    const botToken = process.env.DISCORD_BOT_TOKEN;
+
+    // Live authoritative verification against Discord API:
+    // Ensures status reflects reality on Discord and updates Firestore if state is stale
+    if (account.discordLinked && account.discordUserId && guildId && botToken && !account.discordUserId.startsWith('mock_')) {
+      try {
+        const verifyUrl = `https://discord.com/api/v10/guilds/${guildId}/members/${account.discordUserId}`;
+        const verifyRes = await fetch(verifyUrl, {
+          headers: {
+            Authorization: `Bot ${botToken}`,
+            Accept: 'application/json'
+          }
+        });
+
+        if (verifyRes.ok) {
+          guildMember = true;
+          const memberData = await verifyRes.json();
+          const roles: string[] = Array.isArray(memberData?.roles) ? memberData.roles : [];
+          pbgMemberRole = roles.includes(roleId);
+        } else if (verifyRes.status === 404) {
+          guildMember = false;
+          pbgMemberRole = false;
+        }
+
+        // If live Discord reality disagrees with stored state, update Firestore authoritatively
+        if (
+          account.discord?.guildMember !== guildMember ||
+          account.discord?.pbgMemberRole !== pbgMemberRole
+        ) {
+          await updateDiscordAuthoritativeMembership({
+            userId: targetUserId,
+            discordUserId: account.discordUserId,
+            guildMember,
+            pbgMemberRole
+          });
+          if (account.discord) {
+            account.discord.guildMember = guildMember;
+            account.discord.pbgMemberRole = pbgMemberRole;
+          }
+        }
+      } catch (liveErr: any) {
+        console.warn('[handleDiscordStatus] Live Discord verification warning:', liveErr.message);
+      }
+    }
+
     return res.json({
       success: true,
       isOwner,
       account: {
         userId: account.userId,
         pbgId: account.pbgId,
-        discord: account.discord || (account.discordUserId ? {
+        discord: account.discord ? {
+          ...account.discord,
+          guildMember,
+          pbgMemberRole
+        } : (account.discordUserId ? {
           userId: account.discordUserId,
           username: account.discordUsername || 'player',
           globalName: account.discordDisplayName || account.discordUsername || null,
           avatarUrl: account.discordAvatarUrl,
           connectedAt: account.discordLinkedAt || Date.now(),
+          guildMember,
+          pbgMemberRole,
           verified: true
         } : null),
         discordLinked: account.discordLinked,
@@ -1202,10 +1350,12 @@ apiRouter.get('/discord/auth/status', handleDiscordStatus);
 const handleDiscordUnlink = async (req: Request, res: Response) => {
   try {
     const user = await verifyFirebaseBearerToken(req.headers.authorization);
-    await unlinkDiscordAccountAuthoritative(user.uid);
+    const { removeGuildRole = true } = req.body || {};
+    const result = await unlinkDiscordAccountAuthoritative(user.uid, { removeGuildRole });
     return res.json({
       success: true,
-      message: 'Discord account successfully disconnected.'
+      roleRevoked: result.roleRevoked,
+      message: 'Discord account successfully disconnected from PBG profile.'
     });
   } catch (err: any) {
     const msg = err.message || 'Failed to disconnect Discord account';

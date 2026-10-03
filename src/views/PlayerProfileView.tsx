@@ -143,7 +143,7 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
       if (!user) return;
 
       try {
-        const status = await fetchSteamLinkStatus(async () => await user.getIdToken(true));
+        const status = await fetchSteamLinkStatus(async () => await user.getIdToken().catch(() => ''));
         if (
           status.isOwner &&
           status.account &&
@@ -152,41 +152,50 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
           status.account.steamId64
         ) {
           setServerAccount(status.account);
-          const synced = pbgAccountRegistry.syncVerifiedSteamAccount(user.uid, {
-            steamId64: status.account.steamId64,
-            dotaAccountId: status.account.dotaAccountId,
-            steamPersonaName: status.account.steamPersonaName,
-            steamAvatar: status.account.steamAvatarUrl,
-            steamProfileUrl: status.account.steamProfileUrl,
-            publicMatchDataStatus: status.account.publicMatchData || 'PUBLIC',
-            rankTier: status.account.rankTier,
-            leaderboardRank: status.account.leaderboardRank
-          });
-          if (synced) {
-            setAccount({ ...synced });
-          } else {
-            refreshAccount();
+          // Only trigger registry sync if not already matching
+          const currentAcc = pbgAccountRegistry.getAccountByUid(user.uid);
+          if (
+            !currentAcc ||
+            currentAcc.steamId !== status.account.steamId64 ||
+            currentAcc.dotaAccountId !== status.account.dotaAccountId ||
+            !currentAcc.dotaAccountVerified
+          ) {
+            const synced = pbgAccountRegistry.syncVerifiedSteamAccount(user.uid, {
+              steamId64: status.account.steamId64,
+              dotaAccountId: status.account.dotaAccountId,
+              steamPersonaName: status.account.steamPersonaName,
+              steamAvatar: status.account.steamAvatarUrl,
+              steamProfileUrl: status.account.steamProfileUrl,
+              publicMatchDataStatus: status.account.publicMatchData || 'PUBLIC',
+              rankTier: status.account.rankTier,
+              leaderboardRank: status.account.leaderboardRank
+            });
+            if (synced) {
+              setAccount({ ...synced });
+            }
           }
         }
       } catch {}
 
       try {
-        const discordStatus = await fetchDiscordLinkStatus(async () => await user.getIdToken(true));
+        const discordStatus = await fetchDiscordLinkStatus(async () => await user.getIdToken().catch(() => ''));
         if (discordStatus.account && discordStatus.account.discordLinked && discordStatus.account.discordUserId) {
-          pbgAccountRegistry.linkDiscordAccount(user.uid, {
-            discordUserId: discordStatus.account.discordUserId,
-            discordUsername: discordStatus.account.discordUsername || 'player',
-            discordDisplayName: discordStatus.account.discordDisplayName || undefined,
-            discordAvatar: discordStatus.account.discordAvatarUrl || undefined
-          });
-          refreshAccount();
+          const currentAcc = pbgAccountRegistry.getAccountByUid(user.uid);
+          if (!currentAcc || currentAcc.discordUserId !== discordStatus.account.discordUserId || !currentAcc.discordLinked) {
+            pbgAccountRegistry.linkDiscordAccount(user.uid, {
+              discordUserId: discordStatus.account.discordUserId,
+              discordUsername: discordStatus.account.discordUsername || 'player',
+              discordDisplayName: discordStatus.account.discordDisplayName || undefined,
+              discordAvatar: discordStatus.account.discordAvatarUrl || undefined
+            });
+          }
         }
       } catch {}
     };
 
     checkServerSync();
     return unsub;
-  }, [playerId, account.googleUid]);
+  }, [playerId]);
 
   const isDotaConnected = Boolean(
     account.dotaAccountLinked ||
@@ -206,7 +215,7 @@ export function PlayerProfileView({ playerId, onNavigate }: PlayerProfileViewPro
   const handleIdentityUpdated = (newDotaId: string | null) => {
     refreshAccount();
     if (newDotaId && auth.currentUser) {
-      fetchSteamLinkStatus(async () => await auth.currentUser!.getIdToken(true))
+      fetchSteamLinkStatus(async () => await auth.currentUser!.getIdToken().catch(() => ''))
         .then((s) => s.account && setServerAccount(s.account))
         .catch(() => {});
     } else {

@@ -64,6 +64,10 @@ export class DotaMatchOperationsEngine {
     return Array.from(this.matches.values());
   }
 
+  public reset(): void {
+    this.matches.clear();
+  }
+
   public scheduleMatch(...args: any[]): { success: boolean; match?: DotaMatchRecord; error?: string } {
     const arg1 = args[0] || {};
     const matchId = typeof arg1 === 'object' ? arg1.matchId : arg1;

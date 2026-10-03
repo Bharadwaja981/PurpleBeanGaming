@@ -23,6 +23,7 @@ import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
 import { GenericTournamentEngine } from '../domain/genericTournamentEngine';
 import { DynamicOrganiserWorkspace } from '../components/DynamicOrganiserWorkspace';
 import { SelectDropdown } from '../components/ui/Dropdown';
+import { PromptModal } from '../components/ui/PromptModal';
 
 interface OrganiserDashboardViewProps {
   onNavigate: (view: ViewType, entityId?: string) => void;
@@ -45,6 +46,7 @@ export function OrganiserDashboardView({
   });
   const [lifecycleBusy, setLifecycleBusy] = useState(false);
   const [actionNotice, setActionNotice] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [isHoldModalOpen, setIsHoldModalOpen] = useState(false);
   const currentUser = tournamentService.getCurrentUser();
 
   // Keep selected tournament in sync when initialTournamentId prop changes
@@ -110,6 +112,7 @@ export function OrganiserDashboardView({
     const isOnHold = activeTourney.status === 'On Hold' || activeTourney.lifecycle === 'ON_HOLD';
     setLifecycleBusy(true);
     if (isOnHold) {
+      setLifecycleBusy(true);
       const res = await tournamentService.resumeTournament(activeTourney.id);
       setLifecycleBusy(false);
       if (res.success) {
@@ -118,18 +121,7 @@ export function OrganiserDashboardView({
         showNotice(res.error || 'Failed to resume tournament.', 'error');
       }
     } else {
-      const reason = window.prompt('Enter reason for holding tournament (e.g. Schedule adjustment, server outage):', 'Operational delay');
-      if (reason === null) {
-        setLifecycleBusy(false);
-        return;
-      }
-      const res = await tournamentService.setTournamentLifecycle(activeTourney.id, 'ON_HOLD', reason.trim());
-      setLifecycleBusy(false);
-      if (res.success) {
-        showNotice(res.message || 'Tournament placed on hold.');
-      } else {
-        showNotice(res.error || 'Failed to hold tournament.', 'error');
-      }
+      setIsHoldModalOpen(true);
     }
   };
 

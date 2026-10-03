@@ -43,6 +43,13 @@ if (!isTsxRunning) {
 }
 
 async function startServer() {
+  if (!process.env.DISCORD_GUILD_ID) {
+    process.env.DISCORD_GUILD_ID = '631715510631006219';
+  }
+  if (!process.env.DISCORD_PBG_MEMBER_ROLE_ID) {
+    process.env.DISCORD_PBG_MEMBER_ROLE_ID = '1555885374713237524';
+  }
+
   const express = (await import('express')).default;
   const { apiRouter } = await import('./src/server/apiRouter');
 

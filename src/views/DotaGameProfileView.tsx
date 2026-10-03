@@ -139,7 +139,7 @@ export function DotaGameProfileView({
     // If dotaId is not yet linked in local storage, check server-authoritative status
     const user = auth.currentUser;
     if (!res.dotaId && user) {
-      fetchSteamLinkStatus(async () => await user.getIdToken(true))
+      fetchSteamLinkStatus(async () => await user.getIdToken().catch(() => ''))
         .then((status) => {
           if (
             status.isOwner &&

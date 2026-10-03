@@ -31,6 +31,7 @@ import {
   VolumeX,
   Bell
 } from 'lucide-react';
+import { ConfirmationModal } from './ui/ConfirmationModal';
 
 // Web Audio API Synthesizer for Auction Floor Sound Effects (Calling Once, Twice, Thrice, Sold, Anti-Snipe)
 function playAuctionSound(type: 'call_once' | 'call_twice' | 'call_thrice' | 'sold' | 'antisnipe') {
@@ -202,6 +203,7 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
   const [standInModalOpen, setStandInModalOpen] = useState(false);
   const [standInTeamId, setStandInTeamId] = useState<string>('');
   const [standInPlayerId, setStandInPlayerId] = useState<string>('');
+  const [isFinalizeConfirmOpen, setIsFinalizeConfirmOpen] = useState(false);
 
   // MMR-balanced purse allocation state
   const [purseAudit, setPurseAudit] = useState<AuctionPurseAllocationAudit | null>(() => activeEngine.getPurseAllocationAudit());
@@ -661,7 +663,11 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
       setTimeout(() => setBidError(null), 5000);
       return;
     }
-    if (!confirm('Are you sure you want to finalize the auction and lock all rosters?')) return;
+    setIsFinalizeConfirmOpen(true);
+  };
+
+  const executeFinalizeAuction = () => {
+    setIsFinalizeConfirmOpen(false);
     const res = tournamentService.finalizeDotaAuction(selectedTournamentId);
     if (res.success) {
       setBidSuccess(`✓ Auction finalized! All teams reached full ${config.primaryRosterSize}/${config.primaryRosterSize} rosters.`);
@@ -3198,6 +3204,25 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
           </div>
         </div>
       )}
+
+      {/* Neo-brutalist Finalize Auction Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={isFinalizeConfirmOpen}
+        onClose={() => setIsFinalizeConfirmOpen(false)}
+        onConfirm={executeFinalizeAuction}
+        title="Finalize Auction & Lock Rosters"
+        subtitle="Competitive Integrity · Stage Finalization"
+        message="Are you sure you want to finalize the auction and lock all rosters? This will transition the auction stage, record all winning player acquisitions, and lock the tournament team compositions."
+        confirmLabel="YES, FINALIZE AUCTION"
+        cancelLabel="CONTINUE DRAFTING"
+        variant="warning"
+        details={
+          <div className="space-y-1">
+            <div><span className="font-bold">Total Franchises:</span> {teams.length} Teams</div>
+            <div><span className="font-bold">Roster Target:</span> {config.primaryRosterSize} Main Squad Members Per Team</div>
+          </div>
+        }
+      />
     </div>
   );
 }

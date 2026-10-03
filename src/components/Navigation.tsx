@@ -111,7 +111,7 @@ export function Navigation({
       const user = auth.currentUser;
       if (!user) return;
       try {
-        const status = await fetchSteamLinkStatus(async () => await user.getIdToken(true));
+        const status = await fetchSteamLinkStatus(async () => await user.getIdToken().catch(() => ''));
         if (
           status.isOwner &&
           status.account &&
@@ -119,28 +119,39 @@ export function Navigation({
           status.account.dotaAccountId &&
           status.account.steamId64
         ) {
-          pbgAccountRegistry.syncVerifiedSteamAccount(user.uid, {
-            steamId64: status.account.steamId64,
-            dotaAccountId: status.account.dotaAccountId,
-            steamPersonaName: status.account.steamPersonaName,
-            steamAvatar: status.account.steamAvatarUrl,
-            steamProfileUrl: status.account.steamProfileUrl,
-            publicMatchDataStatus: status.account.publicMatchData || 'PUBLIC',
-            rankTier: status.account.rankTier,
-            leaderboardRank: status.account.leaderboardRank
-          });
+          const currentAcc = pbgAccountRegistry.getAccountByUid(user.uid);
+          if (
+            !currentAcc ||
+            currentAcc.steamId !== status.account.steamId64 ||
+            currentAcc.dotaAccountId !== status.account.dotaAccountId ||
+            !currentAcc.dotaAccountVerified
+          ) {
+            pbgAccountRegistry.syncVerifiedSteamAccount(user.uid, {
+              steamId64: status.account.steamId64,
+              dotaAccountId: status.account.dotaAccountId,
+              steamPersonaName: status.account.steamPersonaName,
+              steamAvatar: status.account.steamAvatarUrl,
+              steamProfileUrl: status.account.steamProfileUrl,
+              publicMatchDataStatus: status.account.publicMatchData || 'PUBLIC',
+              rankTier: status.account.rankTier,
+              leaderboardRank: status.account.leaderboardRank
+            });
+          }
         }
       } catch {}
 
       try {
-        const discordStatus = await fetchDiscordLinkStatus(async () => await user.getIdToken(true));
+        const discordStatus = await fetchDiscordLinkStatus(async () => await user.getIdToken().catch(() => ''));
         if (discordStatus.account && discordStatus.account.discordLinked && discordStatus.account.discordUserId) {
-          pbgAccountRegistry.linkDiscordAccount(user.uid, {
-            discordUserId: discordStatus.account.discordUserId,
-            discordUsername: discordStatus.account.discordUsername || 'player',
-            discordDisplayName: discordStatus.account.discordDisplayName || undefined,
-            discordAvatar: discordStatus.account.discordAvatarUrl || undefined
-          });
+          const currentAcc = pbgAccountRegistry.getAccountByUid(user.uid);
+          if (!currentAcc || currentAcc.discordUserId !== discordStatus.account.discordUserId || !currentAcc.discordLinked) {
+            pbgAccountRegistry.linkDiscordAccount(user.uid, {
+              discordUserId: discordStatus.account.discordUserId,
+              discordUsername: discordStatus.account.discordUsername || 'player',
+              discordDisplayName: discordStatus.account.discordDisplayName || undefined,
+              discordAvatar: discordStatus.account.discordAvatarUrl || undefined
+            });
+          }
         }
       } catch {}
     };

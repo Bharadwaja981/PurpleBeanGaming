@@ -10,6 +10,8 @@ export interface DiscordIdentityData {
   username: string;
   globalName: string | null;
   avatarUrl: string | null;
+  guildMember?: boolean;
+  pbgMemberRole?: boolean;
   connectedAt: number;
   verified: true;
 }
@@ -192,6 +194,19 @@ export async function startDiscordOAuthFlow(
     };
 
     const handleMessage = (event: MessageEvent) => {
+      // Validate trusted origin
+      const trustedOrigins = [
+        window.location.origin,
+        'https://ais-dev-peyssjszcbcksxhcpybipw-243967175289.europe-west1.run.app',
+        'https://ais-pre-peyssjszcbcksxhcpybipw-243967175289.europe-west1.run.app'
+      ];
+      if (!event.origin || !trustedOrigins.includes(event.origin)) {
+        return;
+      }
+      // Validate expected message shape
+      if (!event.data || typeof event.data !== 'object') return;
+      if (typeof event.data.type !== 'string' || !event.data.type.startsWith('DISCORD_')) return;
+
       processResultData(event.data);
     };
 

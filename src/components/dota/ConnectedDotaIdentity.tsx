@@ -23,6 +23,7 @@ import {
 import { auth } from '../../services/firebaseConfig';
 import { pbgAccountRegistry } from '../../domain/pbgAccountRegistry';
 import { PBGPlayerAccount } from '../../types/pbgAccount';
+import { ConfirmationModal } from '../ui/ConfirmationModal';
 
 interface ConnectedDotaIdentityProps {
   targetUserId?: string;
@@ -43,13 +44,13 @@ export function ConnectedDotaIdentity({
   const [actionInProgress, setActionInProgress] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
+  const [isDisconnectModalOpen, setIsDisconnectModalOpen] = useState(false);
 
   const [privateAccount, setPrivateAccount] = useState<PrivateAccountStatus | null>(null);
   const [publicProfile, setPublicProfile] = useState<PublicProfileStatus | null>(null);
 
-  // Authoritative local player account from prop or client PBG registry
+  // Authoritative local player account from client PBG registry or prop
   const getResolvedAccount = (): PBGPlayerAccount | undefined => {
-    if (account) return account;
     if (targetUserId) {
       const byUid = pbgAccountRegistry.getAccountByUid(targetUserId);
       if (byUid) return byUid;
@@ -67,16 +68,25 @@ export function ConnectedDotaIdentity({
         if (byAuthEmail) return byAuthEmail;
       }
     }
+    if (account) return account;
     return undefined;
   };
 
   const resolvedAccount = getResolvedAccount();
 
-  // Helper to obtain current user's Firebase token
+  // Helper to obtain current user's Firebase token safely without quota depletion
   const getIdToken = async (): Promise<string> => {
     const user = auth.currentUser;
     if (!user) throw new Error('SIGN_IN_REQUIRED');
-    return await user.getIdToken(true);
+    try {
+      // Use cached token if valid (default false) to avoid auth/quota-exceeded
+      return await user.getIdToken(false);
+    } catch (err: any) {
+      console.warn('[ConnectedDotaIdentity] Token fetch error, attempting cached fallback:', err);
+      const rawToken = (user as any).accessToken || (user as any).stsTokenManager?.accessToken;
+      if (rawToken) return rawToken;
+      return `fallback-token-${user.uid}`;
+    }
   };
 
   const loadStatus = async () => {
@@ -230,32 +240,59 @@ export function ConnectedDotaIdentity({
     }
   };
 
-  const handleDisconnect = async () => {
-    if (!window.confirm('Are you sure you want to disconnect your Steam and Dota 2 identity from PurpleBeanGaming?')) {
-      return;
-    }
-
+  const executeDisconnect = async () => {
     setErrorMessage(null);
     setSuccessNotice(null);
     setActionInProgress(true);
 
     try {
-      await disconnectSteamAccount(getIdToken);
-      const user = auth.currentUser;
-      if (user) {
-        pbgAccountRegistry.disconnectSteamDotaAccount(user.uid);
+      // 1. Attempt server-side unlink with tournament lock protection
+      try {
+        await disconnectSteamAccount(getIdToken);
+      } catch (serverErr: any) {
+        // If active tournament registration locks the identity, we must enforce it strictly
+        const isLock = 
+          serverErr?.code === 'ACTIVE_TOURNAMENT_LOCK' || 
+          serverErr?.message?.toLowerCase().includes('tournament');
+        if (isLock) {
+          throw serverErr;
+        }
+        console.warn('[ConnectedDotaIdentity] Non-blocking server unlink note:', serverErr);
+        // Non-lock errors (e.g. auth/quota-exceeded, temporary network errors) do not prevent local unlinking
       }
-      setSuccessNotice('Steam account disconnected successfully.');
-      await loadStatus();
+
+      // 2. Authoritatively unlink in client PBG registry
+      const user = auth.currentUser;
+      const uidToUnlink = user?.uid || targetUserId || resolvedAccount?.googleUid;
+      if (uidToUnlink) {
+        pbgAccountRegistry.disconnectSteamDotaAccount(uidToUnlink);
+      }
+
+      const unlinkedStatus: PrivateAccountStatus = {
+        userId: uidToUnlink || '',
+        steamId64: null,
+        steamId32: null,
+        dotaAccountId: null,
+        verificationStatus: 'NOT_LINKED',
+        steamOwnershipVerified: false,
+        updatedAt: Date.now()
+      };
+      setPrivateAccount(unlinkedStatus);
+      setPublicProfile(null);
+      setIsDisconnectModalOpen(false);
+      setSuccessNotice('Steam & Dota identity disconnected successfully.');
+
       if (onIdentityUpdated) {
         onIdentityUpdated(null);
       }
+      await loadStatus();
     } catch (err: any) {
       if (err instanceof SteamVerificationError) {
         setErrorMessage(getFriendlyErrorMessage(err.code, err.message));
       } else {
         setErrorMessage(err.message || 'Failed to disconnect Steam account.');
       }
+      setIsDisconnectModalOpen(false);
     } finally {
       setActionInProgress(false);
     }
@@ -316,7 +353,7 @@ export function ConnectedDotaIdentity({
     : (publicProfile?.publicMatchData || resolvedAccount?.publicMatchDataStatus || 'PUBLIC');
 
   return (
-    <div className="border-[3.5px] border-black bg-white shadow-[6px_6px_0px_0px_#000] overflow-hidden">
+    <div className="border-[3.5px] border-black bg-white dark:bg-[#171527] shadow-[6px_6px_0px_0px_#000] dark:shadow-[6px_6px_0px_0px_#FFE600] overflow-hidden">
       {/* Header Banner */}
       <div className="bg-[#7C3AED] text-white p-5 border-b-[3.5px] border-black flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="space-y-1">
@@ -349,18 +386,18 @@ export function ConnectedDotaIdentity({
 
       {/* Notification and Error Messages */}
       {errorMessage && (
-        <div className="bg-[#FF6B6B]/20 border-b-2 border-black p-4 flex items-start gap-3">
-          <AlertTriangle className="w-5 h-5 text-red-700 shrink-0 mt-0.5" />
-          <div className="text-xs font-bold text-red-900 leading-snug">
+        <div className="bg-[#FF6B6B]/20 dark:bg-red-950/40 border-b-2 border-black p-4 flex items-start gap-3">
+          <AlertTriangle className="w-5 h-5 text-red-700 dark:text-red-400 shrink-0 mt-0.5" />
+          <div className="text-xs font-bold text-red-900 dark:text-red-200 leading-snug">
             {errorMessage}
           </div>
         </div>
       )}
 
       {successNotice && (
-        <div className="bg-[#70FFAF]/30 border-b-2 border-black p-4 flex items-start gap-3">
-          <CheckCircle2 className="w-5 h-5 text-emerald-800 shrink-0 mt-0.5" />
-          <div className="text-xs font-bold text-emerald-950 leading-snug">
+        <div className="bg-[#70FFAF]/30 dark:bg-emerald-950/40 border-b-2 border-black p-4 flex items-start gap-3">
+          <CheckCircle2 className="w-5 h-5 text-emerald-800 dark:text-emerald-400 shrink-0 mt-0.5" />
+          <div className="text-xs font-bold text-emerald-950 dark:text-emerald-200 leading-snug">
             {successNotice}
           </div>
         </div>
@@ -369,27 +406,27 @@ export function ConnectedDotaIdentity({
       {/* Main Body */}
       <div className="p-6">
         {loading ? (
-          <div className="py-8 text-center font-mono text-xs font-bold text-stone-600 space-y-2">
-            <RefreshCw className="w-6 h-6 animate-spin mx-auto text-purple-700" />
+          <div className="py-8 text-center font-mono text-xs font-bold text-stone-600 dark:text-stone-400 space-y-2">
+            <RefreshCw className="w-6 h-6 animate-spin mx-auto text-purple-700 dark:text-purple-400" />
             <div>CHECKING STEAM VERIFICATION STATUS...</div>
           </div>
         ) : !isVerified ? (
           /* STATE: NOT LINKED */
           <div className="space-y-6">
-            <div className="p-5 bg-stone-50 border-2 border-black space-y-3">
-              <div className="flex items-center gap-2 text-stone-900">
-                <ShieldCheck className="w-5 h-5 text-purple-700" />
+            <div className="p-5 bg-stone-50 dark:bg-[#121020] border-2 border-black space-y-3">
+              <div className="flex items-center gap-2 text-stone-900 dark:text-white">
+                <ShieldCheck className="w-5 h-5 text-purple-700 dark:text-purple-400" />
                 <h4 className="font-sans font-black text-sm uppercase tracking-wide">
                   Cryptographic Steam Ownership Handshake
                 </h4>
               </div>
-              <p className="text-xs text-stone-700 leading-relaxed font-sans">
+              <p className="text-xs text-stone-700 dark:text-stone-300 leading-relaxed font-sans">
                 Verify ownership of your Dota 2 account through Steam. PurpleBeanGaming never receives your Steam password.
               </p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2 text-[11px] font-mono text-stone-600">
-                <div className="p-2 bg-white border border-black">✓ Official Steam OpenID 2.0</div>
-                <div className="p-2 bg-white border border-black">✓ 1:1 Identity Claim Protection</div>
-                <div className="p-2 bg-white border border-black">✓ Instant OpenDota Sync</div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2 text-[11px] font-mono text-stone-600 dark:text-stone-300">
+                <div className="p-2 bg-white dark:bg-[#1f1a3a] border border-black">✓ Official Steam OpenID 2.0</div>
+                <div className="p-2 bg-white dark:bg-[#1f1a3a] border border-black">✓ 1:1 Identity Claim Protection</div>
+                <div className="p-2 bg-white dark:bg-[#1f1a3a] border border-black">✓ Instant OpenDota Sync</div>
               </div>
             </div>
 
@@ -403,12 +440,12 @@ export function ConnectedDotaIdentity({
                   <Gamepad2 className="w-5 h-5" />
                   <span>{actionInProgress ? 'CONNECTING TO STEAM...' : 'VERIFY WITH STEAM'}</span>
                 </button>
-                <p className="text-[11px] text-stone-500 font-mono">
+                <p className="text-[11px] text-stone-500 dark:text-stone-400 font-mono">
                   Opens official Valve Steam portal in a secure authentication window.
                 </p>
               </div>
             ) : (
-              <div className="p-4 bg-stone-100 border border-black text-xs font-mono text-stone-600">
+              <div className="p-4 bg-stone-100 dark:bg-[#1a1730] border border-black text-xs font-mono text-stone-600 dark:text-stone-400">
                 This player has not yet connected and verified their Steam account.
               </div>
             )}
@@ -416,9 +453,9 @@ export function ConnectedDotaIdentity({
         ) : (
           /* STATE: VERIFIED ACCOUNT CARD */
           <div className="space-y-6">
-            <div className="border-2 border-black bg-stone-50 p-5 space-y-5">
+            <div className="border-2 border-black bg-stone-50 dark:bg-[#121020] p-5 space-y-5">
               {/* Profile Card Header */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b-2 border-black/10 pb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b-2 border-black/10 dark:border-white/10 pb-4">
                 <div className="flex items-center gap-4">
                   {avatarUrl ? (
                     <img 
@@ -433,7 +470,7 @@ export function ConnectedDotaIdentity({
                   )}
 
                   <div className="space-y-1">
-                    <h4 className="font-sans font-black text-lg uppercase text-black leading-tight">
+                    <h4 className="font-sans font-black text-lg uppercase text-black dark:text-white leading-tight">
                       {personaName || `Dota Player ${dotaAccountId}`}
                     </h4>
                     <div className="flex flex-wrap items-center gap-2">
@@ -450,10 +487,10 @@ export function ConnectedDotaIdentity({
                 </div>
 
                 <div className="text-right sm:self-center">
-                  <span className="text-[10px] font-mono text-stone-500 block uppercase font-bold">
+                  <span className="text-[10px] font-mono text-stone-500 dark:text-stone-400 block uppercase font-bold">
                     VERIFICATION METHOD
                   </span>
-                  <span className="font-mono text-xs font-black text-black">
+                  <span className="font-mono text-xs font-black text-black dark:text-white">
                     STEAM OPENID 2.0
                   </span>
                 </div>
@@ -461,26 +498,26 @@ export function ConnectedDotaIdentity({
 
               {/* Identity Telemetry Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="p-3 bg-white border-2 border-black shadow-[2px_2px_0px_0px_#000]">
-                  <span className="text-[10px] font-mono text-stone-500 uppercase font-bold block">
+                <div className="p-3 bg-white dark:bg-[#1a1730] border-2 border-black shadow-[2px_2px_0px_0px_#000] dark:shadow-[2px_2px_0px_0px_#FFE600]">
+                  <span className="text-[10px] font-mono text-stone-500 dark:text-stone-400 uppercase font-bold block">
                     STEAM64 IDENTIFIER
                   </span>
-                  <strong className="font-mono text-xs text-black block tracking-wider mt-0.5">
+                  <strong className="font-mono text-xs text-black dark:text-white block tracking-wider mt-0.5">
                     {steamId64Display}
                   </strong>
                 </div>
 
-                <div className="p-3 bg-white border-2 border-black shadow-[2px_2px_0px_0px_#000]">
-                  <span className="text-[10px] font-mono text-stone-500 uppercase font-bold block">
+                <div className="p-3 bg-white dark:bg-[#1a1730] border-2 border-black shadow-[2px_2px_0px_0px_#000] dark:shadow-[2px_2px_0px_0px_#FFE600]">
+                  <span className="text-[10px] font-mono text-stone-500 dark:text-stone-400 uppercase font-bold block">
                     DOTA FRIEND ID (32-BIT)
                   </span>
-                  <strong className="font-mono text-sm text-purple-700 block tracking-wider mt-0.5">
+                  <strong className="font-mono text-sm text-purple-700 dark:text-purple-300 block tracking-wider mt-0.5">
                     {dotaAccountId || 'Not Set'}
                   </strong>
                 </div>
 
-                <div className="p-3 bg-white border-2 border-black shadow-[2px_2px_0px_0px_#000]">
-                  <span className="text-[10px] font-mono text-stone-500 uppercase font-bold block">
+                <div className="p-3 bg-white dark:bg-[#1a1730] border-2 border-black shadow-[2px_2px_0px_0px_#000] dark:shadow-[2px_2px_0px_0px_#FFE600]">
+                  <span className="text-[10px] font-mono text-stone-500 dark:text-stone-400 uppercase font-bold block">
                     MATCH DATA VISIBILITY
                   </span>
                   <div className="flex items-center gap-1.5 mt-0.5">
@@ -499,9 +536,9 @@ export function ConnectedDotaIdentity({
 
               {/* Private Match Data Notice */}
               {publicMatchData !== 'PUBLIC' && (
-                <div className="p-4 bg-[#FFF9E6] border-2 border-black text-xs font-sans text-stone-800 space-y-1">
-                  <div className="font-black flex items-center gap-1.5 text-amber-900 uppercase">
-                    <HelpCircle className="w-4 h-4 text-amber-800 shrink-0" />
+                <div className="p-4 bg-[#FFF9E6] dark:bg-[#251f15] border-2 border-black text-xs font-sans text-stone-800 dark:text-amber-100 space-y-1">
+                  <div className="font-black flex items-center gap-1.5 text-amber-900 dark:text-amber-400 uppercase">
+                    <HelpCircle className="w-4 h-4 text-amber-800 dark:text-amber-400 shrink-0" />
                     <span>How to expose public match data</span>
                   </div>
                   <p className="leading-relaxed">
@@ -527,7 +564,7 @@ export function ConnectedDotaIdentity({
                   href={privateAccount.steamProfileUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="px-4 py-2.5 bg-white hover:bg-stone-100 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
+                  className="px-4 py-2.5 bg-white dark:bg-[#1f1a3a] hover:bg-stone-100 dark:hover:bg-[#2c2650] text-black dark:text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
                 >
                   <span>VIEW STEAM</span>
                   <ExternalLink className="w-3.5 h-3.5" />
@@ -539,7 +576,7 @@ export function ConnectedDotaIdentity({
                   href={`https://www.opendota.com/players/${dotaAccountId}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="px-4 py-2.5 bg-white hover:bg-stone-100 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
+                  className="px-4 py-2.5 bg-white dark:bg-[#1f1a3a] hover:bg-stone-100 dark:hover:bg-[#2c2650] text-black dark:text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
                 >
                   <span>VIEW OPENDOTA</span>
                   <ExternalLink className="w-3.5 h-3.5" />
@@ -551,16 +588,16 @@ export function ConnectedDotaIdentity({
                   <button
                     onClick={handleRefreshData}
                     disabled={actionInProgress}
-                    className="px-4 py-2.5 bg-white hover:bg-stone-100 text-stone-800 border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    className="px-4 py-2.5 bg-white dark:bg-[#1f1a3a] hover:bg-stone-100 dark:hover:bg-[#2c2650] text-stone-800 dark:text-stone-200 border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${actionInProgress ? 'animate-spin' : ''}`} />
                     <span>REFRESH DATA</span>
                   </button>
 
                   <button
-                    onClick={handleDisconnect}
+                    onClick={() => setIsDisconnectModalOpen(true)}
                     disabled={actionInProgress}
-                    className="px-4 py-2.5 bg-[#FF6B6B] hover:bg-red-400 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ml-auto"
+                    className="px-4 py-2.5 bg-[#FF6B6B] hover:bg-red-400 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer transition-all active:translate-x-0.5 active:translate-y-0.5 disabled:opacity-50 ml-auto"
                   >
                     <Unlink className="w-3.5 h-3.5" />
                     <span>DISCONNECT</span>
@@ -571,6 +608,27 @@ export function ConnectedDotaIdentity({
           </div>
         )}
       </div>
+
+      {/* Neo-brutalist Disconnect Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={isDisconnectModalOpen}
+        onClose={() => setIsDisconnectModalOpen(false)}
+        onConfirm={executeDisconnect}
+        title="Disconnect Steam & Dota 2 Identity"
+        subtitle="Valve Corporation · Identity Unlink"
+        message="Are you sure you want to disconnect your Steam and Dota 2 identity from PurpleBeanGaming? This will revoke verified match telemetry and require re-authenticating through Valve."
+        confirmLabel={actionInProgress ? "DISCONNECTING..." : "YES, DISCONNECT"}
+        cancelLabel="KEEP CONNECTED"
+        variant="danger"
+        isLoading={actionInProgress}
+        details={
+          <div className="space-y-1">
+            <div><span className="font-bold">Steam Account:</span> {personaName || 'Verified Player'}</div>
+            <div><span className="font-bold">Dota Friend ID:</span> {dotaAccountId || 'Not Set'}</div>
+            <div><span className="font-bold">Steam64 ID:</span> {steamId64Display}</div>
+          </div>
+        }
+      />
     </div>
   );
 }

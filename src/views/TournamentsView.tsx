@@ -5,6 +5,7 @@ import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
 import { Tournament, ViewType } from '../types/tournament';
 import { gameManagementEngine } from '../domain/gameManagementEngine';
 import { SelectDropdown } from '../components/ui/Dropdown';
+import { PromptModal } from '../components/ui/PromptModal';
 import {
   isPubliclyDiscoverable,
   matchesStatusCategory,
@@ -29,6 +30,7 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
   const [activeGames, setActiveGames] = useState(() => gameManagementEngine.getActiveGames());
   const [lifecycleBusyId, setLifecycleBusyId] = useState<string | null>(null);
   const [feedbackNotice, setFeedbackNotice] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [holdModalTournament, setHoldModalTournament] = useState<Tournament | null>(null);
 
   const currentUser = tournamentService.getCurrentUser();
   const isSpectator = currentUser.role === 'spectator' || currentUser.id === 'guest-spectator' || !currentUser.email;
@@ -60,23 +62,15 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
   };
 
   const handleCardHoldResume = async (t: Tournament) => {
-    setLifecycleBusyId(t.id);
     const isOnHold = t.status === 'On Hold' || t.lifecycle === 'ON_HOLD';
     if (isOnHold) {
+      setLifecycleBusyId(t.id);
       const res = await tournamentService.resumeTournament(t.id);
       setLifecycleBusyId(null);
       if (res.success) showFeedback(res.message || 'Tournament resumed.');
       else showFeedback(res.error || 'Failed to resume.', 'error');
     } else {
-      const reason = window.prompt(`Hold tournament '${t.name}'? Reason:`, 'Operational hold');
-      if (reason === null) {
-        setLifecycleBusyId(null);
-        return;
-      }
-      const res = await tournamentService.setTournamentLifecycle(t.id, 'ON_HOLD', reason.trim());
-      setLifecycleBusyId(null);
-      if (res.success) showFeedback(res.message || 'Tournament put on hold.');
-      else showFeedback(res.error || 'Failed to hold.', 'error');
+      setHoldModalTournament(t);
     }
   };
 
@@ -569,6 +563,29 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
             </button>
           )}
         </div>
+      )}
+
+      {/* Neo-brutalist Tournament Hold Reason Modal */}
+      {holdModalTournament && (
+        <PromptModal
+          isOpen={Boolean(holdModalTournament)}
+          onClose={() => setHoldModalTournament(null)}
+          onSubmit={async (reason) => {
+            const t = holdModalTournament;
+            setHoldModalTournament(null);
+            setLifecycleBusyId(t.id);
+            const res = await tournamentService.setTournamentLifecycle(t.id, 'ON_HOLD', reason.trim() || 'Operational hold');
+            setLifecycleBusyId(null);
+            if (res.success) showFeedback(res.message || 'Tournament put on hold.');
+            else showFeedback(res.error || 'Failed to hold.', 'error');
+          }}
+          title="Hold Tournament"
+          subtitle="Operational Adjustment"
+          message={`Please specify the administrative reason for placing '${holdModalTournament.name}' on hold:`}
+          defaultValue="Operational delay / Schedule adjustment"
+          placeholder="e.g. Server outage, roster review, emergency maintenance"
+          submitLabel="APPLY HOLD"
+        />
       )}
     </div>
   );

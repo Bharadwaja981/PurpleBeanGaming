@@ -543,16 +543,27 @@ export class PBGAccountRegistry {
         snapshot.forEach((docSnap) => {
           const acc = docSnap.data() as PBGPlayerAccount;
           if (acc && acc.pbgId && acc.googleUid) {
-            const existingUid = this.pbgIdIndex.get(acc.pbgId);
-            if (existingUid && existingUid !== acc.googleUid) {
-              console.warn(`[Firestore PBG Sync] Reconciling PBG ID ${acc.pbgId} for ${acc.email}`);
+            const existing = this.accounts.get(acc.googleUid);
+            const isDifferent = !existing ||
+              existing.pbgId !== acc.pbgId ||
+              existing.dotaAccountId !== acc.dotaAccountId ||
+              existing.steamId !== acc.steamId ||
+              existing.discordUserId !== acc.discordUserId ||
+              existing.dotaAccountVerified !== acc.dotaAccountVerified ||
+              existing.dotaAccountLinked !== acc.dotaAccountLinked ||
+              existing.discordLinked !== acc.discordLinked ||
+              existing.displayName !== acc.displayName ||
+              existing.email !== acc.email ||
+              existing.updatedAt !== acc.updatedAt;
+
+            if (isDifferent) {
+              this.accounts.set(acc.googleUid, acc);
+              this.pbgIdIndex.set(acc.pbgId, acc.googleUid);
+              if (acc.discordUserId) this.discordIdIndex.set(acc.discordUserId, acc.googleUid);
+              if (acc.dotaAccountId) this.dotaIdIndex.set(acc.dotaAccountId, acc.googleUid);
+              if (acc.steamId) this.steamIdIndex.set(acc.steamId, acc.googleUid);
+              changed = true;
             }
-            this.accounts.set(acc.googleUid, acc);
-            this.pbgIdIndex.set(acc.pbgId, acc.googleUid);
-            if (acc.discordUserId) this.discordIdIndex.set(acc.discordUserId, acc.googleUid);
-            if (acc.dotaAccountId) this.dotaIdIndex.set(acc.dotaAccountId, acc.googleUid);
-            if (acc.steamId) this.steamIdIndex.set(acc.steamId, acc.googleUid);
-            changed = true;
           }
         });
 
@@ -1271,6 +1282,17 @@ export class PBGAccountRegistry {
     const { dotaAccountId, steamId64 } = details;
     const now = new Date().toISOString();
 
+    // Short-circuit if account is already verified with identical data to prevent loops
+    if (
+      acc.steamId === steamId64 &&
+      acc.dotaAccountId === dotaAccountId &&
+      acc.dotaAccountVerified === true &&
+      acc.dotaOwnershipVerified === true &&
+      (details.rankTier === undefined || acc.dotaRankTier === details.rankTier)
+    ) {
+      return acc;
+    }
+
     // Release any previous account holding this dotaAccountId
     const oldDotaUid = this.dotaIdIndex.get(dotaAccountId);
     if (oldDotaUid && oldDotaUid !== acc.googleUid) {
@@ -1485,6 +1507,8 @@ export class PBGAccountRegistry {
     };
   }
 
+  private lastSyncedHash = new Map<string, string>();
+
   /**
    * Persists to Firestore pbgAccounts collection when online and quota allows
    */
@@ -1492,6 +1516,21 @@ export class PBGAccountRegistry {
     if (typeof window === 'undefined' || !db || isQuotaExhausted()) return;
 
     try {
+      const serialized = JSON.stringify({
+        pbgId: account.pbgId,
+        googleUid: account.googleUid,
+        steamId: account.steamId,
+        dotaAccountId: account.dotaAccountId,
+        dotaAccountLinked: account.dotaAccountLinked,
+        dotaAccountVerified: account.dotaAccountVerified,
+        discordLinked: account.discordLinked,
+        discordUserId: account.discordUserId,
+        displayName: account.displayName
+      });
+      if (this.lastSyncedHash.get(account.googleUid) === serialized) {
+        return;
+      }
+      this.lastSyncedHash.set(account.googleUid, serialized);
       await setDoc(doc(db, 'pbgAccounts', account.googleUid), account, { merge: true });
     } catch (e) {
       console.warn('Firestore pbgAccounts sync note (handled offline):', e);

@@ -494,7 +494,7 @@ describe('Dota 2 Phase 1B — Tournament MMR, Organiser Verification & Eligibili
         'Please clarify your medal calibration',
         ORGANISER_ID
       );
-      expect(openCase.status).toBe('EVIDENCE_REQUESTED');
+      expect(dotaPlayerRegistry.getIntegrityCases().find(c => c.id === openCase.id)?.status).toBe('EVIDENCE_REQUESTED');
 
       // Or escalate
       dotaPlayerRegistry.resolveIntegrityCase(
@@ -503,7 +503,7 @@ describe('Dota 2 Phase 1B — Tournament MMR, Organiser Verification & Eligibili
         'Escalated to senior referee panel',
         ORGANISER_ID
       );
-      expect(openCase.status).toBe('ESCALATED');
+      expect(dotaPlayerRegistry.getIntegrityCases().find(c => c.id === openCase.id)?.status).toBe('ESCALATED');
 
       // Or approve
       dotaPlayerRegistry.resolveIntegrityCase(
@@ -512,7 +512,7 @@ describe('Dota 2 Phase 1B — Tournament MMR, Organiser Verification & Eligibili
         'Evidence reviewed and cleared',
         ORGANISER_ID
       );
-      expect(openCase.status).toBe('APPROVED');
+      expect(dotaPlayerRegistry.getIntegrityCases().find(c => c.id === openCase.id)?.status).toBe('APPROVED');
     });
   });
 
@@ -521,6 +521,9 @@ describe('Dota 2 Phase 1B — Tournament MMR, Organiser Verification & Eligibili
   // =========================================================================
   describe('Purple Bean Test Cup Regression Safety', () => {
     it('ensures Test Cup auction engine, captains, and teams remain fully operational', () => {
+      if (testCupEngine.getTeams().length === 0) {
+        testCupEngine.confirmCaptainsAndTeams();
+      }
       const teams = testCupEngine.getTeams();
       expect(teams.length).toBeGreaterThanOrEqual(2);
 

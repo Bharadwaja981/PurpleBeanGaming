@@ -40,6 +40,9 @@ import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
 import { getAuctionEngine } from '../domain/dotaAuctionEngine';
 import { DotaTournamentRegistration } from '../domain/dotaPlayerEngine';
 import { Team, ViewType } from '../types/tournament';
+import { ConfirmationModal } from '../components/ui/ConfirmationModal';
+import { AlertModal } from '../components/ui/AlertModal';
+import { PromptModal } from '../components/ui/PromptModal';
 
 interface TournamentDetailViewProps {
   tournamentId?: string;
@@ -91,6 +94,11 @@ export function TournamentDetailView({
   );
   const [lifecycleBusy, setLifecycleBusy] = useState(false);
   const [lifecycleMessage, setLifecycleMessage] = useState<string | null>(null);
+  const [isConcludeConfirmOpen, setIsConcludeConfirmOpen] = useState(false);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [alertModalState, setAlertModalState] = useState<{ isOpen: boolean; title: string; message: string; variant?: 'error' | 'success' | 'info' } | null>(null);
+  const [holdPromptOpen, setHoldPromptOpen] = useState(false);
+  const [appointCaptainData, setAppointCaptainData] = useState<{ reg: DotaTournamentRegistration; defaultName: string; defaultTag: string } | null>(null);
 
   const [testCupState, setTestCupState] = useState(() => ({
     status: testCupEngine.getStatus(),
@@ -494,14 +502,7 @@ export function TournamentDetailView({
                     <button
                       type="button"
                       disabled={lifecycleBusy}
-                      onClick={async () => {
-                        if (!window.confirm(`Are you sure you want to conclude and finalize '${tournament.name}'?`)) return;
-                        setLifecycleBusy(true);
-                        const res = await tournamentService.setTournamentLifecycle(tournament.id, 'COMPLETED');
-                        setLifecycleBusy(false);
-                        setLifecycleMessage(res.message || res.error || null);
-                        setTimeout(() => setLifecycleMessage(null), 4000);
-                      }}
+                      onClick={() => setIsConcludeConfirmOpen(true)}
                       className="px-3 py-1.5 bg-black hover:bg-stone-800 text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                     >
                       <Trophy className="w-3.5 h-3.5 text-[#FFE600]" />
@@ -531,15 +532,7 @@ export function TournamentDetailView({
                       <button
                         type="button"
                         disabled={lifecycleBusy}
-                        onClick={async () => {
-                          const reason = window.prompt("Enter reason for holding tournament (e.g. Technical delay, server outage, roster adjustment):", "Temporary operational hold");
-                          if (reason === null) return;
-                          setLifecycleBusy(true);
-                          const res = await tournamentService.setTournamentLifecycle(tournament.id, 'ON_HOLD', reason.trim());
-                          setLifecycleBusy(false);
-                          setLifecycleMessage(res.message || res.error || null);
-                          setTimeout(() => setLifecycleMessage(null), 4000);
-                        }}
+                        onClick={() => setHoldPromptOpen(true)}
                         className="px-3 py-1.5 bg-amber-200 hover:bg-amber-300 text-amber-950 border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                       >
                         <Pause className="w-3.5 h-3.5 text-amber-950" />
@@ -571,17 +564,7 @@ export function TournamentDetailView({
                   <button
                     type="button"
                     disabled={lifecycleBusy}
-                    onClick={async () => {
-                      if (!window.confirm(`Are you sure you want to permanently delete '${tournament.name}'? This action cannot be undone.`)) return;
-                      setLifecycleBusy(true);
-                      const res = await tournamentService.deleteTournament(tournament.id);
-                      setLifecycleBusy(false);
-                      if (res.success) {
-                        onNavigate('tournaments');
-                      } else {
-                        setLifecycleMessage(res.error || 'Failed to delete tournament.');
-                      }
-                    }}
+                    onClick={() => setIsDeleteConfirmOpen(true)}
                     className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                     title="Permanently remove tournament"
                   >
@@ -1392,28 +1375,10 @@ export function TournamentDetailView({
                                 )}
                               {isOrganiser && isAuctionSupported && assignedTeam?.captainId !== reg.userId && (
                                 <button
-                                  onClick={async () => {
+                                  onClick={() => {
                                     const defaultName = `${reg.ign}'s Squad`;
-                                    const teamNamePrompt = window.prompt(`Appoint ${reg.ign} as Captain? Enter Team Name:`, defaultName);
-                                    if (teamNamePrompt && teamNamePrompt.trim()) {
-                                      const defaultTag = (reg.ign.replace(/[^a-zA-Z]/g, '').slice(0, 3) || 'TM').toUpperCase();
-                                      const teamTagPrompt = (window.prompt('Enter 3-4 Letter Team Tag:', defaultTag) || defaultTag).trim().toUpperCase();
-                                      const res = tournamentService.appointDotaCaptain(
-                                        reg.userId,
-                                        {
-                                          teamName: teamNamePrompt.trim(),
-                                          tag: teamTagPrompt,
-                                          color: '#7C3AED',
-                                          logo: '🛡️'
-                                        },
-                                        tournament.id
-                                      );
-                                      if (res.success) {
-                                        setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
-                                      } else {
-                                        alert(res.error || 'Failed to appoint captain.');
-                                      }
-                                    }
+                                    const defaultTag = (reg.ign.replace(/[^a-zA-Z]/g, '').slice(0, 3) || 'TM').toUpperCase();
+                                    setAppointCaptainData({ reg, defaultName, defaultTag });
                                   }}
                                   title="Appoint as Franchise Captain"
                                   className="bg-[#FFE600] hover:bg-yellow-400 text-black border border-black px-1.5 py-0.5 text-[9px] font-black uppercase cursor-pointer shadow-[1px_1px_0px_0px_#000] inline-flex items-center gap-0.5"
@@ -1712,6 +1677,137 @@ export function TournamentDetailView({
             setAllTeams(tournamentService.getTeams());
             setAllTournaments(tournamentService.getTournaments('All Games', 'All', true));
           }}
+        />
+      )}
+
+      {/* Neo-brutalist Conclude Tournament Confirmation Modal */}
+      {tournament && (
+        <ConfirmationModal
+          isOpen={isConcludeConfirmOpen}
+          onClose={() => setIsConcludeConfirmOpen(false)}
+          onConfirm={async () => {
+            setIsConcludeConfirmOpen(false);
+            setLifecycleBusy(true);
+            const res = await tournamentService.setTournamentLifecycle(tournament.id, 'COMPLETED');
+            setLifecycleBusy(false);
+            setLifecycleMessage(res.message || res.error || null);
+            setTimeout(() => setLifecycleMessage(null), 4000);
+          }}
+          title="Conclude Tournament"
+          subtitle="Lifecycle Transition · COMPLETED"
+          message={`Are you sure you want to conclude and finalize '${tournament.name}'? This will lock all bracket results, finalize tournament standings, and archive active rosters.`}
+          confirmLabel="CONCLUDE TOURNAMENT"
+          cancelLabel="KEEP ACTIVE"
+          variant="warning"
+          details={
+            <div className="space-y-1">
+              <div><span className="font-bold">Tournament:</span> {tournament.name}</div>
+              <div><span className="font-bold">Game Title:</span> {tournament.game}</div>
+            </div>
+          }
+        />
+      )}
+
+      {/* Neo-brutalist Delete Tournament Confirmation Modal */}
+      {tournament && (
+        <ConfirmationModal
+          isOpen={isDeleteConfirmOpen}
+          onClose={() => setIsDeleteConfirmOpen(false)}
+          onConfirm={async () => {
+            setIsDeleteConfirmOpen(false);
+            setLifecycleBusy(true);
+            const res = await tournamentService.deleteTournament(tournament.id);
+            setLifecycleBusy(false);
+            if (res.success) {
+              onNavigate('tournaments');
+            } else {
+              setLifecycleMessage(res.error || 'Failed to delete tournament.');
+            }
+          }}
+          title="Permanently Delete Tournament"
+          subtitle="Destructive Admin Action"
+          message={`Are you sure you want to permanently delete '${tournament.name}'? This action cannot be undone and will erase tournament configuration, match history, and records.`}
+          confirmLabel="YES, DELETE PERMANENTLY"
+          cancelLabel="CANCEL"
+          variant="danger"
+          details={
+            <div className="space-y-1 text-red-950 dark:text-red-300">
+              <div><span className="font-bold">Tournament ID:</span> {tournament.id}</div>
+              <div><span className="font-bold">Registered Contenders:</span> {tournamentRegistrations.length}</div>
+            </div>
+          }
+        />
+      )}
+
+      {/* Neo-brutalist Alert Notice Modal */}
+      {alertModalState && (
+        <AlertModal
+          isOpen={alertModalState.isOpen}
+          onClose={() => setAlertModalState(null)}
+          title={alertModalState.title}
+          message={alertModalState.message}
+          variant={alertModalState.variant || 'error'}
+        />
+      )}
+
+      {/* Neo-brutalist Hold Tournament Prompt Modal */}
+      {tournament && (
+        <PromptModal
+          isOpen={holdPromptOpen}
+          onClose={() => setHoldPromptOpen(false)}
+          onSubmit={async (reason) => {
+            setHoldPromptOpen(false);
+            if (!reason.trim()) return;
+            setLifecycleBusy(true);
+            const res = await tournamentService.setTournamentLifecycle(tournament.id, 'ON_HOLD', reason.trim());
+            setLifecycleBusy(false);
+            setLifecycleMessage(res.message || res.error || null);
+            setTimeout(() => setLifecycleMessage(null), 4000);
+          }}
+          title="Place Tournament On Hold"
+          subtitle="Operational Hold"
+          message="Enter reason for holding tournament (e.g. Technical delay, server outage, roster adjustment):"
+          defaultValue="Temporary operational hold"
+          placeholder="Reason for operational hold..."
+          submitLabel="HOLD TOURNAMENT"
+        />
+      )}
+
+      {/* Neo-brutalist Appoint Captain Prompt Modal */}
+      {tournament && appointCaptainData && (
+        <PromptModal
+          isOpen={Boolean(appointCaptainData)}
+          onClose={() => setAppointCaptainData(null)}
+          onSubmit={(teamName) => {
+            const trimmedName = teamName.trim() || appointCaptainData.defaultName;
+            const res = tournamentService.appointDotaCaptain(
+              appointCaptainData.reg.userId,
+              {
+                teamName: trimmedName,
+                tag: appointCaptainData.defaultTag,
+                color: '#7C3AED',
+                logo: '🛡️'
+              },
+              tournament.id
+            );
+            setAppointCaptainData(null);
+            if (res.success) {
+              setTournamentRegistrations(tournamentService.getTournamentRegistrations(tournament.id));
+            } else {
+              setAlertModalState({
+                isOpen: true,
+                title: 'Captain Appointment Failed',
+                message: res.error || 'Failed to appoint captain.',
+                variant: 'error'
+              });
+            }
+          }}
+          title={`Appoint ${appointCaptainData.reg.ign} as Captain`}
+          subtitle="Franchise Captain Appointment"
+          message={`Appoint ${appointCaptainData.reg.ign} as Franchise Captain? Enter custom team/squad name:`}
+          defaultValue={appointCaptainData.defaultName}
+          placeholder="e.g. Team Secret, Miracle's Squad..."
+          submitLabel="APPOINT CAPTAIN"
         />
       )}
     </div>
