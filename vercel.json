@@ -6,8 +6,8 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
-      "source": "/api/(.*)",
-      "destination": "https://purplebeangaming-api-243967175289.europe-west1.run.app/api/$1"
+      "source": "/api/:path*",
+      "destination": "https://purplebeangaming-api-243967175289.europe-west1.run.app/api/:path*"
     },
     {
       "source": "/((?!api(?:/|$)).*)",
