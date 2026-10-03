@@ -279,6 +279,14 @@ export class DotaAuctionEngine {
         if (typeof EventSource !== 'undefined') {
           try {
             this.eventSource = new EventSource(`/api/auction/${encodeURIComponent(this.config.tournamentId)}/stream`);
+            this.eventSource.onerror = () => {
+              // If the connection drops or receives a non-event-stream response, close to avoid continuous retry loops
+              // The active 2.5s polling fallback below ensures synchronization continues seamlessly
+              if (this.eventSource && this.eventSource.readyState === EventSource.CLOSED) {
+                this.eventSource.close();
+                this.eventSource = null;
+              }
+            };
             this.eventSource.addEventListener('INIT_STATE', (e: MessageEvent) => {
               try {
                 const data = JSON.parse(e.data);

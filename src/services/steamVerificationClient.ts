@@ -424,15 +424,25 @@ export async function fetchSteamLinkStatus(
   const query = targetUserId ? `?userId=${encodeURIComponent(targetUserId)}` : '';
   const res = await fetch(`/api/steam/link/status${query}`, { headers });
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
+  const text = await res.text();
+  let parsed: any = null;
+  try {
+    parsed = text ? JSON.parse(text) : {};
+  } catch {
     throw new SteamVerificationError(
-      (err.error || 'UNKNOWN_ERROR') as SteamVerificationErrorCode,
-      getFriendlyErrorMessage(err.error, err.message)
+      'UNKNOWN_ERROR',
+      'Received non-JSON response from Steam status endpoint.'
     );
   }
 
-  return await res.json();
+  if (!res.ok) {
+    throw new SteamVerificationError(
+      (parsed?.error || 'UNKNOWN_ERROR') as SteamVerificationErrorCode,
+      getFriendlyErrorMessage(parsed?.error, parsed?.message)
+    );
+  }
+
+  return parsed;
 }
 
 /**
