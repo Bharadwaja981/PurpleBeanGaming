@@ -1,4 +1,4 @@
-import { handleRoute } from '../../../src/server/vercelEndpoint';
+import { handleRoute } from '../../../server/vercelEndpoint';
 
 /**
  * Consolidated Vercel Serverless Function for Steam OpenID:

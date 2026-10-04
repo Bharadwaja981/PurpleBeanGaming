@@ -1,10 +1,8 @@
-import type { IncomingMessage, ServerResponse } from 'node:http';
-
 /**
- * Root API Gateway Handler
- * GET /api
+ * Production Health Check Handler
+ * GET /api/health
  */
-export default function handler(req: IncomingMessage, res: ServerResponse): void {
+export default function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
@@ -21,7 +19,6 @@ export default function handler(req: IncomingMessage, res: ServerResponse): void
     ok: true,
     service: 'purplebeangaming-api',
     status: 'ok',
-    message: 'Purple Bean Gaming API Gateway',
     timestamp: new Date().toISOString()
   }));
 }

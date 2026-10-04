@@ -1,4 +1,4 @@
-import { handleRoute } from '../../src/server/vercelEndpoint';
+import { handleRoute } from '../../server/vercelEndpoint';
 
 /**
  * Vercel Serverless Function: /api/opendota/*
