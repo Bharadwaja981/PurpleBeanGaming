@@ -280,9 +280,9 @@ export class DotaAuctionEngine {
           try {
             this.eventSource = new EventSource(`/api/auction/${encodeURIComponent(this.config.tournamentId)}/stream`);
             this.eventSource.onerror = () => {
-              // If the connection drops or receives a non-event-stream response, close to avoid continuous retry loops
-              // The active 2.5s polling fallback below ensures synchronization continues seamlessly
-              if (this.eventSource && this.eventSource.readyState === EventSource.CLOSED) {
+              // Close on error to avoid continuous browser retry loops when SSE is disconnected
+              // Realtime Firestore onSnapshot and active polling ensure synchronization continues seamlessly
+              if (this.eventSource) {
                 this.eventSource.close();
                 this.eventSource = null;
               }
