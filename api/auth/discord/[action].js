@@ -2858,25 +2858,41 @@ app.use((err, _req, res, _next) => {
   }
 });
 function handleRoute(defaultPath) {
-  return async function vercelHandler(req, res) {
-    try {
-      const rawUrl = req.url || "";
-      const queryIdx = rawUrl.indexOf("?");
-      const q = queryIdx >= 0 ? rawUrl.slice(queryIdx) : "";
-      req.url = defaultPath + q;
-      return app(req, res);
-    } catch (err) {
-      console.error("[Fatal Handler Error]:", err);
-      if (!res.headersSent) {
-        res.statusCode = 500;
-        res.setHeader("Content-Type", "application/json");
-        res.end(JSON.stringify({
-          success: false,
-          error: "INTERNAL_SERVER_ERROR",
-          message: err?.message || "Serverless invocation error"
-        }));
+  return function vercelHandler(req, res) {
+    return new Promise((resolve) => {
+      try {
+        const rawUrl = req.url || "";
+        const queryIdx = rawUrl.indexOf("?");
+        const q = queryIdx >= 0 ? rawUrl.slice(queryIdx) : "";
+        req.url = defaultPath + q;
+        res.once("finish", () => resolve());
+        res.once("close", () => resolve());
+        app(req, res, (err) => {
+          if (err && !res.headersSent) {
+            res.statusCode = 500;
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({
+              success: false,
+              error: "INTERNAL_SERVER_ERROR",
+              message: err?.message || "Serverless invocation error"
+            }));
+          }
+          resolve();
+        });
+      } catch (fatalErr) {
+        console.error("[Fatal Handler Error]:", fatalErr);
+        if (!res.headersSent) {
+          res.statusCode = 500;
+          res.setHeader("Content-Type", "application/json");
+          res.end(JSON.stringify({
+            success: false,
+            error: "INTERNAL_SERVER_ERROR",
+            message: fatalErr?.message || "Serverless invocation error"
+          }));
+        }
+        resolve();
       }
-    }
+    });
   };
 }
 

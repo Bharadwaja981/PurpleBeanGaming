@@ -50,28 +50,47 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 
 /**
  * Creates a robust Vercel Serverless Function handler for a specific route.
- * Always normalizes req.url to defaultPath + query string so Express router
- * always matches with 100% precision, regardless of how Vercel proxies it.
+ * Normalizes req.url to defaultPath + query string and returns a Promise that
+ * completes only when the HTTP response has finished sending.
  */
 export function handleRoute(defaultPath: string) {
-  return async function vercelHandler(req: any, res: any) {
-    try {
-      const rawUrl = req.url || '';
-      const queryIdx = rawUrl.indexOf('?');
-      const q = queryIdx >= 0 ? rawUrl.slice(queryIdx) : '';
-      req.url = defaultPath + q;
-      return app(req, res);
-    } catch (err: any) {
-      console.error('[Fatal Handler Error]:', err);
-      if (!res.headersSent) {
-        res.statusCode = 500;
-        res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({
-          success: false,
-          error: 'INTERNAL_SERVER_ERROR',
-          message: err?.message || 'Serverless invocation error'
-        }));
+  return function vercelHandler(req: any, res: any): Promise<void> {
+    return new Promise((resolve) => {
+      try {
+        const rawUrl = req.url || '';
+        const queryIdx = rawUrl.indexOf('?');
+        const q = queryIdx >= 0 ? rawUrl.slice(queryIdx) : '';
+        req.url = defaultPath + q;
+
+        // Ensure lambda does not exit before response is fully transmitted
+        res.once('finish', () => resolve());
+        res.once('close', () => resolve());
+
+        app(req, res, (err: any) => {
+          if (err && !res.headersSent) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({
+              success: false,
+              error: 'INTERNAL_SERVER_ERROR',
+              message: err?.message || 'Serverless invocation error'
+            }));
+          }
+          resolve();
+        });
+      } catch (fatalErr: any) {
+        console.error('[Fatal Handler Error]:', fatalErr);
+        if (!res.headersSent) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({
+            success: false,
+            error: 'INTERNAL_SERVER_ERROR',
+            message: fatalErr?.message || 'Serverless invocation error'
+          }));
+        }
+        resolve();
       }
-    }
+    });
   };
 }
