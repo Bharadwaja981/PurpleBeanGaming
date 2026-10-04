@@ -1,11 +1,11 @@
-// functions/src/index.ts
+// src/index.ts
 import { onRequest } from "firebase-functions/v2/https";
 import express from "express";
 
-// src/server/apiRouter.ts
+// ../src/server/apiRouter.ts
 import { Router } from "express";
 
-// src/server/firebaseAdmin.ts
+// ../src/server/firebaseAdmin.ts
 import { initializeApp, getApps, getApp, cert } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { getAuth } from "firebase-admin/auth";
@@ -109,7 +109,7 @@ async function verifyFirebaseBearerToken(authHeader) {
   }
 }
 
-// src/server/steamState.ts
+// ../src/server/steamState.ts
 import crypto from "node:crypto";
 var DEFAULT_SECRET = "pbg_steam_state_super_secure_secret_production_seed_2026";
 var STATE_MAX_AGE_MS = 10 * 60 * 1e3;
@@ -217,7 +217,7 @@ function verifySignedSteamState(stateToken, customMaxAgeMs = STATE_MAX_AGE_MS) {
   return { success: true, payload };
 }
 
-// src/server/steamOpenId.ts
+// ../src/server/steamOpenId.ts
 var STEAM_OPENID_ENDPOINT = "https://steamcommunity.com/openid/login";
 var OPENID_NS = "http://specs.openid.net/auth/2.0";
 var OPENID_IDENTIFIER_SELECT = "http://specs.openid.net/auth/2.0/identifier_select";
@@ -320,7 +320,7 @@ async function validateSteamOpenIdCallback(queryParams) {
   }
 }
 
-// lib/dota/ids.ts
+// ../lib/dota/ids.ts
 var STEAM_ID64_OFFSET = BigInt("76561197960265728");
 var MAX_ACCOUNT_ID = BigInt("4294967295");
 var DotaIdError = class extends Error {
@@ -340,7 +340,7 @@ function parseUnsigned(value, digits) {
   return BigInt(text);
 }
 
-// src/server/steamVerificationService.ts
+// ../src/server/steamVerificationService.ts
 var inMemoryClaims = /* @__PURE__ */ new Map();
 var inMemoryPrivateAccounts = /* @__PURE__ */ new Map();
 var inMemoryActiveRegistrations = /* @__PURE__ */ new Map();
@@ -744,7 +744,7 @@ async function getPrivatePlayerAccount(userId) {
   return privateAcc || null;
 }
 
-// src/server/discordProvisioningService.ts
+// ../src/server/discordProvisioningService.ts
 async function fetchDiscordUserProfile(accessToken) {
   if (!accessToken || typeof accessToken !== "string") {
     throw new Error("Access token is required to fetch Discord user profile");
@@ -968,7 +968,7 @@ async function removeDiscordMemberRole(params) {
   }
 }
 
-// src/server/discordVerificationService.ts
+// ../src/server/discordVerificationService.ts
 var inMemoryLinks = /* @__PURE__ */ new Map();
 var inMemoryPrivateAccounts2 = /* @__PURE__ */ new Map();
 var inMemoryActiveRegistrations2 = /* @__PURE__ */ new Map();
@@ -1542,7 +1542,7 @@ async function updateDiscordAuthoritativeMembership(params) {
   }
 }
 
-// src/server/discordOAuthState.ts
+// ../src/server/discordOAuthState.ts
 import crypto2 from "node:crypto";
 var DEFAULT_DISCORD_STATE_SECRET = "pbg_discord_oauth_state_secret_seed_authoritative_2026";
 var STATE_MAX_AGE_MS2 = 10 * 60 * 1e3;
@@ -1719,7 +1719,7 @@ async function verifyAndConsumeDiscordOAuthState(stateToken, options) {
   return { success: true, payload };
 }
 
-// src/server/apiRouter.ts
+// ../src/server/apiRouter.ts
 var apiRouter = Router();
 var auctionSnapshots = /* @__PURE__ */ new Map();
 var auctionSseClients = /* @__PURE__ */ new Map();
@@ -2820,8 +2820,29 @@ var handleDiscordUnlink = async (req, res) => {
 };
 apiRouter.post("/auth/discord/unlink", handleDiscordUnlink);
 apiRouter.post("/discord/auth/unlink", handleDiscordUnlink);
+apiRouter.post(["/admin/bootstrap", "/bootstrap"], async (req, res) => {
+  try {
+    const { userId, email } = req.body || {};
+    const primaryAdmin = "11106cm009@gmail.com";
+    const isPrimary = Boolean(email && email.toLowerCase().trim() === primaryAdmin);
+    return res.json({
+      success: true,
+      userId,
+      email,
+      isSuperAdmin: isPrimary,
+      role: isPrimary ? "superadmin" : "user",
+      message: "Admin verification processed."
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      error: "BOOTSTRAP_ERROR",
+      message: err.message
+    });
+  }
+});
 
-// functions/src/index.ts
+// src/index.ts
 var app = express();
 app.use(express.json());
 app.use((req, res, next) => {

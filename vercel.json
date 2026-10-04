@@ -1,16 +1,14 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
-  "buildCommand": "vite build && npm run build:api",
+  "buildCommand": "vite build",
   "installCommand": "npm install --legacy-peer-deps",
   "outputDirectory": "dist",
-  "functions": {
-    "api/**": {
-      "maxDuration": 60,
-      "memory": 1024
-    }
-  },
   "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://us-central1-gen-lang-client-0634745445.cloudfunctions.net/api/:path*"
+    },
     {
       "source": "/((?!api(?:/|$)).*)",
       "destination": "/index.html"

@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "NODE_OPTIONS='--max-old-space-size=384' tsx server.ts",
     "start": "node server.ts",
-    "build:api": "node scripts/buildApi.js",
-    "build": "vite build && npm run build:api",
+    "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
