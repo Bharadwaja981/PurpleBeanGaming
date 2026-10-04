@@ -2819,6 +2819,27 @@ var handleDiscordUnlink = async (req, res) => {
 };
 apiRouter.post("/auth/discord/unlink", handleDiscordUnlink);
 apiRouter.post("/discord/auth/unlink", handleDiscordUnlink);
+apiRouter.post(["/admin/bootstrap", "/bootstrap"], async (req, res) => {
+  try {
+    const { userId, email } = req.body || {};
+    const primaryAdmin = "11106cm009@gmail.com";
+    const isPrimary = Boolean(email && email.toLowerCase().trim() === primaryAdmin);
+    return res.json({
+      success: true,
+      userId,
+      email,
+      isSuperAdmin: isPrimary,
+      role: isPrimary ? "superadmin" : "user",
+      message: "Admin verification processed."
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      error: "BOOTSTRAP_ERROR",
+      message: err.message
+    });
+  }
+});
 
 // src/server/vercelEndpoint.ts
 var app = express();

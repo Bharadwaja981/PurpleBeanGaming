@@ -1375,5 +1375,30 @@ const handleDiscordUnlink = async (req: Request, res: Response) => {
 apiRouter.post('/auth/discord/unlink', handleDiscordUnlink);
 apiRouter.post('/discord/auth/unlink', handleDiscordUnlink);
 
+/**
+ * 5. Admin Bootstrap & Verification Endpoint
+ */
+apiRouter.post(['/admin/bootstrap', '/bootstrap'], async (req: Request, res: Response) => {
+  try {
+    const { userId, email } = req.body || {};
+    const primaryAdmin = '11106cm009@gmail.com';
+    const isPrimary = Boolean(email && email.toLowerCase().trim() === primaryAdmin);
+    return res.json({
+      success: true,
+      userId,
+      email,
+      isSuperAdmin: isPrimary,
+      role: isPrimary ? 'superadmin' : 'user',
+      message: 'Admin verification processed.'
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: 'BOOTSTRAP_ERROR',
+      message: err.message
+    });
+  }
+});
+
 
 

@@ -4,6 +4,12 @@
   "buildCommand": "vite build",
   "installCommand": "npm install --legacy-peer-deps",
   "outputDirectory": "dist",
+  "functions": {
+    "api/**": {
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  },
   "rewrites": [
     {
       "source": "/((?!api(?:/|$)).*)",
