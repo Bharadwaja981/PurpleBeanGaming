@@ -50,17 +50,18 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 
 /**
  * Creates a robust Vercel Serverless Function handler for a specific route.
- * Normalizes req.url to defaultPath + query string and returns a Promise that
- * completes only when the HTTP response has finished sending.
+ * Normalizes req.url to defaultPath + query string (stripping any accidental .js extension)
+ * and returns a Promise that completes only when the HTTP response has finished sending.
  */
 export function handleRoute(defaultPath: string) {
   return function vercelHandler(req: any, res: any): Promise<void> {
     return new Promise((resolve) => {
       try {
-        const rawUrl = req.url || '';
+        const rawUrl = (req.url || '').replace(/\.js(\?|$)/, '$1');
         const queryIdx = rawUrl.indexOf('?');
         const q = queryIdx >= 0 ? rawUrl.slice(queryIdx) : '';
-        req.url = defaultPath + q;
+        const cleanDefaultPath = defaultPath.replace(/\.js$/, '');
+        req.url = cleanDefaultPath + q;
 
         // Ensure lambda does not exit before response is fully transmitted
         res.once('finish', () => resolve());

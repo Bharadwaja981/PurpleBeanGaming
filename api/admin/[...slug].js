@@ -2882,10 +2882,11 @@ function handleRoute(defaultPath) {
   return function vercelHandler(req, res) {
     return new Promise((resolve) => {
       try {
-        const rawUrl = req.url || "";
+        const rawUrl = (req.url || "").replace(/\.js(\?|$)/, "$1");
         const queryIdx = rawUrl.indexOf("?");
         const q = queryIdx >= 0 ? rawUrl.slice(queryIdx) : "";
-        req.url = defaultPath + q;
+        const cleanDefaultPath = defaultPath.replace(/\.js$/, "");
+        req.url = cleanDefaultPath + q;
         res.once("finish", () => resolve());
         res.once("close", () => resolve());
         app(req, res, (err) => {

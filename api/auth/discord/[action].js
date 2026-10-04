@@ -2882,10 +2882,11 @@ function handleRoute(defaultPath) {
   return function vercelHandler(req, res) {
     return new Promise((resolve) => {
       try {
-        const rawUrl = req.url || "";
+        const rawUrl = (req.url || "").replace(/\.js(\?|$)/, "$1");
         const queryIdx = rawUrl.indexOf("?");
         const q = queryIdx >= 0 ? rawUrl.slice(queryIdx) : "";
-        req.url = defaultPath + q;
+        const cleanDefaultPath = defaultPath.replace(/\.js$/, "");
+        req.url = cleanDefaultPath + q;
         res.once("finish", () => resolve());
         res.once("close", () => resolve());
         app(req, res, (err) => {
@@ -2919,8 +2920,9 @@ function handleRoute(defaultPath) {
 
 // src/api/auth/discord/[action].ts
 async function handler(req, res) {
-  const action = req.query?.action || "";
-  return handleRoute(`/api/auth/discord/${action}`)(req, res);
+  const rawAction = req.query?.action || "";
+  const cleanAction = rawAction.replace(/\.js$/, "");
+  return handleRoute(`/api/auth/discord/${cleanAction}`)(req, res);
 }
 export {
   handler as default

@@ -2918,11 +2918,8 @@ function handleRoute(defaultPath) {
   };
 }
 
-// src/api/auction/[...slug].ts
-async function handler(req, res) {
-  const slugPath = Array.isArray(req.query?.slug) ? req.query.slug.join("/") : req.query?.slug || "";
-  return handleRoute(`/api/auction/${slugPath}`)(req, res);
-}
+// src/api/auth/discord/status.ts
+var status_default = handleRoute("/api/auth/discord/status");
 export {
-  handler as default
+  status_default as default
 };

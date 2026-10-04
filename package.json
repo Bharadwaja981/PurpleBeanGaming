@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "NODE_OPTIONS='--max-old-space-size=384' tsx server.ts",
     "start": "node server.ts",
-    "build:api": "esbuild src/api/auth/discord/[action].ts --bundle --platform=node --format=esm --target=node20 --outfile=api/auth/discord/[action].js --external:firebase-admin --external:express && esbuild src/api/steam/link/[action].ts --bundle --platform=node --format=esm --target=node20 --outfile=api/steam/link/[action].js --external:firebase-admin --external:express && esbuild src/api/auction/[...slug].ts --bundle --platform=node --format=esm --target=node20 --outfile=api/auction/[...slug].js --external:firebase-admin --external:express && esbuild src/api/opendota/[...slug].ts --bundle --platform=node --format=esm --target=node20 --outfile=api/opendota/[...slug].js --external:firebase-admin --external:express && esbuild src/api/admin/[...slug].ts --bundle --platform=node --format=esm --target=node20 --outfile=api/admin/[...slug].js --external:firebase-admin --external:express",
+    "build:api": "node scripts/buildApi.js",
     "build": "vite build && npm run build:api",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",

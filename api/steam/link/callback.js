@@ -2918,11 +2918,8 @@ function handleRoute(defaultPath) {
   };
 }
 
-// src/api/auction/[...slug].ts
-async function handler(req, res) {
-  const slugPath = Array.isArray(req.query?.slug) ? req.query.slug.join("/") : req.query?.slug || "";
-  return handleRoute(`/api/auction/${slugPath}`)(req, res);
-}
+// src/api/steam/link/callback.ts
+var callback_default = handleRoute("/api/steam/link/callback");
 export {
-  handler as default
+  callback_default as default
 };
