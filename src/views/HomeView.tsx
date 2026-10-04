@@ -78,11 +78,13 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
       const idLower = (t.id || '').toLowerCase();
       const LEGACY_MOCK_TOURNAMENT_IDS = new Set([
         'purple-bean-test-cup',
-        'purple-bean-auction-test',
         '2-team-auction-test',
         'auction-test'
       ]);
       if (LEGACY_MOCK_TOURNAMENT_IDS.has(idLower)) return false;
+      if (idLower === 'purple-bean-auction-test') {
+        return matchesGameFilter(t.game, t.gameId, selectedGame);
+      }
       if (!isPubliclyDiscoverable(t)) return false;
       return matchesGameFilter(t.game, t.gameId, selectedGame);
     });

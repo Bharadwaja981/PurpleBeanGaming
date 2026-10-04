@@ -502,6 +502,9 @@ export class DotaCareerHistoryEngine {
     if (payload.isForfeit) {
       return { success: false, error: 'DENIED: Forfeits do not qualify for rating adjustments per league policy.', events: [], teamDelta: 0 };
     }
+    if ((payload as any).isTestMatch || payload.tournamentId === 'purple-bean-auction-test' || (payload as any).testMode) {
+      return { success: false, error: 'DENIED: Test tournament matches do not contribute to permanent competitive ratings or career records.', events: [], teamDelta: 0 };
+    }
 
     // 3. Idempotency check: if match was already processed, return existing events
     if (this.processedMatches.has(payload.matchId)) {

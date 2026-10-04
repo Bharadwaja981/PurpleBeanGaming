@@ -15,6 +15,8 @@ export interface TournamentIdentityConfig {
   city?: string;
   bannerUrl?: string;
   isDevelopment?: boolean;
+  testMode?: boolean;
+  environment?: string;
   visibility?: 'PUBLIC' | 'DEVELOPMENT' | 'UNLISTED' | 'DRAFT' | 'PRIVATE' | string;
 }
 
@@ -23,6 +25,7 @@ export interface TournamentRegistrationConfig {
   openDate: string;
   closeDate: string;
   maxParticipants: number;
+  captainApplicationsEnabled?: boolean;
   eligibilityRules?: {
     minMmrOrRank?: number;
     regionLocked?: boolean;

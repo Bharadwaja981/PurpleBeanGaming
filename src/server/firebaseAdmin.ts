@@ -5,9 +5,9 @@
  * Verifies caller Firebase ID tokens and provides authoritative Firestore access.
  */
 
-import { initializeApp, getApps, getApp, cert, App } from 'firebase-admin/app';
-import { getFirestore, Firestore } from 'firebase-admin/firestore';
-import { getAuth, Auth } from 'firebase-admin/auth';
+import { initializeApp, getApps, getApp, cert, type App } from 'firebase-admin/app';
+import { getFirestore, type Firestore } from 'firebase-admin/firestore';
+import { getAuth, type Auth } from 'firebase-admin/auth';
 
 let isInitialized = false;
 

@@ -1,9 +1,11 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Users, Search, Filter, Shield, Trophy, MapPin, Gamepad2, Award } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
+import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
 import { gameManagementEngine } from '../domain/gameManagementEngine';
 import { Player, ViewType } from '../types/tournament';
 import { SelectDropdown, DropdownOption } from '../components/ui/Dropdown';
+import { matchesPlayerSearch } from '../utils/playerSearch';
 
 interface PlayersViewProps {
   onNavigate: (view: ViewType, entityId?: string) => void;
@@ -20,7 +22,13 @@ export function PlayersView({ onNavigate }: PlayersViewProps) {
     const unsub = tournamentService.subscribe(() => {
       setPlayers(tournamentService.getPlayers());
     });
-    return unsub;
+    const unsubPbg = pbgAccountRegistry.subscribe(() => {
+      setPlayers(tournamentService.getPlayers());
+    });
+    return () => {
+      unsub();
+      unsubPbg();
+    };
   }, []);
 
   useEffect(() => {
@@ -34,12 +42,7 @@ export function PlayersView({ onNavigate }: PlayersViewProps) {
 
   const filteredPlayers = useMemo(() => {
     return players.filter((p) => {
-      const matchesSearch = !search.trim() ||
-        p.username.toLowerCase().includes(search.toLowerCase()) ||
-        p.realName.toLowerCase().includes(search.toLowerCase()) ||
-        (p.city && p.city.toLowerCase().includes(search.toLowerCase())) ||
-        p.teamName?.toLowerCase().includes(search.toLowerCase());
-
+      const matchesSearch = matchesPlayerSearch(p, search);
       const matchesGame = !hasMultipleGames || gameFilter === 'All' || p.primaryGame === gameFilter;
       const matchesMmr = p.mmr >= parseInt(minMmr || '0', 10);
 
@@ -86,7 +89,7 @@ export function PlayersView({ onNavigate }: PlayersViewProps) {
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by player handle, city (Mumbai, Bengaluru...), or franchise..."
+              placeholder="Search by PBG ID (e.g. PBG-000188), player handle, name, city (Mumbai, Siddipet...), role, or franchise..."
               className="w-full bg-white border-2 border-black px-3.5 py-2 font-mono text-xs font-bold text-black placeholder:text-stone-400 focus:outline-hidden shadow-[2px_2px_0px_0px_#000]"
             />
           </div>
@@ -151,19 +154,36 @@ export function PlayersView({ onNavigate }: PlayersViewProps) {
               ) : (
                 filteredPlayers.map((player) => (
                 <tr
-                  key={player.id}
-                  onClick={() => onNavigate('player_profile', player.id)}
+                  key={player.id || player.pbgId}
+                  onClick={() => onNavigate('player_profile', player.pbgId || player.id)}
                   className="hover:bg-[#FFFDE8] transition-colors cursor-pointer group"
                 >
                   <td className="p-3.5">
                     <div className="flex items-center gap-2.5">
-                      <span className="text-xl">{player.avatar}</span>
+                      {player.avatar && player.avatar.startsWith('http') ? (
+                        <img 
+                          src={player.avatar} 
+                          alt={player.username} 
+                          className="w-8 h-8 rounded-full border border-black object-cover shrink-0" 
+                        />
+                      ) : (
+                        <span className="text-xl shrink-0">{player.avatar}</span>
+                      )}
                       <div>
-                        <span className="font-black text-black text-sm group-hover:underline block">
-                          {player.username}
-                        </span>
-                        <span className="text-[10px] text-stone-500 font-normal">
-                          {player.realName}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-black text-black text-sm group-hover:underline">
+                            {player.displayName || player.username}
+                          </span>
+                          {player.pbgId && (
+                            <span className="bg-[#5CE1E6] border border-black px-1.5 py-0.2 text-[9px] font-mono font-black text-black shadow-[1px_1px_0px_0px_#000]">
+                              {player.pbgId}
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-stone-500 font-normal block">
+                          {player.realName && player.realName !== (player.displayName || player.username) 
+                            ? player.realName 
+                            : (player.pbgId ? `${player.pbgId} · Indian Contender` : 'Indian Contender')}
                         </span>
                       </div>
                     </div>

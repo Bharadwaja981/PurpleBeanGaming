@@ -603,7 +603,7 @@ export class DotaAuctionEngine {
         this.state.roundPhase = 'GOING_THRICE';
       } else if (this.state.secondsRemaining <= 5) {
         this.state.roundPhase = 'GOING_TWICE';
-      } else if (this.state.secondsRemaining <= 8) {
+      } else if (this.state.secondsRemaining <= 15) {
         this.state.roundPhase = 'GOING_ONCE';
       } else {
         this.state.roundPhase = 'BIDDING';
@@ -1852,11 +1852,8 @@ export class DotaAuctionEngine {
     playerId: string,
     staffActorId: string
   ): { success: boolean; error?: string; nominee?: DotaAuctionPlayer } {
-    if (this.state.isCompleted) {
-      // Reopen auction when organiser nominates a player
-      this.state.isCompleted = false;
-      this.state.status = 'READY';
-      this.logAudit('auction_reopened', staffActorId, 'Auction reopened by organiser to nominate contender.');
+    if (this.state.isCompleted || this.state.status === 'COMPLETED') {
+      return { success: false, error: 'Cannot nominate player: Auction is completed. Reopen auction first before nominating.' };
     }
 
     if (this.state.nominee) {
@@ -2113,9 +2110,9 @@ export class DotaAuctionEngine {
         ? Math.max(0, Math.ceil((this.state.timerEndsAt - nowMs) / 1000))
         : this.state.secondsRemaining;
 
-      const windowSec = this.config.extensionWindowSeconds || 8;
+      const windowSec = this.config.extensionWindowSeconds ?? 8;
       if (remainingSec <= windowSec || this.state.secondsRemaining <= windowSec) {
-        const extendSec = Math.max(8, this.config.extensionTimeSeconds || 8);
+        const extendSec = this.config.extensionTimeSeconds ?? 8;
         this.state.secondsRemaining = extendSec;
         this.state.timerEndsAt = nowMs + extendSec * 1000;
         this.state.roundPhase = 'BIDDING';
@@ -2365,13 +2362,14 @@ export class DotaAuctionEngine {
    * - Marks all untouched AVAILABLE players as UNSELECTED.
    * - Idempotent.
    */
-  public finalizeAuction(staffActorId = 'system'): { success: boolean; unselectedCount: number; error?: string } {
+  public finalizeAuction(staffActorId = 'system', force = false): { success: boolean; unselectedCount: number; error?: string } {
     if (this.state.isCompleted) {
       return { success: true, unselectedCount: this.state.unselectedCount };
     }
 
-    // Invariant: Do not finalize while any registered team has an incomplete primary roster (< 5/5)
-    if (this.teams.size > 0) {
+    // Invariant: In automatic system finalization, all teams must reach full primary roster (5/5).
+    // Organizers/admins may conclude or finalize auction early if needed.
+    if (staffActorId === 'system' && !force && this.teams.size > 0) {
       for (const team of this.teams.values()) {
         if (team.primaryRoster.length < this.config.primaryRosterSize) {
           return {

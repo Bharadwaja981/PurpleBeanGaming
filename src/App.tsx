@@ -50,7 +50,6 @@ import { OrganiserDashboardView } from './views/OrganiserDashboardView';
 import { AdminDashboardView } from './views/AdminDashboardView';
 import { NotFoundView } from './views/NotFoundView';
 import { themeManager, ColorMode, ThemePalette, PBG_PALETTES } from './services/themeManager';
-import { SideThemeToggle } from './components/SideThemeToggle';
 
 import { Trophy, Shield, Swords, Users, Heart, ArrowUpRight, Flame, MapPin, Key, Loader2, Zap, Sun, Moon } from 'lucide-react';
 
@@ -440,9 +439,7 @@ export default function App() {
   const handleNavigate = (view: ViewType, entityId?: string) => {
     setIsViewLoading(true);
     setCurrentView(view);
-    if (entityId) {
-      setActiveEntityId(entityId);
-    }
+    setActiveEntityId(entityId);
     window.scrollTo({ top: 0, behavior: 'smooth' });
 
     // Update browser history URL cleanly without full reload
@@ -917,10 +914,23 @@ export default function App() {
               <button onClick={() => handleNavigate('rankings')} className="hover:underline cursor-pointer">Rankings</button>
               <span>·</span>
               <button onClick={() => handleNavigate('organiser_dashboard')} className="hover:underline cursor-pointer">Organiser Desk</button>
+            </div>
+          </div>
+
+          <div className="pt-6 border-t-2 border-black flex flex-col sm:flex-row items-center justify-between gap-4 font-mono text-[11px] sm:text-xs text-stone-600 text-center sm:text-left">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 bg-emerald-500 border border-black rounded-full inline-block animate-pulse shrink-0" />
+              <span>VALVE &amp; RIOT API SYNC · MUMBAI &amp; BENGALURU RELAYS ONLINE</span>
+            </div>
+
+            <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
+              <span>DESIGNED FOR INDIAN ESPORTS</span>
+              <span>·</span>
+              <span>© 2026 PURPLE BEAN GAMING</span>
               <span>·</span>
               <button
                 onClick={handleToggleDarkMode}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-stone-100 hover:bg-[#FFE600] text-black border-2 border-black shadow-[2px_2px_0px_0px_#000] cursor-pointer active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all font-mono text-[11px] font-black uppercase"
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-stone-100 hover:bg-[#FFE600] text-black border-2 border-black shadow-[2px_2px_0px_0px_#000] cursor-pointer active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all font-mono text-[10px] font-black uppercase"
                 title={colorMode === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
               >
                 {colorMode === 'dark' ? (
@@ -937,29 +947,8 @@ export default function App() {
               </button>
             </div>
           </div>
-
-          <div className="pt-6 border-t-2 border-black flex flex-col sm:flex-row items-center justify-between gap-4 font-mono text-[11px] sm:text-xs text-stone-600 text-center sm:text-left">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 bg-emerald-500 border border-black rounded-full inline-block animate-pulse shrink-0" />
-              <span>VALVE &amp; RIOT API SYNC · MUMBAI &amp; BENGALURU RELAYS ONLINE</span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span>DESIGNED FOR INDIAN ESPORTS</span>
-              <span>·</span>
-              <span>© 2026 PURPLE BEAN GAMING</span>
-            </div>
-          </div>
         </div>
       </footer>
-
-      {/* Floating Side Dock Light & Dark Mode Quick Toggle */}
-      <SideThemeToggle
-        isDarkMode={colorMode === 'dark'}
-        onToggleDarkMode={handleToggleDarkMode}
-        currentPalette={currentPalette}
-        onCyclePalette={handleCycleTheme}
-      />
     </div>
   );
 }

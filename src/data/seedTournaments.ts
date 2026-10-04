@@ -449,7 +449,81 @@ export const AUCTION_TEST_CONFIG: TournamentConfig = {
   }
 };
 
+export const PURPLE_BEAN_AUCTION_TEST_CONFIG: TournamentConfig = {
+  identity: {
+    tournamentId: 'purple-bean-auction-test',
+    name: 'Purple Bean Auction Test',
+    gameId: 'dota2',
+    gameName: 'Dota 2',
+    description: 'Production-safe test tournament for validating the full PBG registration → captain → auction → Discord role flow.',
+    region: 'Pan India',
+    locationType: 'ONLINE',
+    city: 'Bengaluru',
+    testMode: true,
+    environment: 'TEST TOURNAMENT',
+    isDevelopment: true,
+    visibility: 'PUBLIC',
+    bannerUrl: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80'
+  },
+  registration: {
+    registrationMode: 'INDIVIDUAL',
+    openDate: '2026-10-01',
+    closeDate: '2026-10-31',
+    maxParticipants: 30,
+    captainApplicationsEnabled: true,
+    eligibilityRules: {
+      minMmrOrRank: 3000,
+      regionLocked: false,
+      requireKyc: false,
+      discordRequired: true,
+      dotaRequired: true
+    }
+  },
+  teamFormation: {
+    mode: 'AUCTION',
+    numberOfTeams: 3
+  },
+  roster: {
+    primaryRosterSize: 5,
+    captainCountsTowardRoster: true,
+    substituteSlots: 1,
+    substituteRequired: false
+  },
+  auction: {
+    enabled: true,
+    creditAllocationMode: 'EQUAL',
+    baseCredits: 1000,
+    startingCredits: 1000,
+    startingCreditsPerTeam: 1000,
+    minimumCredits: 1000,
+    maximumCredits: 1000,
+    creditRounding: 10,
+    minimumBid: 10,
+    bidIncrement: 10,
+    reservePerRemainingSlot: 10,
+    bidTimerSeconds: 25,
+    nominationTimerSeconds: 30
+  },
+  competition: {
+    format: 'SINGLE_ELIMINATION',
+    defaultSeriesFormat: 'BO3',
+    roundOverrides: {
+      'Grand Final': 'BO5'
+    },
+    seedingMethod: 'RATING_BASED'
+  },
+  prizes: {
+    totalPrizePoolINR: 0,
+    placementDistribution: []
+  },
+  integrity: {
+    verificationRequired: true,
+    organizerApprovalRequired: true
+  }
+};
+
 export const INITIAL_SEED_TOURNAMENTS: TournamentConfig[] = [
+  PURPLE_BEAN_AUCTION_TEST_CONFIG,
   INDIA_MASTERS_AUCTION_CONFIG,
   INDIA_DOTA_OPEN_CONFIG,
   PURPLE_BEAN_CHALLENGER_CONFIG

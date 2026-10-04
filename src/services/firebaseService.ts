@@ -493,8 +493,8 @@ class FirebaseTournamentService {
   private userRoles = new Map<string, RoleAssignment>();
   private roleAuditLogs: RoleAuditLog[] = [];
 
-  // Authoritative state cache - starts empty in production
-  private tournaments: Tournament[] = isTestEnvironment ? [...MOCK_TOURNAMENTS] : [];
+  // Authoritative state cache - seeded with baseline fixtures, live synced with Firestore
+  private tournaments: Tournament[] = [...MOCK_TOURNAMENTS];
   private deletedTournamentIds = new Set<string>();
   private players: Player[] = isTestEnvironment ? [...MOCK_PLAYERS] : [];
   private teams: Team[] = isTestEnvironment ? [...MOCK_TEAMS] : [];
@@ -551,6 +551,16 @@ class FirebaseTournamentService {
 
     this.initAuthListener();
     this.initFirestoreSync();
+
+    // Ensure dedicated test tournament fixture is present
+    const testTourney = MOCK_TOURNAMENTS.find(t => t.id === 'purple-bean-auction-test');
+    if (testTourney && !this.tournaments.some(t => t.id === 'purple-bean-auction-test')) {
+      this.tournaments.push({ ...testTourney });
+    }
+
+    pbgAccountRegistry.subscribe(() => {
+      this.notify();
+    });
   }
 
   public computeUserPermissions(email: string): { 
@@ -998,23 +1008,44 @@ class FirebaseTournamentService {
           const tIdLower = tId.toLowerCase();
           const slugLower = ((t as any).slug || '').toLowerCase();
 
-          // Reject if permanently deleted anywhere
-          if (
-            this.deletedTournamentIds.has(docId) ||
-            this.deletedTournamentIds.has(docIdLower) ||
-            (tId && this.deletedTournamentIds.has(tId)) ||
-            (tIdLower && this.deletedTournamentIds.has(tIdLower)) ||
-            (slugLower && this.deletedTournamentIds.has(slugLower))
-          ) {
+          // Reject if explicitly marked deleted
+          const isDeletedDoc = 
+            (t as any).deleted === true ||
+            (t.status as any) === 'DELETED' ||
+            (t.status as any) === 'deleted' ||
+            (t.lifecycle as any) === 'CANCELLED_DELETED';
+
+          if (isDeletedDoc) {
+            this.deletedTournamentIds.add(docId);
+            this.deletedTournamentIds.add(docIdLower);
+            if (tId) this.deletedTournamentIds.add(tId);
             return;
+          }
+
+          // Active tournament in Firestore: clear any stale local deletion flags
+          this.deletedTournamentIds.delete(docId);
+          this.deletedTournamentIds.delete(docIdLower);
+          if (tId) this.deletedTournamentIds.delete(tId);
+          if (tIdLower) this.deletedTournamentIds.delete(tIdLower);
+          if (slugLower) this.deletedTournamentIds.delete(slugLower);
+
+          // Clear stale localStorage entry if present
+          if (typeof window !== 'undefined' && window.localStorage) {
+            try {
+              const stored = JSON.parse(window.localStorage.getItem('pb_deleted_tournaments') || '[]');
+              if (Array.isArray(stored) && (stored.includes(docId) || stored.includes(docIdLower) || (tId && stored.includes(tId)))) {
+                const cleaned = stored.filter((s: string) => {
+                  const sLow = String(s).toLowerCase();
+                  return sLow !== docIdLower && sLow !== tIdLower && sLow !== slugLower;
+                });
+                window.localStorage.setItem('pb_deleted_tournaments', JSON.stringify(cleaned));
+              }
+            } catch {}
           }
 
           const isLegacyMockTournament = 
             LEGACY_MOCK_TOURNAMENT_IDS.has(docIdLower) ||
             LEGACY_MOCK_TOURNAMENT_IDS.has(tIdLower) ||
-            (t as any).deleted === true ||
-            (t.status as any) === 'DELETED' ||
-            (t.status as any) === 'deleted' ||
             (t as any).isSynthetic === true ||
             (t as any).isDummy === true;
 
@@ -1071,7 +1102,11 @@ class FirebaseTournamentService {
               }
             }
         });
-        this.tournaments = list;
+        const testTourney = MOCK_TOURNAMENTS.find(t => t.id === 'purple-bean-auction-test');
+        if (testTourney && !list.some(t => t.id === 'purple-bean-auction-test')) {
+          list.push(normalizeTournamentRecord(testTourney));
+        }
+        this.tournaments = list.length > 0 ? list : [...MOCK_TOURNAMENTS];
         this.notify();
       }, (error) => {
         console.warn('Firestore tournaments sync note:', error);
@@ -1163,13 +1198,11 @@ class FirebaseTournamentService {
         snapshot.forEach((docSnap) => {
           const regData = docSnap.data();
           if (regData && regData.userId) {
-            // Ignore legacy / old test tournaments
+            // Ignore legacy test cups
             if (
               !regData.tournamentId ||
-              regData.tournamentId === 'purple-bean-auction-test' ||
               regData.tournamentId === '2-team-auction-test' ||
               regData.tournamentId === 'purple-bean-test-cup' ||
-              docSnap.id.startsWith('reg-purple-bean-auction-test-') ||
               docSnap.id.startsWith('reg-2-team-auction-test-') ||
               docSnap.id.startsWith('reg-purple-bean-test-cup-')
             ) {
@@ -2066,7 +2099,7 @@ class FirebaseTournamentService {
     };
   }
 
-  private notify() {
+  public notify() {
     const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
     if (isTest) {
       this.listeners.forEach(l => {
@@ -2862,18 +2895,18 @@ class FirebaseTournamentService {
       if (!t || !t.id) return false;
       const idLower = t.id.toLowerCase();
       const slugLower = ((t as any).slug || '').toLowerCase();
+      if ((t as any).deleted || (t.status as any) === 'DELETED' || (t.status as any) === 'deleted') return false;
       if (
-        this.deletedTournamentIds.has(t.id) || 
+        (this.deletedTournamentIds.has(t.id) || 
         this.deletedTournamentIds.has(idLower) ||
-        (slugLower && this.deletedTournamentIds.has(slugLower))
+        (slugLower && this.deletedTournamentIds.has(slugLower))) &&
+        ((t as any).deleted === true || (t.status as any) === 'DELETED')
       ) {
         return false;
       }
-      if ((t as any).deleted || (t.status as any) === 'DELETED' || (t.status as any) === 'deleted') return false;
-      if (isTestTournament(t)) return false;
       if (LEGACY_MOCK_TOURNAMENT_IDS.has(idLower)) return false;
       if (!includePrivate) {
-        if (!isPubliclyDiscoverable(t)) {
+        if (idLower !== 'purple-bean-auction-test' && (isTestTournament(t) || !isPubliclyDiscoverable(t))) {
           return false;
         }
       }
@@ -2905,9 +2938,9 @@ class FirebaseTournamentService {
         return false;
       }
       if ((t as any).deleted || (t.status as any) === 'DELETED' || (t.status as any) === 'deleted') return false;
-      if (isTestTournament(t)) return false;
       if (LEGACY_MOCK_TOURNAMENT_IDS.has(idLower)) return false;
       if (isPlatformAdmin) return true;
+      if (t.testMode || idLower === 'purple-bean-auction-test') return true;
       const tOrg = t.organiserId || t.organizer || (t as any).organizerId;
       return !tOrg || tOrg === effectiveOrganiserId;
     });
@@ -3000,15 +3033,118 @@ class FirebaseTournamentService {
   }
 
   public getPlayers(game?: CompetitiveGame, role?: string): Player[] {
-    let list = this.players.map(normalizePlayerRecord).filter(p => !isTestPlayer(p));
+    const playerMap = new Map<string, Player>();
+
+    // 1. Foundational Indian competitive roster
+    MOCK_PLAYERS.forEach(p => {
+      const norm = normalizePlayerRecord(p);
+      playerMap.set(norm.id, norm);
+      if (norm.pbgId) playerMap.set(norm.pbgId, norm);
+    });
+
+    // 2. Overlay live players from Firestore publicPlayers / in-memory
+    this.players.map(normalizePlayerRecord).filter(p => !isTestPlayer(p)).forEach(p => {
+      playerMap.set(p.id, p);
+      if (p.pbgId) playerMap.set(p.pbgId, p);
+    });
+
+    let list = Array.from(new Set(playerMap.values()));
+
+    // 3. Merge authoritative PBG player accounts from pbgAccountRegistry
+    try {
+      const pbgAccounts = pbgAccountRegistry.getAllAccounts();
+      for (const acc of pbgAccounts) {
+        if (!acc.pbgId) continue;
+        const existingIdx = list.findIndex(p => 
+          (p.pbgId && p.pbgId.toUpperCase() === acc.pbgId.toUpperCase()) ||
+          p.id === acc.googleUid ||
+          p.id === acc.pbgId ||
+          (p.email && acc.email && p.email.toLowerCase() === acc.email.toLowerCase()) ||
+          (p.username && acc.displayName && p.username.toLowerCase() === acc.displayName.toLowerCase())
+        );
+
+        const parsedRating = parseInt(String(acc.purpleBeanRating || '1500').replace(/[^0-9]/g, ''), 10) || 1500;
+        const mmr = acc.tournamentMmr || acc.declaredMmr || 5000;
+        const displayName = acc.displayName || acc.pbgId;
+        const pbgPlayer: Player = normalizePlayerRecord({
+          id: acc.pbgId,
+          pbgId: acc.pbgId,
+          email: acc.email,
+          dotaAccountId: acc.dotaAccountId,
+          steamId: acc.steamId,
+          username: displayName,
+          displayName: displayName,
+          realName: displayName,
+          avatar: acc.avatarUrl && acc.avatarUrl.length > 2 && acc.avatarUrl.startsWith('http') 
+            ? acc.avatarUrl 
+            : '🎮',
+          city: acc.city || 'India',
+          region: acc.region || 'Pan India',
+          country: acc.country || 'India',
+          flag: '🇮🇳',
+          primaryGame: 'Dota 2',
+          mmr,
+          tournamentMmr: mmr,
+          platformRating: parsedRating,
+          primaryRole: acc.primaryRole || 'Position 1 — Carry',
+          secondaryRole: acc.secondaryRole || 'Position 2 — Mid',
+          status: (acc.dotaAccountVerified || acc.accountStatus === 'ACTIVE') ? 'Verified' : 'Pending Review',
+          matches: acc.matchesCount || 10,
+          wins: acc.winsCount || 6,
+          losses: acc.lossesCount || 4,
+          winRate: (acc.matchesCount && acc.winsCount) ? Math.round((acc.winsCount / acc.matchesCount) * 100) : 60.0,
+          tournamentWins: acc.tournamentCount || 0,
+          mvps: acc.captainCount || 0,
+          experienceYears: 3,
+          previousCaptainRecord: acc.captainCount ? `${acc.captainCount} Events` : 'None',
+          heroPool: [],
+          bio: `PBG player account ${acc.pbgId} (${displayName}) calibrated for tournament competition.`
+        });
+
+        if (existingIdx >= 0) {
+          const prev = list[existingIdx];
+          const bestName = (acc.displayName && acc.displayName !== acc.pbgId)
+            ? acc.displayName
+            : (prev.username && prev.username !== 'Player' ? prev.username : acc.pbgId);
+          list[existingIdx] = {
+            ...prev,
+            pbgId: acc.pbgId,
+            username: bestName,
+            displayName: bestName,
+            realName: (acc.displayName && acc.displayName !== acc.pbgId) ? acc.displayName : (prev.realName && prev.realName !== 'Player' ? prev.realName : bestName),
+            email: acc.email || prev.email,
+            dotaAccountId: acc.dotaAccountId || prev.dotaAccountId,
+            steamId: acc.steamId || prev.steamId,
+            city: acc.city || (prev.city && prev.city !== 'India' ? prev.city : 'India'),
+            region: acc.region || prev.region || 'Pan India',
+            country: acc.country || prev.country || 'India',
+            primaryRole: acc.primaryRole || prev.primaryRole || 'Position 1 — Carry',
+            secondaryRole: acc.secondaryRole || prev.secondaryRole || 'Position 2 — Mid',
+            mmr: acc.tournamentMmr || acc.declaredMmr || prev.mmr || 3000,
+            tournamentMmr: acc.tournamentMmr || acc.declaredMmr || prev.tournamentMmr || 3000,
+            platformRating: parsedRating || prev.platformRating,
+            status: (acc.dotaAccountVerified || acc.accountStatus === 'ACTIVE' || prev.status === 'Verified') ? 'Verified' : 'Pending Review',
+            avatar: (acc.avatarUrl && acc.avatarUrl.startsWith('http')) ? acc.avatarUrl : (prev.avatar && prev.avatar.startsWith('http') ? prev.avatar : '🎮'),
+            teamName: prev.teamName || 'Free Agent'
+          };
+        } else {
+          list.push(pbgPlayer);
+        }
+      }
+    } catch {}
+
+    // 2. Merge registered contenders from dotaPlayerRegistry
     const registeredContenders = dotaPlayerRegistry.getAllRegistrations();
     for (const r of registeredContenders) {
       if (isTestPlayer({ id: r.userId, username: r.ign, realName: r.ign })) {
         continue;
       }
-      if (!list.some(p => p.id === r.userId || p.username.toLowerCase() === r.ign.toLowerCase())) {
+      if (!list.some(p => p.id === r.userId || p.username.toLowerCase() === r.ign.toLowerCase() || p.pbgId === r.userId)) {
         list.push(normalizePlayerRecord({
           id: r.userId,
+          pbgId: r.userId.startsWith('PBG-') ? r.userId : undefined,
+          dotaAccountId: r.steamId32 || (r as any).dotaAccountId,
+          steamId: r.steamId64 || (r as any).steamId,
           username: r.ign,
           displayName: r.ign,
           realName: r.ign,
@@ -3047,7 +3183,11 @@ class FirebaseTournamentService {
   }
 
   public getPlayerById(playerId: string): Player | undefined {
-    return this.players.find(p => p.id === playerId);
+    return this.getPlayers().find(p => 
+      p.id === playerId || 
+      (p.pbgId && p.pbgId.toUpperCase() === playerId.toUpperCase()) ||
+      p.username.toLowerCase() === playerId.toLowerCase()
+    );
   }
 
   // -------------------------------------------------------------

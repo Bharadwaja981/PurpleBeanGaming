@@ -24,12 +24,9 @@ class TournamentConfigRegistry {
   private teamProvider: ((tournamentId: string) => any[]) | null = null;
 
   constructor() {
-    const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
-    if (isTest) {
-      INITIAL_SEED_TOURNAMENTS.forEach((cfg) => {
-        this.configs.set(cfg.identity.tournamentId, cfg);
-      });
-    }
+    INITIAL_SEED_TOURNAMENTS.forEach((cfg) => {
+      this.configs.set(cfg.identity.tournamentId, cfg);
+    });
   }
 
   public setTeamProvider(provider: (tournamentId: string) => any[]) {
@@ -105,7 +102,6 @@ class TournamentConfigRegistry {
     }
     const LEGACY_MOCK_TOURNAMENT_IDS = new Set([
       '2-team-auction-test',
-      'purple-bean-auction-test',
       'auction-test',
       'purple-bean-test-cup'
     ]);

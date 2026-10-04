@@ -23,12 +23,123 @@ export class PBGAccountRegistry {
   private nextPbgNumber: number = 189; // Baseline sequences start at 189 after 184-188
 
   constructor() {
+    this.seedCanonicalAccounts();
     this.loadFromStorage();
+    this.seedCanonicalAccounts();
     this.initFirestoreSync();
   }
 
   public reload(): void {
+    this.seedCanonicalAccounts();
     this.loadFromStorage();
+    this.seedCanonicalAccounts();
+  }
+
+  public seedCanonicalAccounts(): void {
+    // 1. Ensure Santhosh Myana (myana.santhosh@gmail.com) holds PBG-000188
+    const santhoshUid = 'dCZd7IjKpxYDBjTQe5FUhccuX583';
+    const santhoshEmail = 'myana.santhosh@gmail.com';
+    let santhosh = this.accounts.get(santhoshUid) || Array.from(this.accounts.values()).find(a => a.email.toLowerCase() === santhoshEmail);
+    if (!santhosh) {
+      santhosh = {
+        pbgId: 'PBG-000188',
+        googleUid: santhoshUid,
+        email: santhoshEmail,
+        displayName: 'Santhosh Myana',
+        avatarUrl: 'https://lh3.googleusercontent.com/a/ACg8ocKEMfUhTi1ata0in6B1QrYHiFJykqUeoCiE-nuE6wwM6lUCch-Y=s96-c',
+        createdAt: '2026-10-02T15:44:36.857Z',
+        updatedAt: new Date().toISOString(),
+        accountStatus: 'ACTIVE',
+        country: 'India',
+        region: 'Pan India',
+        city: 'Siddipet',
+        hasCompletedOnboarding: true,
+        dotaAccountLinked: true,
+        dotaAccountVerified: true,
+        dotaOwnershipVerified: true,
+        dotaAccountId: '336333581',
+        steamId: '76561198296599309',
+        publicMatchDataStatus: 'PUBLIC',
+        dotaConnectionStatus: 'CONNECTED',
+        discordLinked: true,
+        discordUserId: '398688779025776643',
+        discordUsername: 'tasteless_chicken',
+        discordDisplayName: 'TastelesS ChickeN',
+        declaredMmr: 3000,
+        tournamentMmr: 3000,
+        primaryRole: 'Position 1 — Carry',
+        purpleBeanRating: '120 PB',
+        tournamentCount: 0,
+        matchesCount: 0,
+        winsCount: 0,
+        lossesCount: 0,
+        teamsCount: 0,
+        captainCount: 0,
+        tournamentHistory: [],
+        teamHistory: [],
+        matchHistory: [],
+        captainHistory: [],
+        achievements: []
+      };
+    } else {
+      santhosh.pbgId = 'PBG-000188';
+      santhosh.city = santhosh.city || 'Siddipet';
+      if (!santhosh.dotaAccountId) santhosh.dotaAccountId = '336333581';
+      if (!santhosh.steamId) santhosh.steamId = '76561198296599309';
+      if (!santhosh.discordUserId) santhosh.discordUserId = '398688779025776643';
+      if (!santhosh.discordUsername) santhosh.discordUsername = 'tasteless_chicken';
+    }
+    this.accounts.set(santhoshUid, santhosh);
+    this.pbgIdIndex.set('PBG-000188', santhoshUid);
+    this.pbgIdIndex.delete('PBG-000186'); // Ensure Santhosh does not hold 186
+
+    // 2. Ensure Primary Lead (11106cm009@gmail.com) holds PBG-000186
+    const leadUid = 'wUyRsN0f40bYdyCpLp6UNeIJjpD3';
+    const leadEmail = '11106cm009@gmail.com';
+    let lead = this.accounts.get(leadUid) || Array.from(this.accounts.values()).find(a => a.email.toLowerCase() === leadEmail);
+    if (!lead) {
+      lead = {
+        pbgId: 'PBG-000186',
+        googleUid: leadUid,
+        email: leadEmail,
+        displayName: 'Bharadwaja Anisetti',
+        avatarUrl: 'https://lh3.googleusercontent.com/a/ACg8ocKsmb2Rk2NffT53Kqf00QWp4PzT5M9s8dE1e5B6C7D8=s96-c',
+        createdAt: '2026-09-25T15:43:21.383Z',
+        updatedAt: new Date().toISOString(),
+        accountStatus: 'ACTIVE',
+        country: 'India',
+        region: 'Pan India',
+        city: 'Mumbai',
+        hasCompletedOnboarding: true,
+        dotaAccountLinked: true,
+        dotaAccountVerified: true,
+        dotaOwnershipVerified: true,
+        dotaAccountId: '383650106',
+        steamId: '76561198343915834',
+        publicMatchDataStatus: 'PUBLIC',
+        dotaConnectionStatus: 'CONNECTED',
+        discordLinked: true,
+        discordUserId: '522114011307966464',
+        discordUsername: 'robinhood28',
+        discordDisplayName: 'Robinhood',
+        purpleBeanRating: '120 PB',
+        tournamentCount: 0,
+        matchesCount: 0,
+        winsCount: 0,
+        lossesCount: 0,
+        teamsCount: 0,
+        captainCount: 0,
+        tournamentHistory: [],
+        teamHistory: [],
+        matchHistory: [],
+        captainHistory: [],
+        achievements: []
+      };
+    } else {
+      lead.pbgId = 'PBG-000186';
+    }
+    this.accounts.set(leadUid, lead);
+    this.pbgIdIndex.set('PBG-000186', leadUid);
   }
 
   private loadFromStorage(): void {
@@ -52,6 +163,16 @@ export class PBGAccountRegistry {
           if (acc.pbgId === 'PBG-000185' && acc.dotaAccountId === '383650106') {
             acc.dotaAccountId = '185000000';
             acc.steamId = '76561198000000185';
+          }
+          // Enforce immutable canonical administrative PBG IDs
+          if (acc.googleUid === 'dCZd7IjKpxYDBjTQe5FUhccuX583' || acc.email?.toLowerCase() === 'myana.santhosh@gmail.com') {
+            acc.pbgId = 'PBG-000188';
+          }
+          if (acc.googleUid === 'wUyRsN0f40bYdyCpLp6UNeIJjpD3' || acc.email?.toLowerCase() === '11106cm009@gmail.com') {
+            acc.pbgId = 'PBG-000186';
+          }
+          if (acc.email?.toLowerCase() === 'neelapuharsha@gmail.com') {
+            acc.pbgId = 'PBG-000187';
           }
           // Existing accounts loaded from storage have already been established
           if (acc.hasCompletedOnboarding === undefined) {
@@ -543,6 +664,17 @@ export class PBGAccountRegistry {
         snapshot.forEach((docSnap) => {
           const acc = docSnap.data() as PBGPlayerAccount;
           if (acc && acc.pbgId && acc.googleUid) {
+            // Enforce immutable canonical administrative PBG IDs
+            if (acc.googleUid === 'dCZd7IjKpxYDBjTQe5FUhccuX583' || acc.email?.toLowerCase() === 'myana.santhosh@gmail.com') {
+              acc.pbgId = 'PBG-000188';
+            }
+            if (acc.googleUid === 'wUyRsN0f40bYdyCpLp6UNeIJjpD3' || acc.email?.toLowerCase() === '11106cm009@gmail.com') {
+              acc.pbgId = 'PBG-000186';
+            }
+            if (acc.email?.toLowerCase() === 'neelapuharsha@gmail.com') {
+              acc.pbgId = 'PBG-000187';
+            }
+
             const existing = this.accounts.get(acc.googleUid);
             const isDifferent = !existing ||
               existing.pbgId !== acc.pbgId ||
@@ -686,11 +818,49 @@ export class PBGAccountRegistry {
    * Get existing PBG account by Google UID or email
    */
   public getAccountByUid(googleUid: string): PBGPlayerAccount | undefined {
+    if (googleUid === 'dCZd7IjKpxYDBjTQe5FUhccuX583') {
+      const acc = this.accounts.get(googleUid) || this.getAccountByEmail('myana.santhosh@gmail.com');
+      if (acc) {
+        acc.pbgId = 'PBG-000188';
+        return acc;
+      }
+    }
+    if (googleUid === 'wUyRsN0f40bYdyCpLp6UNeIJjpD3') {
+      const acc = this.accounts.get(googleUid) || this.getAccountByEmail('11106cm009@gmail.com');
+      if (acc) {
+        acc.pbgId = 'PBG-000186';
+        return acc;
+      }
+    }
     return this.accounts.get(googleUid);
   }
 
   public getAccountByPbgId(pbgId: string): PBGPlayerAccount | undefined {
-    const uid = this.pbgIdIndex.get(pbgId.toUpperCase().trim());
+    const clean = pbgId.toUpperCase().trim();
+    if (clean === 'PBG-000188') {
+      const acc = this.accounts.get('dCZd7IjKpxYDBjTQe5FUhccuX583') || this.getAccountByEmail('myana.santhosh@gmail.com');
+      if (acc) {
+        acc.pbgId = 'PBG-000188';
+        return acc;
+      }
+    }
+    if (clean === 'PBG-000186') {
+      const acc = this.accounts.get('wUyRsN0f40bYdyCpLp6UNeIJjpD3') || this.getAccountByEmail('11106cm009@gmail.com');
+      if (acc) {
+        acc.pbgId = 'PBG-000186';
+        return acc;
+      }
+    }
+    if (clean === 'PBG-000187') {
+      return this.getAccountByEmail('neelapuharsha@gmail.com');
+    }
+    if (clean === 'PBG-000185') {
+      return this.getAccountByEmail('robinhood@pbg.gg') || Array.from(this.accounts.values()).find(a => a.pbgId === 'PBG-000185');
+    }
+    if (clean === 'PBG-000184') {
+      return this.getAccountByEmail('user@gmail.com') || this.accounts.get('google_uid_bharadwaja_000184');
+    }
+    const uid = this.pbgIdIndex.get(clean);
     return uid ? this.accounts.get(uid) : undefined;
   }
 
@@ -710,6 +880,20 @@ export class PBGAccountRegistry {
 
   public getAccountByEmail(email: string): PBGPlayerAccount | undefined {
     const target = email.toLowerCase().trim();
+    if (target === 'myana.santhosh@gmail.com') {
+      const acc = Array.from(this.accounts.values()).find(a => a.email.toLowerCase().trim() === target || a.googleUid === 'dCZd7IjKpxYDBjTQe5FUhccuX583');
+      if (acc) {
+        acc.pbgId = 'PBG-000188';
+        return acc;
+      }
+    }
+    if (target === '11106cm009@gmail.com') {
+      const acc = Array.from(this.accounts.values()).find(a => a.email.toLowerCase().trim() === target || a.googleUid === 'wUyRsN0f40bYdyCpLp6UNeIJjpD3');
+      if (acc) {
+        acc.pbgId = 'PBG-000186';
+        return acc;
+      }
+    }
     return Array.from(this.accounts.values()).find(
       (acc) => acc.email.toLowerCase().trim() === target
     );
@@ -726,6 +910,47 @@ export class PBGAccountRegistry {
 
   public getAllAccounts(): PBGPlayerAccount[] {
     return Array.from(this.accounts.values());
+  }
+
+  /**
+   * Registers or updates a PBG Player Account directly (for testing, seeding, or administrative operations).
+   */
+  public registerOrUpdateAccount(data: Partial<PBGPlayerAccount> & { pbgId: string; email?: string }): PBGPlayerAccount {
+    const googleUid = data.googleUid || `uid_${data.pbgId}`;
+    let acc = this.accounts.get(googleUid) || (data.email ? this.getAccountByEmail(data.email) : undefined) || this.getAccountByPbgId(data.pbgId);
+    if (!acc) {
+      const { pbgId, ...rest } = data;
+      acc = {
+        pbgId,
+        googleUid,
+        email: data.email || `${pbgId.toLowerCase()}@pbg.test`,
+        displayName: data.displayName || pbgId,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        accountStatus: 'ACTIVE',
+        country: 'India',
+        region: 'Pan India',
+        city: 'Mumbai',
+        hasCompletedOnboarding: true,
+        dotaAccountLinked: Boolean(data.dotaAccountId),
+        dotaAccountVerified: Boolean(data.dotaAccountId),
+        dotaAccountId: data.dotaAccountId,
+        steamId: data.steamId,
+        discordLinked: Boolean(data.discordUserId),
+        discordUserId: data.discordUserId,
+        discordUsername: data.discordUsername,
+        discordMemberVerified: data.discordMemberVerified ?? true,
+        ...rest
+      } as PBGPlayerAccount;
+    } else {
+      Object.assign(acc, data);
+    }
+    this.accounts.set(acc.googleUid, acc);
+    this.pbgIdIndex.set(acc.pbgId, acc.googleUid);
+    if (acc.discordUserId) this.discordIdIndex.set(acc.discordUserId, acc.googleUid);
+    if (acc.dotaAccountId) this.dotaIdIndex.set(acc.dotaAccountId, acc.googleUid);
+    if (acc.steamId) this.steamIdIndex.set(acc.steamId, acc.googleUid);
+    return acc;
   }
 
   /**

@@ -299,29 +299,9 @@ export function Navigation({
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3 shrink-0 ml-2">
-          {onToggleDarkMode && (
-            <button
-              onClick={onToggleDarkMode}
-              className="flex items-center gap-1 text-[11px] text-stone-300 hover:text-white cursor-pointer transition-colors"
-              title={isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            >
-              {isDarkMode ? (
-                <>
-                  <Sun className="w-3 h-3 text-[#FFE600] fill-[#FFE600]" />
-                  <span>Mode: Dark</span>
-                </>
-              ) : (
-                <>
-                  <Moon className="w-3 h-3 text-[#5CE1E6] fill-[#5CE1E6]" />
-                  <span>Mode: Light</span>
-                </>
-              )}
-            </button>
-          )}
-          <span className="text-stone-600 hidden sm:inline">·</span>
           <button
             onClick={onCycleTheme}
-            className="flex items-center gap-1 text-[11px] text-stone-300 hover:text-white cursor-pointer transition-colors"
+            className="flex items-center gap-1.5 text-[11px] text-stone-300 hover:text-white cursor-pointer transition-colors"
             title="Cycle theme palette"
           >
             <Palette className="w-3 h-3 text-[#FFE600]" />
@@ -718,16 +698,6 @@ export function Navigation({
                   badge="Admin"
                   badgeColor="bg-[#38EF7D] text-black"
                   onClick={onOpenAdminCredentials}
-                />
-              )}
-
-              {onToggleDarkMode && (
-                <MenuItem
-                  icon={isDarkMode ? Sun : Moon}
-                  label={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
-                  badge={isDarkMode ? "DARK" : "LIGHT"}
-                  badgeColor={isDarkMode ? "bg-[#FFE600] text-black" : "bg-stone-200 text-stone-800"}
-                  onClick={onToggleDarkMode}
                 />
               )}
             </div>

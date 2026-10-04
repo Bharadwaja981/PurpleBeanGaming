@@ -6,48 +6,8 @@ import { Tournament, Player, Team, Match, AuctionPlayer, AuctionTeamState, Repor
 
 export const MOCK_TOURNAMENTS: Tournament[] = [
   {
-    id: 'purple-bean-india-masters-2026',
-    name: 'India Masters 2026',
-    game: 'Dota 2',
-    gameId: 'dota2',
-    status: 'Live',
-    lifecycle: 'ACTIVE',
-    dates: 'October 1 – 15, 2026',
-    startDate: '2026-10-01',
-    endDate: '2026-10-15',
-    prizePool: '₹2,50,000 Prize Pool',
-    totalPrizeNumber: 250000,
-    prizePoolINR: '₹2,50,000',
-    teamCount: 8,
-    playerCount: 40,
-    format: 'Captain Auction · 8 Teams · 40 Slots',
-    organizer: 'Purple Bean Esports HQ',
-    city: 'Bengaluru',
-    region: 'Pan India',
-    description: 'Premier national championship featuring India top Dota 2 contenders in a live franchise auction draft.',
-    isDevelopment: false,
-    visibility: 'PUBLIC',
-    keyInfo: {
-      server: 'India (Bengaluru)',
-      antiCheat: 'VAC & Verified Identity',
-      bracketFormat: 'Double Elimination (BO3)',
-      rosterLock: 'Strict 5/5 + 1 Stand-in'
-    },
-    prizeDistribution: [
-      { place: '1st Place', percentage: '50%', amount: '₹1,25,000' },
-      { place: '2nd Place', percentage: '25%', amount: '₹62,500' },
-      { place: '3rd Place', percentage: '15%', amount: '₹37,500' },
-      { place: '4th Place', percentage: '10%', amount: '₹25,000' }
-    ],
-    stages: [
-      { id: 'stg-reg', name: 'Registration', status: 'completed', date: 'Sept 2026' },
-      { id: 'stg-auc', name: 'Live Auction', status: 'completed', date: 'Oct 1, 2026' },
-      { id: 'stg-pla', name: 'Playoffs', status: 'current', date: 'Oct 5–15, 2026' }
-    ]
-  },
-  {
-    id: 'purple-bean-test-cup',
-    name: 'Purple Bean Test Cup',
+    id: 'purple-bean-auction-test',
+    name: 'Purple Bean Auction Test',
     game: 'Dota 2',
     gameId: 'dota2',
     status: 'Registration Open',
@@ -55,30 +15,36 @@ export const MOCK_TOURNAMENTS: Tournament[] = [
     dates: 'October 2026',
     startDate: '2026-10-01',
     endDate: '2026-10-31',
-    prizePool: '₹25,000 Prize Pool',
-    totalPrizeNumber: 250000,
-    prizePoolINR: '₹25,000',
+    prizePool: '₹50,000 Prize Pool',
+    totalPrizeNumber: 50000,
+    prizePoolINR: '₹50,000',
     teamCount: 3,
     playerCount: 15,
     format: 'Captain Auction · 3 Teams · 15 Slots',
     organizer: 'Purple Bean Operations',
     city: 'Bengaluru',
     region: 'Pan India',
-    description: 'Real-time test cup for verifying live auctions, MMR balancing, and brackets.',
-    isDevelopment: true,
+    description: 'Production-safe 3-team test tournament for validating the full PBG registration → captain → auction → Discord role flow.',
+    isDevelopment: false,
+    testMode: true,
+    environment: 'TEST TOURNAMENT',
+    tournamentType: 'auction',
+    teamFormation: { mode: 'AUCTION', numberOfTeams: 3 },
     visibility: 'PUBLIC',
     keyInfo: {
       server: 'India (Mumbai)',
-      antiCheat: 'VAC',
+      antiCheat: 'VAC & Verified Identity',
       bracketFormat: 'Single Elimination (BO3)',
-      rosterLock: 'Strict 5/5'
+      rosterLock: 'Strict 5/5 + 1 Stand-in'
     },
     prizeDistribution: [
-      { place: '1st Place', percentage: '60%', amount: '₹15,000' },
-      { place: '2nd Place', percentage: '40%', amount: '₹10,000' }
+      { place: '1st Place (Champion)', percentage: '60%', amount: '₹30,000' },
+      { place: '2nd Place (Runner-up)', percentage: '40%', amount: '₹20,000' }
     ],
     stages: [
-      { id: 'stg-reg', name: 'Registration Open', status: 'current', date: 'October 2026' }
+      { id: 'stg-reg', name: 'Registration Open', status: 'current', date: 'October 2026' },
+      { id: 'stg-cap', name: 'Captain Selection (3 Teams)', status: 'upcoming', date: 'October 2026' },
+      { id: 'stg-auc', name: 'Live 3-Team Captain Auction', status: 'upcoming', date: 'October 2026' }
     ]
   }
 ];

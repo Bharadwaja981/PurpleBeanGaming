@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Trophy, Search, Filter, Calendar, Users, ArrowRight, Radio, MapPin, Gamepad2, Plus, Shield, Play, Pause, StopCircle, Trash2, Gavel } from 'lucide-react';
+import { Trophy, Search, Filter, Calendar, Users, ArrowRight, Radio, MapPin, Gamepad2, Plus, Shield, Play, Pause, StopCircle, Trash2, Gavel, FlaskConical } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
 import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
 import { Tournament, ViewType } from '../types/tournament';
@@ -100,7 +100,7 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
 
   useEffect(() => {
     const sync = () => {
-      setTournaments(tournamentService.getTournaments());
+      setTournaments(tournamentService.getTournaments('All Games', 'All', true));
     };
     const unsubService = tournamentService.subscribe(sync);
     const unsubRegistry = tournamentConfigRegistry.subscribe(sync);
@@ -125,7 +125,7 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
       .filter((t) => {
         // 1. Authoritative public discovery rule:
         // Tournament must be visibility == PUBLIC and lifecycle is discoverable
-        // (unless current user is an organiser/admin, or created the tournament)
+        // (unless current user is an organiser/admin, or created the tournament, or is a dedicated test tournament)
         const isMine = Boolean(
           currentUser.id && (
             (t as any).organiserId === currentUser.id ||
@@ -134,7 +134,8 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
             (currentUser.email && (t as any).organizerEmail && (t as any).organizerEmail.toLowerCase().trim() === currentUser.email.toLowerCase().trim())
           )
         );
-        if (!isPubliclyDiscoverable(t) && !isOrganiserOrAdmin && !isMine) {
+        const isTestTourney = Boolean(t.testMode || (t as any).environment === 'TEST TOURNAMENT' || t.id === 'purple-bean-auction-test');
+        if (!isPubliclyDiscoverable(t) && !isOrganiserOrAdmin && !isMine && !isTestTourney) {
           return false;
         }
 
@@ -334,11 +335,16 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
                       <Gamepad2 className="w-3 h-3" />
                       {tourney.game}
                     </span>
-                    {Boolean(tourney.isDevelopment || tourney.visibility === 'DEVELOPMENT' || tourney.id === 'auction-test') && (
+                    {Boolean(tourney.testMode || (tourney as any).environment === 'TEST TOURNAMENT' || tourney.id === 'purple-bean-auction-test') ? (
+                      <span className="font-mono text-[10px] font-black uppercase bg-black text-[#FFE600] px-2 py-0.5 border border-black shadow-[1px_1px_0px_0px_#000] flex items-center gap-1">
+                        <FlaskConical className="w-3 h-3 text-[#FFE600]" />
+                        TEST TOURNAMENT · testMode
+                      </span>
+                    ) : Boolean(tourney.isDevelopment || tourney.visibility === 'DEVELOPMENT' || tourney.id === 'auction-test') ? (
                       <span className="font-mono text-[10px] font-black uppercase bg-[#F3E8FF] text-[#7C3AED] px-2 py-0.5 border border-black shadow-[1px_1px_0px_0px_#000]">
                         DEVELOPMENT / TEST
                       </span>
-                    )}
+                    ) : null}
                   </div>
 
                   <span className={`font-mono text-xs font-black uppercase px-2.5 py-0.5 border border-black shadow-[1px_1px_0px_0px_#000] ${

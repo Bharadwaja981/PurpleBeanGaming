@@ -27,6 +27,62 @@ import {
   fetchDiscordUserProfile,
   provisionDiscordGuildAndRole
 } from './discordProvisioningService';
+import {
+  submitTournamentRegistrationAuthoritative,
+  withdrawTournamentRegistrationAuthoritative,
+  reviewTournamentRegistrationAuthoritative,
+  selectTournamentCaptainAuthoritative,
+  removeTournamentCaptainAuthoritative,
+  setTournamentLifecycleAuthoritative,
+  checkAuctionReadinessContract,
+  restoreTeamFromEliminationAuthoritative,
+  inMemoryRegistrations,
+  inMemoryCaptains,
+  inMemoryLifecycles
+} from './tournamentRegistrationOperations';
+import {
+  startAuctionSessionAuthoritative,
+  nominatePlayerAuthoritative,
+  placeBidAuthoritative,
+  finalizeNominationLotAuthoritative,
+  reintroduceUnsoldPlayerAuthoritative,
+  startStandInPhaseAuthoritative,
+  handleAuctionCompletedAuthoritative,
+  finalizeAuctionTeamsAuthoritative,
+  updateTeamBrandingAuthoritative,
+  executeAuctionCorrectionAuthoritative,
+  resolveCaptainAuthorization,
+  inMemoryAuctionSessions
+} from './tournamentAuctionOperations';
+import {
+  validateAuctionRuntimeIntegrity,
+  AuthoritativeAuctionSession
+} from '../domain/tournamentAuctionEngine';
+import {
+  syncDiscordTournamentRoles,
+  cleanupEliminatedTeamDiscordRoles,
+  cleanupTournamentCompletionDiscordRoles,
+  retryPendingDiscordSyncJobs,
+  inMemoryParticipants,
+  inMemoryTournamentTeams
+} from './discordTournamentSyncService';
+import {
+  evaluateRegistrationEligibility
+} from '../domain/tournamentRegistrationEngine';
+import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
+import {
+  seedTestPlayers,
+  seedTestCaptains,
+  assignTestCaptainsToSlots,
+  resetAuctionTestData,
+  deleteTestFixtures,
+  runAuctionIntegrityCheck,
+  executeImpersonatedCaptainAction,
+  getTestCaptainActionAudits,
+  isTournamentInTestMode,
+  DUMMY_TEST_PLAYERS,
+  DUMMY_TEST_CAPTAINS
+} from './auctionTestTools';
 
 export const apiRouter = Router();
 
@@ -1399,6 +1455,1234 @@ apiRouter.post(['/admin/bootstrap', '/bootstrap'], async (req: Request, res: Res
     });
   }
 });
+
+/**
+ * -------------------------------------------------------------
+ * 6. TOURNAMENT REGISTRATION, ELIGIBILITY & CAPTAIN SELECTION PIPELINE
+ * -------------------------------------------------------------
+ */
+
+function checkOrganizerAuthorization(decoded: { uid: string; email?: string }): void {
+  const cleanEmail = (decoded.email || '').toLowerCase().trim();
+  const organizers = ['11106cm009@gmail.com', 'neelapuharsha@gmail.com'];
+  if (organizers.includes(cleanEmail)) return;
+
+  const acc = pbgAccountRegistry.getAccountByEmail(cleanEmail) || pbgAccountRegistry.getAccountByUid(decoded.uid);
+  if (acc && ((acc as any).isAdmin || (acc as any).isPrimaryAdmin || (acc as any).isModerator)) return;
+
+  throw new Error('ORGANIZER_PERMISSION_REQUIRED: Only authorized tournament organisers can execute this action.');
+}
+
+/**
+ * Player: Submit Registration
+ */
+apiRouter.post('/tournaments/:tournamentId/register', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    const tournamentId = req.params.tournamentId;
+    const formData = req.body || {};
+
+    const registration = await submitTournamentRegistrationAuthoritative({
+      userId: decoded.uid,
+      tournamentId,
+      formData: {
+        declaredMMR: Number(formData.declaredMMR) || 5000,
+        tournamentMMR: Number(formData.tournamentMMR) || Number(formData.declaredMMR) || 5000,
+        primaryRole: formData.primaryRole || 'Position 1 — Carry',
+        secondaryRole: formData.secondaryRole || 'Position 2 — Mid',
+        captainApplicant: Boolean(formData.captainApplicant),
+        availabilityConfirmed: Boolean(formData.availabilityConfirmed),
+        rulesAccepted: Boolean(formData.rulesAccepted),
+        customFields: formData.customFields || {}
+      }
+    });
+
+    return res.status(201).json({
+      ok: true,
+      success: true,
+      registration
+    });
+  } catch (err: any) {
+    const msg = err.message || 'Registration failed';
+    const status = msg.includes('SIGN_IN_REQUIRED') ? 401 
+      : (msg.includes('REGISTRATION_CLOSED') || msg.includes('DISCORD_REQUIRED') || msg.includes('ALREADY_REGISTERED') ? 400 : 500);
+    return res.status(status).json({
+      ok: false,
+      success: false,
+      error: msg
+    });
+  }
+});
+
+/**
+ * Player: Withdraw Registration
+ */
+apiRouter.post('/tournaments/:tournamentId/withdraw', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    const tournamentId = req.params.tournamentId;
+
+    const registration = await withdrawTournamentRegistrationAuthoritative({
+      userId: decoded.uid,
+      tournamentId
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      registration
+    });
+  } catch (err: any) {
+    const msg = err.message || 'Withdrawal failed';
+    const status = msg.includes('SIGN_IN_REQUIRED') ? 401 : 400;
+    return res.status(status).json({
+      ok: false,
+      success: false,
+      error: msg
+    });
+  }
+});
+
+/**
+ * Player: Get My Registration
+ */
+apiRouter.get('/tournaments/:tournamentId/registration/me', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    const tournamentId = req.params.tournamentId;
+
+    const regMap = inMemoryRegistrations.get(tournamentId);
+    const reg = regMap?.get(decoded.uid) || null;
+
+    const pMap = inMemoryParticipants.get(tournamentId);
+    const participant = pMap?.get(decoded.uid) || null;
+
+    return res.json({
+      ok: true,
+      success: true,
+      registration: reg,
+      participant
+    });
+  } catch (err: any) {
+    return res.status(401).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Player: Evaluate My Eligibility
+ */
+apiRouter.get('/tournaments/:tournamentId/eligibility/me', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    const tournamentId = req.params.tournamentId;
+
+    const pbgAccount = pbgAccountRegistry.getAccountByUid(decoded.uid) || 
+      pbgAccountRegistry.getAllAccounts().find(a => a.googleUid === decoded.uid || a.pbgId === decoded.uid) || null;
+
+    const lifecycle = inMemoryLifecycles.get(tournamentId) || 'REGISTRATION_OPEN';
+    const regMap = inMemoryRegistrations.get(tournamentId);
+    const allRegs = regMap ? Array.from(regMap.values()) : [];
+
+    const eligibility = evaluateRegistrationEligibility({
+      userId: decoded.uid,
+      tournamentId,
+      pbgAccount: pbgAccount ? {
+        pbgId: pbgAccount.pbgId,
+        displayName: pbgAccount.displayName,
+        email: pbgAccount.email,
+        accountStatus: pbgAccount.accountStatus,
+        dotaAccountLinked: pbgAccount.dotaAccountLinked,
+        dotaAccountVerified: pbgAccount.dotaAccountVerified,
+        dotaAccountId: pbgAccount.dotaAccountId,
+        steamId: pbgAccount.steamId,
+        discordLinked: pbgAccount.discordLinked,
+        discordUserId: pbgAccount.discordUserId,
+        discordUsername: pbgAccount.discordUsername,
+        pbgMemberRoleActive: pbgAccount.discordMemberVerified !== false,
+        isBanned: pbgAccount.accountStatus === 'BANNED'
+      } : null,
+      tournament: {
+        id: tournamentId,
+        status: 'OPEN',
+        registrationLifecycle: lifecycle,
+        discordRequired: true,
+        dotaRequired: true
+      },
+      formData: {
+        declaredMMR: pbgAccount?.declaredMmr || 5000,
+        primaryRole: pbgAccount?.primaryRole || 'Position 1 — Carry',
+        secondaryRole: pbgAccount?.secondaryRole || 'Position 2 — Mid',
+        captainApplicant: false,
+        availabilityConfirmed: true,
+        rulesAccepted: true
+      },
+      existingRegistrations: allRegs
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      pbgAccount: pbgAccount ? {
+        pbgId: pbgAccount.pbgId,
+        displayName: pbgAccount.displayName,
+        dotaAccountLinked: pbgAccount.dotaAccountLinked,
+        dotaAccountId: pbgAccount.dotaAccountId,
+        discordLinked: pbgAccount.discordLinked,
+        discordUsername: pbgAccount.discordUsername,
+        pbgMemberRoleActive: pbgAccount.discordMemberVerified !== false
+      } : null,
+      eligibility
+    });
+  } catch (err: any) {
+    return res.status(401).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Organiser: List all registrations
+ */
+apiRouter.get('/tournaments/:tournamentId/registrations', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const regMap = inMemoryRegistrations.get(tournamentId);
+    const registrations = regMap ? Array.from(regMap.values()) : [];
+
+    const pMap = inMemoryParticipants.get(tournamentId);
+    const participants = pMap ? Array.from(pMap.values()) : [];
+
+    return res.json({
+      ok: true,
+      success: true,
+      registrations,
+      participants
+    });
+  } catch (err: any) {
+    const status = err.message.includes('ORGANIZER_PERMISSION_REQUIRED') ? 403 : 401;
+    return res.status(status).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Organiser: Review registration (APPROVE, REJECT, UNDER_REVIEW, WAITLIST, SET_TOURNAMENT_MMR, DISQUALIFY)
+ */
+apiRouter.post('/tournaments/:tournamentId/registrations/:targetUserId/review', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const targetUserId = req.params.targetUserId;
+    const { action, tournamentMMR, notes, rejectionReason } = req.body || {};
+
+    const result = await reviewTournamentRegistrationAuthoritative({
+      organizerUserId: decoded.uid,
+      tournamentId,
+      targetUserId,
+      action,
+      tournamentMMR,
+      notes,
+      rejectionReason
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      registration: result.registration,
+      participant: result.participant
+    });
+  } catch (err: any) {
+    const status = err.message.includes('ORGANIZER_PERMISSION_REQUIRED') ? 403 : 400;
+    return res.status(status).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Organiser: List Captain Applicants
+ */
+apiRouter.get('/tournaments/:tournamentId/captain-candidates', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const pMap = inMemoryParticipants.get(tournamentId);
+    const participants = pMap ? Array.from(pMap.values()) : [];
+
+    const regMap = inMemoryRegistrations.get(tournamentId);
+    const candidates = participants.filter(p => {
+      const reg = regMap?.get(p.userId);
+      return reg?.captainApplicant === true && p.participantStatus === 'ACTIVE';
+    });
+
+    const slotMap = inMemoryCaptains.get(tournamentId);
+    const slots = slotMap ? Array.from(slotMap.values()) : [];
+
+    return res.json({
+      ok: true,
+      success: true,
+      candidates,
+      selectedCaptains: slots
+    });
+  } catch (err: any) {
+    return res.status(403).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Organiser: Select Captain for Slot
+ */
+apiRouter.post('/tournaments/:tournamentId/captains/select', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const { targetUserId, captainSlotId } = req.body || {};
+
+    if (!targetUserId || !captainSlotId) {
+      return res.status(400).json({ ok: false, error: 'targetUserId and captainSlotId are required.' });
+    }
+
+    const result = await selectTournamentCaptainAuthoritative({
+      organizerUserId: decoded.uid,
+      tournamentId,
+      targetUserId,
+      captainSlotId
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      participant: result.participant,
+      slot: result.slot
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Organiser: Remove Captain from Slot
+ */
+apiRouter.post('/tournaments/:tournamentId/captains/remove', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const { targetUserId, captainSlotId } = req.body || {};
+
+    const participant = await removeTournamentCaptainAuthoritative({
+      organizerUserId: decoded.uid,
+      tournamentId,
+      targetUserId,
+      captainSlotId
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      participant
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Organiser: Set Registration Lifecycle
+ */
+apiRouter.post('/tournaments/:tournamentId/lifecycle', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const { lifecycle } = req.body || {};
+
+    const result = setTournamentLifecycleAuthoritative({
+      tournamentId,
+      newLifecycle: lifecycle
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      lifecycle: result.lifecycle,
+      readiness: result.readiness
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Auction Readiness Inspection Contract
+ */
+apiRouter.get('/tournaments/:tournamentId/auction-readiness', async (req: Request, res: Response) => {
+  try {
+    const tournamentId = req.params.tournamentId;
+    const readiness = checkAuctionReadinessContract(tournamentId);
+
+    return res.json({
+      ok: true,
+      success: true,
+      readiness
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Discord Tournament Role Sync Trigger
+ */
+apiRouter.post('/tournaments/:tournamentId/discord/sync', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    const tournamentId = req.params.tournamentId;
+    const { userId = decoded.uid } = req.body || {};
+
+    // Only self or organizer can trigger
+    if (userId !== decoded.uid) {
+      checkOrganizerAuthorization(decoded);
+    }
+
+    const result = await syncDiscordTournamentRoles({
+      userId,
+      tournamentId
+    });
+
+    return res.json({
+      ok: result.success,
+      success: result.success,
+      result
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Retry Pending Discord Sync Jobs
+ */
+apiRouter.post('/tournaments/:tournamentId/discord/retry-jobs', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const result = await retryPendingDiscordSyncJobs({ tournamentId });
+
+    return res.json({
+      ok: true,
+      success: true,
+      result
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Tournament Completion Discord Cleanup (Safe to run multiple times)
+ */
+apiRouter.post('/tournaments/:tournamentId/discord/cleanup-completion', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const teamMap = inMemoryTournamentTeams.get(tournamentId);
+    const teams = teamMap ? Array.from(teamMap.values()) : [];
+
+    const pMap = inMemoryParticipants.get(tournamentId);
+    const participants = pMap ? Array.from(pMap.values()) : [];
+
+    const result = await cleanupTournamentCompletionDiscordRoles({
+      tournamentId,
+      teams,
+      participants
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      result
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Restore Team from Elimination after Match Result Correction
+ */
+apiRouter.post('/tournaments/:tournamentId/teams/:teamId/restore-elimination', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const teamId = req.params.teamId;
+
+    const result = await restoreTeamFromEliminationAuthoritative({
+      tournamentId,
+      teamId
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      team: result.team,
+      restoredParticipants: result.restoredParticipants
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+// =============================================================================
+// AUTHORITATIVE TOURNAMENT AUCTION PIPELINE
+// Consumes authoritative registrations, participants, captains & readiness gate
+// =============================================================================
+
+/**
+ * Start Authoritative Auction Session (Organizer Only, Enforces AUCTION_READY)
+ */
+apiRouter.post('/tournaments/:tournamentId/auction/start', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const { configOverride } = req.body || {};
+
+    const { session, integrity } = await startAuctionSessionAuthoritative({
+      tournamentId,
+      actorUserId: decoded.uid,
+      configOverride
+    });
+
+    // Also update existing SSE snapshot for live UI broadcast
+    auctionSnapshots.set(tournamentId, {
+      state: session,
+      teams: Object.values(session.teams),
+      players: Object.values(session.players),
+      lastServerUpdatedAt: Date.now()
+    });
+    broadcastToAuctionRoom(tournamentId, 'AUCTION_STARTED', session);
+
+    return res.status(201).json({
+      ok: true,
+      success: true,
+      session,
+      integrity
+    });
+  } catch (err: any) {
+    const status = err.message.includes('ORGANIZER_PERMISSION_REQUIRED') ? 403 : 400;
+    return res.status(status).json({
+      ok: false,
+      success: false,
+      error: err.message,
+      blockers: err.blockers
+    });
+  }
+});
+
+/**
+ * Get Authoritative Auction Session State
+ */
+apiRouter.get('/tournaments/:tournamentId/auction/session', async (req: Request, res: Response) => {
+  try {
+    const tournamentId = req.params.tournamentId;
+    const session = inMemoryAuctionSessions.get(tournamentId);
+
+    if (!session) {
+      return res.status(404).json({
+        ok: false,
+        success: false,
+        error: 'AUCTION_NOT_FOUND: No active auction session found for this tournament.'
+      });
+    }
+
+    return res.json({
+      ok: true,
+      success: true,
+      session
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Nominate Player (Selected Captain or Organizer Override)
+ */
+apiRouter.post('/tournaments/:tournamentId/auction/nominate', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    const tournamentId = req.params.tournamentId;
+    const { playerId, openingBid, isOrganiserOverride, actingAsTestCaptainUserId } = req.body || {};
+
+    if (!playerId) {
+      return res.status(400).json({ ok: false, error: 'playerId is required for nomination.' });
+    }
+
+    let session: AuthoritativeAuctionSession;
+    if (actingAsTestCaptainUserId) {
+      checkOrganizerAuthorization(decoded);
+      const resAudit = await executeImpersonatedCaptainAction({
+        tournamentId,
+        actorAdminUserId: decoded.uid,
+        actingAsTestCaptainUserId,
+        action: {
+          type: 'NOMINATE',
+          playerId,
+          openingBid
+        }
+      });
+      session = resAudit.result;
+    } else {
+      session = await nominatePlayerAuthoritative({
+        tournamentId,
+        actorUserId: decoded.uid,
+        playerId,
+        openingBid,
+        isOrganiserOverride: Boolean(isOrganiserOverride && (decoded.email === '11106cm009@gmail.com' || (decoded as any).isAdmin))
+      });
+    }
+
+    broadcastToAuctionRoom(tournamentId, 'PLAYER_NOMINATED', session);
+
+    return res.json({
+      ok: true,
+      success: true,
+      session
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Place Bid (Authenticated Captain Only, Or Audited Test Captain Impersonation by Admin)
+ */
+apiRouter.post('/tournaments/:tournamentId/auction/bid', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    const tournamentId = req.params.tournamentId;
+    const { amount, actingAsTestCaptainUserId } = req.body || {};
+
+    if (!amount || typeof amount !== 'number') {
+      return res.status(400).json({ ok: false, error: 'Valid numerical bid amount is required.' });
+    }
+
+    let session: AuthoritativeAuctionSession;
+    let bidRecord: any;
+
+    if (actingAsTestCaptainUserId) {
+      checkOrganizerAuthorization(decoded);
+      const resAudit = await executeImpersonatedCaptainAction({
+        tournamentId,
+        actorAdminUserId: decoded.uid,
+        actingAsTestCaptainUserId,
+        action: {
+          type: 'BID',
+          bidAmount: amount
+        }
+      });
+      session = resAudit.result.session;
+      bidRecord = resAudit.result.bidRecord;
+    } else {
+      const res = await placeBidAuthoritative({
+        tournamentId,
+        actorUserId: decoded.uid,
+        bidAmount: amount
+      });
+      session = res.session;
+      bidRecord = res.bidRecord;
+    }
+
+    broadcastToAuctionRoom(tournamentId, 'BID_PLACED', { session, bidRecord });
+
+    return res.json({
+      ok: true,
+      success: true,
+      session,
+      bidRecord
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Finalize Nomination Lot (Hammer Strike: Sold or Unsold)
+ */
+apiRouter.post('/tournaments/:tournamentId/auction/pass-lot', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    const tournamentId = req.params.tournamentId;
+    const { forceUnsold } = req.body || {};
+
+    const { session, result, player, team } = await finalizeNominationLotAuthoritative({
+      tournamentId,
+      actorUserId: decoded.uid,
+      forceUnsold: Boolean(forceUnsold)
+    });
+
+    broadcastToAuctionRoom(tournamentId, result === 'SOLD' ? 'PLAYER_SOLD' : 'PLAYER_UNSOLD', {
+      session,
+      result,
+      player,
+      team
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      session,
+      result,
+      player,
+      team
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Reintroduce Unsold Player (Organizer Only, Enforces Pool Exhaustion Rule)
+ */
+apiRouter.post('/tournaments/:tournamentId/auction/reintroduce-unsold', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const { playerId, forceOverride } = req.body || {};
+
+    const session = await reintroduceUnsoldPlayerAuthoritative({
+      tournamentId,
+      actorUserId: decoded.uid,
+      playerId,
+      forceOverride: Boolean(forceOverride)
+    });
+
+    broadcastToAuctionRoom(tournamentId, 'PLAYER_REINTRODUCED', session);
+
+    return res.json({
+      ok: true,
+      success: true,
+      session
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Start Stand-in Phase (Organizer Only, Enforces Primary Rosters Complete)
+ */
+apiRouter.post('/tournaments/:tournamentId/auction/start-standin', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const session = await startStandInPhaseAuthoritative({
+      tournamentId,
+      actorUserId: decoded.uid
+    });
+
+    broadcastToAuctionRoom(tournamentId, 'STANDIN_PHASE_STARTED', session);
+
+    return res.json({
+      ok: true,
+      success: true,
+      session
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Auction Completion (Organizer Only, Handles UNSELECTED vs UNSOLD)
+ */
+apiRouter.post('/tournaments/:tournamentId/auction/complete', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const { session, totalSold, totalUnsold, totalUnselected } = await handleAuctionCompletedAuthoritative({
+      tournamentId,
+      actorUserId: decoded.uid
+    });
+
+    broadcastToAuctionRoom(tournamentId, 'AUCTION_COMPLETED', session);
+
+    return res.json({
+      ok: true,
+      success: true,
+      session,
+      totalSold,
+      totalUnsold,
+      totalUnselected
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Finalize Teams & Discord Team Role Integration
+ */
+apiRouter.post('/tournaments/:tournamentId/auction/finalize-teams', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const { finalizedTeams, discordRolesCreated } = await finalizeAuctionTeamsAuthoritative({
+      tournamentId,
+      actorUserId: decoded.uid
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      finalizedTeams,
+      discordRolesCreated
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Update Team Branding (Captain of Team or Organizer)
+ */
+apiRouter.post('/tournaments/:tournamentId/auction/team-branding', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    const tournamentId = req.params.tournamentId;
+    const { teamId, branding } = req.body || {};
+
+    const isOrganiser = decoded.email === '11106cm009@gmail.com' || (decoded as any).isAdmin;
+    const team = await updateTeamBrandingAuthoritative({
+      tournamentId,
+      actorUserId: decoded.uid,
+      teamId,
+      branding: branding || {},
+      isOrganiser
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      team
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Audited Organizer Auction Corrections
+ */
+apiRouter.post('/tournaments/:tournamentId/auction/correct', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const { action, payload } = req.body || {};
+
+    const session = await executeAuctionCorrectionAuthoritative({
+      tournamentId,
+      actorUserId: decoded.uid,
+      action,
+      payload: payload || {}
+    });
+
+    broadcastToAuctionRoom(tournamentId, 'AUCTION_CORRECTION', session);
+
+    return res.json({
+      ok: true,
+      success: true,
+      session
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Inspect Runtime Auction Integrity
+ */
+apiRouter.get('/tournaments/:tournamentId/auction/integrity', async (req: Request, res: Response) => {
+  try {
+    const tournamentId = req.params.tournamentId;
+    const session = inMemoryAuctionSessions.get(tournamentId);
+
+    if (!session) {
+      return res.status(404).json({
+        ok: false,
+        success: false,
+        error: 'AUCTION_NOT_FOUND: No active auction session found.'
+      });
+    }
+
+    const integrity = validateAuctionRuntimeIntegrity(session);
+
+    return res.json({
+      ok: true,
+      success: true,
+      integrity
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * -------------------------------------------------------------
+ * TEST TOOLS API ENDPOINTS (ORGANIZER & ADMIN ONLY, TESTMODE ONLY)
+ * -------------------------------------------------------------
+ */
+
+// 1. Seed Test Players
+apiRouter.post('/tournaments/:tournamentId/test-tools/seed-players', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const result = seedTestPlayers(tournamentId);
+
+    return res.json({
+      ok: true,
+      success: true,
+      result
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+// 2. Seed Test Captains
+apiRouter.post('/tournaments/:tournamentId/test-tools/seed-captains', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const result = seedTestCaptains(tournamentId);
+
+    return res.json({
+      ok: true,
+      success: true,
+      result
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+// 3. Assign Test Captains to Slots 2 & 3
+apiRouter.post('/tournaments/:tournamentId/test-tools/assign-captains', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const result = assignTestCaptainsToSlots(tournamentId);
+
+    return res.json({
+      ok: true,
+      success: true,
+      result
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+// 4. Reset Auction Test Data
+apiRouter.post('/tournaments/:tournamentId/test-tools/reset-test-data', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const { fullResetIncludingReal } = req.body || {};
+    const result = resetAuctionTestData(tournamentId, Boolean(fullResetIncludingReal));
+
+    return res.json({
+      ok: true,
+      success: true,
+      result
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+// 5. Delete Test Fixtures
+apiRouter.post('/tournaments/:tournamentId/test-tools/delete-fixtures', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const result = deleteTestFixtures(tournamentId);
+
+    return res.json({
+      ok: true,
+      success: true,
+      result
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+// 6. Run Auction Integrity Check
+apiRouter.get('/tournaments/:tournamentId/test-tools/integrity-check', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const result = runAuctionIntegrityCheck(tournamentId);
+
+    return res.json({
+      ok: true,
+      success: true,
+      result
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+// 7. Control Test Captain Action (Audited)
+apiRouter.post('/tournaments/:tournamentId/test-tools/control-captain', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const { actingAsTestCaptainUserId, action } = req.body || {};
+
+    if (!actingAsTestCaptainUserId || !action) {
+      return res.status(400).json({ ok: false, error: 'actingAsTestCaptainUserId and action object are required.' });
+    }
+
+    const result = await executeImpersonatedCaptainAction({
+      tournamentId,
+      actorAdminUserId: decoded.uid,
+      actingAsTestCaptainUserId,
+      action
+    });
+
+    return res.json({
+      ok: true,
+      success: true,
+      result
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+// 8. View Test Identities & Audits
+apiRouter.get('/tournaments/:tournamentId/test-tools/identities', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const audits = getTestCaptainActionAudits(tournamentId);
+
+    return res.json({
+      ok: true,
+      success: true,
+      testPlayers: DUMMY_TEST_PLAYERS,
+      testCaptains: DUMMY_TEST_CAPTAINS,
+      audits
+    });
+  } catch (err: any) {
+    return res.status(400).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
 
 
 

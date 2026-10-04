@@ -24,7 +24,8 @@ import {
   Trash2,
   StopCircle,
   RefreshCw,
-  Check
+  Check,
+  FlaskConical
 } from 'lucide-react';
 import { AdminTournamentPlayerManagerModal } from '../components/AdminTournamentPlayerManagerModal';
 import { DoubleEliminationBracket } from '../components/DoubleEliminationBracket';
@@ -253,6 +254,12 @@ export function TournamentDetailView({
               <MapPin className="w-3.5 h-3.5" />
               {tournament.region} {tournament.city ? `· ${tournament.city}` : ''}
             </span>
+            {(tournament.testMode || (tournament as any).environment === 'TEST TOURNAMENT' || tournament.id === 'purple-bean-auction-test') && (
+              <span className="bg-black text-[#FFE600] border-2 border-black px-3 py-1 uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1 font-black">
+                <FlaskConical className="w-3.5 h-3.5 text-[#FFE600]" />
+                TEST TOURNAMENT · testMode: active
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-3">

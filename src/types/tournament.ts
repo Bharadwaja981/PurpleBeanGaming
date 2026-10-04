@@ -61,6 +61,10 @@ export interface UserSession {
 
 export interface Player {
   id: string;
+  pbgId?: string;
+  email?: string;
+  dotaAccountId?: string;
+  steamId?: string;
   username: string;
   displayName?: string;
   realName: string;
@@ -161,6 +165,8 @@ export interface Tournament {
   prizeDistribution: Array<{ place: string; amount: string; percentage: string }>;
   stages: TournamentStage[];
   isDevelopment?: boolean;
+  testMode?: boolean;
+  environment?: string;
   visibility?: 'PUBLIC' | 'DEVELOPMENT' | 'UNLISTED' | 'DRAFT' | 'PRIVATE' | string;
   config?: any;
   deleted?: boolean;

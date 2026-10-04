@@ -30,28 +30,23 @@ export const CANONICAL_PUBLIC_STATUSES = new Set([
 
 export const LEGACY_MOCK_TOURNAMENT_IDS = new Set([
   '2-team-auction-test',
-  'purple-bean-auction-test',
-  'auction-test',
   'purple-bean-test-cup',
   'auction-basic-test-1',
   'basic-test-1',
   'tourney-mumnc5ax',
-  'pb-tourney-1790757456408',
-  'purple-bean-india-masters-2026'
+  'pb-tourney-1790757456408'
 ]);
 
 export function isTestTournament(tournament: any): boolean {
   if (!tournament) return false;
-  const idLower = (tournament.id || '').toLowerCase();
+  const rawId = typeof tournament === 'string' ? tournament : (tournament.id || tournament.tournamentId || '');
+  const idLower = rawId.toLowerCase();
 
   if (
-    (tournament as any).isDevelopment === true ||
-    (tournament as any).isSynthetic === true ||
-    (tournament as any).isDummy === true ||
-    (tournament as any).deleted === true ||
-    (tournament as any).status === 'DELETED' ||
-    (tournament as any).status === 'deleted' ||
-    (tournament as any).lifecycle === 'CANCELLED_DELETED'
+    (typeof tournament === 'object' && tournament.testMode === true) ||
+    idLower === 'purple-bean-auction-test' ||
+    (typeof tournament === 'object' && (tournament.isDevelopment === true || tournament.isSynthetic === true || tournament.isDummy === true)) ||
+    (typeof tournament === 'object' && (tournament.deleted === true || tournament.status === 'DELETED' || tournament.status === 'deleted' || tournament.lifecycle === 'CANCELLED_DELETED'))
   ) {
     return true;
   }
@@ -65,9 +60,12 @@ export function isTestTournament(tournament: any): boolean {
 
 export function isTestPlayer(player: any): boolean {
   if (!player) return false;
-  const idLower = (player.id || player.userId || '').toLowerCase();
+  const idLower = (player.id || player.userId || player.pbgId || '').toLowerCase();
 
   return (
+    (player as any).isTestAccount === true ||
+    (player as any).source === 'TEST_SEED' ||
+    idLower.startsWith('pbg-test-') ||
     idLower.startsWith('dummy-') ||
     idLower.startsWith('p-tc-') ||
     idLower.startsWith('tc-') ||
@@ -189,6 +187,10 @@ export function isPubliclyDiscoverable(tournament: Tournament): boolean {
   if (!tournament) return false;
   if ((tournament as any).deleted === true || (tournament.status as any) === 'DELETED') {
     return false;
+  }
+  const rawId = (tournament.id || (tournament as any).tournamentId || '').toLowerCase();
+  if (rawId === 'purple-bean-auction-test' || rawId === 'auction-test') {
+    return true;
   }
   if (isTestTournament(tournament)) {
     return false;
@@ -448,12 +450,47 @@ export function normalizePlayerRecord(raw: any): Player {
     ? raw.mmr 
     : (typeof raw.tournamentMmr === 'number' ? raw.tournamentMmr : (typeof raw.declaredMmr === 'number' ? raw.declaredMmr : 5000));
 
+  const rawId = String(raw.id || raw.userId || '');
+  let pbgId = raw.pbgId;
+  if (!pbgId) {
+    if (rawId === 'dCZd7IjKpxYDBjTQe5FUhccuX583' || raw.email?.toLowerCase() === 'myana.santhosh@gmail.com') {
+      pbgId = 'PBG-000188';
+    } else if (rawId === 'wUyRsN0f40bYdyCpLp6UNeIJjpD3' || raw.email?.toLowerCase() === '11106cm009@gmail.com') {
+      pbgId = 'PBG-000186';
+    } else if (rawId.startsWith('PBG-')) {
+      pbgId = rawId;
+    } else if (rawId.startsWith('p-')) {
+      const matchNum = rawId.match(/\d+/)?.[0];
+      if (matchNum) {
+        pbgId = `PBG-${matchNum.padStart(6, '0')}`;
+      }
+    }
+  }
+
+  // Name normalization
+  let username = raw.username || raw.ign || raw.steamPersonaName || raw.displayName;
+  let displayName = raw.displayName || raw.username || raw.ign || raw.steamPersonaName;
+  let realName = raw.realName || raw.displayName || raw.username || raw.ign;
+
+  if (pbgId === 'PBG-000188' || rawId === 'dCZd7IjKpxYDBjTQe5FUhccuX583' || raw.email?.toLowerCase() === 'myana.santhosh@gmail.com') {
+    pbgId = 'PBG-000188';
+    username = (!username || username === 'Player') ? 'Santhosh Myana' : username;
+    displayName = (!displayName || displayName === 'Player') ? 'Santhosh Myana' : displayName;
+    realName = (!realName || realName === 'Player') ? 'Santhosh Myana' : realName;
+  } else if (pbgId === 'PBG-000186' || rawId === 'wUyRsN0f40bYdyCpLp6UNeIJjpD3' || raw.email?.toLowerCase() === '11106cm009@gmail.com') {
+    pbgId = 'PBG-000186';
+    username = (!username || username === 'Player') ? 'Bharadwaja Anisetti' : username;
+    displayName = (!displayName || displayName === 'Player') ? 'Bharadwaja Anisetti' : displayName;
+    realName = (!realName || realName === 'Player') ? 'Bharadwaja Anisetti' : realName;
+  }
+
   return {
     ...raw,
-    id: raw.id || raw.userId || `p-${Date.now()}`,
-    username: raw.username || raw.ign || 'Player',
-    displayName: raw.displayName || raw.username || raw.ign || 'Player',
-    realName: raw.realName || raw.username || raw.ign || 'Player',
+    id: raw.id || raw.userId || pbgId || `p-${Date.now()}`,
+    pbgId,
+    username: username || 'Player',
+    displayName: displayName || username || 'Player',
+    realName: realName || displayName || username || 'Player',
     avatar: raw.avatar || '🎮',
     country: raw.country || 'India',
     flag: raw.flag || '🇮🇳',

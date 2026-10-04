@@ -35,6 +35,7 @@ export interface PBGPlayerAccount {
   googleUid: string;
   email: string;
   displayName: string;
+  realName?: string;
   avatarUrl: string;
   createdAt: string; // ISO timestamp
   updatedAt: string;
@@ -60,12 +61,15 @@ export interface PBGPlayerAccount {
   discordAvatar?: string;
   discordLinked: boolean;
   discordLinkedAt?: string;
+  discordMemberVerified?: boolean;
+  pbgMemberRoleActive?: boolean;
 
   // Steam & Dota Account Identity (Section 10 & 11)
   steamId?: string; // 17-digit Steam64 ID (e.g., "76561198012345678")
   dotaAccountId?: string; // 32-bit Dota ID / Friend Code (e.g., "52079950")
   dotaDisplayName?: string;
   dotaAvatar?: string;
+  dotaMmr?: number | null;
   steamPersonaName?: string;
   steamProfileUrl?: string;
   openDotaProfile?: string; // e.g., "https://www.opendota.com/players/52079950"
@@ -96,6 +100,8 @@ export interface PBGPlayerAccount {
   lossesCount: number;
   teamsCount: number;
   captainCount: number;
+  isTestAccount?: boolean;
+  source?: string;
   tournamentHistory: Array<{
     id: string;
     name: string;

@@ -26,7 +26,8 @@ import {
   Plus,
   UserPlus,
   Bot,
-  Crown
+  Crown,
+  FlaskConical
 } from 'lucide-react';
 import { TournamentConfig, formatINR } from '../domain/tournamentConfig';
 import { GenericTournamentEngine } from '../domain/genericTournamentEngine';
@@ -34,6 +35,7 @@ import { PremadeTeamApplication } from '../domain/premadeTeamEngine';
 import { CompetitionMatch } from '../domain/genericCompetitionEngine';
 import { ratingLedger, RatingAdjustmentRecord } from '../domain/competitiveRatingEngine';
 import { TestCupLifecycleConsole } from './TestCupLifecycleConsole';
+import { OrganizerTestToolsPanel } from './OrganizerTestToolsPanel';
 import { OrganiserRegistrationReview } from './OrganiserRegistrationReview';
 import { AuctionDraft } from './AuctionDraft';
 import { SelectDropdown, DropdownOption } from './ui/Dropdown';
@@ -61,8 +63,15 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
   // Dynamic Workspace for generic / newly created tournaments
   const isPremade = config.registration.registrationMode === 'PREMADE_TEAM';
   const isAuction = config.teamFormation.mode === 'AUCTION';
+  const isTestMode = Boolean(
+    config.identity.testMode ||
+    (config as any).testMode ||
+    config.identity.tournamentId === 'purple-bean-auction-test'
+  );
 
-  const [activeTab, setActiveTab] = useState<string>(isPremade ? 'teams' : 'overview');
+  const [activeTab, setActiveTab] = useState<string>(
+    isTestMode ? 'test_tools' : (isPremade ? 'teams' : 'overview')
+  );
   const [teams, setTeams] = useState(engine.getTeams());
   const [premadeApps, setPremadeApps] = useState<PremadeTeamApplication[]>(engine.getPremadeApplications());
   const [matches, setMatches] = useState<CompetitionMatch[]>(engine.getMatches());
@@ -373,9 +382,31 @@ export const DynamicOrganiserWorkspace: React.FC<DynamicOrganiserWorkspaceProps>
         >
           Audit Ledger ({auditLogs.length})
         </button>
+
+        {isTestMode && (
+          <button
+            onClick={() => setActiveTab('test_tools')}
+            className={`px-4 py-2 font-mono text-xs font-black uppercase border-2 border-black transition-all flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'test_tools'
+                ? 'bg-[#FFE600] text-black shadow-[3px_3px_0px_0px_#000]'
+                : 'bg-yellow-100 hover:bg-yellow-200 text-black font-black'
+            }`}
+          >
+            <FlaskConical className="w-3.5 h-3.5 text-purple-700" />
+            <span>Test Tools</span>
+          </button>
+        )}
       </div>
 
       {/* TAB CONTENT */}
+
+      {/* TEST TOOLS TAB */}
+      {activeTab === 'test_tools' && (
+        <OrganizerTestToolsPanel
+          tournamentId={config.identity.tournamentId}
+          onRefresh={refreshState}
+        />
+      )}
 
       {/* OVERVIEW TAB */}
       {activeTab === 'overview' && (

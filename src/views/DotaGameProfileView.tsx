@@ -36,6 +36,7 @@ import { DotaHeroDetailModal } from '../components/dota/DotaHeroDetailModal';
 import { DotaLinkingModal } from '../components/dota/DotaLinkingModal';
 import { auth } from '../services/firebaseConfig';
 import { fetchSteamLinkStatus } from '../services/steamVerificationClient';
+import { resolvePlayerAccount } from './PlayerProfileView';
 
 // Sub-tabs
 import { DotaOverviewTab } from '../components/dota/tabs/DotaOverviewTab';
@@ -105,20 +106,43 @@ export function DotaGameProfileView({
   onNavigateToPbgProfile,
   onOpenMatchDetail
 }: DotaGameProfileViewProps) {
-  // Target resolver supporting both PBG Accounts and generic OpenDota IDs
+  // Target resolver supporting both PBG Accounts, synthesized contender profiles, and generic OpenDota IDs
   const resolveTarget = (targetId?: string): { dotaId: string; pbgAccount: PBGPlayerAccount | null } => {
-    if (targetId) {
+    if (targetId && targetId.trim()) {
       const clean = targetId.trim();
+
+      // 1. Direct check in PBG Account registry by PBG ID, UID, or Dota ID
       const byPbg = pbgAccountRegistry.getAccountByPbgId(clean);
       if (byPbg) return { dotaId: byPbg.dotaAccountId || '', pbgAccount: byPbg };
+
       const byUid = pbgAccountRegistry.getAccountByUid(clean);
       if (byUid) return { dotaId: byUid.dotaAccountId || '', pbgAccount: byUid };
+
       const byDota = pbgAccountRegistry.getAccountByDotaId(clean);
       if (byDota) return { dotaId: clean, pbgAccount: byDota };
-      if (/^\d+$/.test(clean)) {
-        return { dotaId: clean, pbgAccount: null };
+
+      // 2. Check if clean is a pure numeric string (32-bit Dota friend ID, e.g. 100003031)
+      if (/^\d{5,10}$/.test(clean)) {
+        const resolvedByDota = resolvePlayerAccount(clean);
+        return { 
+          dotaId: clean, 
+          pbgAccount: (resolvedByDota && (resolvedByDota.dotaAccountId === clean || resolvedByDota.pbgId === clean)) ? resolvedByDota : null 
+        };
       }
+
+      // 3. Resolve via multi-tier player resolver (handles registrations, mock players, synthesized PBG accounts)
+      const resolved = resolvePlayerAccount(clean);
+      if (resolved) {
+        return {
+          dotaId: resolved.dotaAccountId || clean,
+          pbgAccount: resolved
+        };
+      }
+
+      return { dotaId: clean, pbgAccount: null };
     }
+
+    // 4. ONLY if NO targetId was passed (viewing own profile via navbar):
     const current = tournamentService.getCurrentPBGAccount();
     if (current && current.dotaAccountId) {
       return { dotaId: current.dotaAccountId, pbgAccount: current };
@@ -136,9 +160,10 @@ export function DotaGameProfileView({
     setActiveDotaId(res.dotaId);
     setActivePbgAccount(res.pbgAccount);
 
-    // If dotaId is not yet linked in local storage, check server-authoritative status
+    // CRITICAL FIX: Only run background server Steam sync if viewing YOUR OWN profile with NO pbgId!
+    // Never run checkSteamSync when inspecting another player's Dota profile!
     const user = auth.currentUser;
-    if (!res.dotaId && user) {
+    if (!pbgId && !res.dotaId && user) {
       fetchSteamLinkStatus(async () => await user.getIdToken().catch(() => ''))
         .then((status) => {
           if (
@@ -194,13 +219,20 @@ export function DotaGameProfileView({
   // Navigation scroll ref
   const navScrollRef = useRef<HTMLDivElement>(null);
 
-  const isOwner = Boolean(
-    activePbgAccount && (
-      tournamentService.getCurrentUser().id === activePbgAccount.googleUid ||
-      tournamentService.getCurrentUser().email === activePbgAccount.email ||
-      tournamentService.getCurrentUser().pbgId === activePbgAccount.pbgId
-    )
-  );
+  const currentUser = tournamentService.getCurrentPBGAccount();
+  const sessionUser = tournamentService.getCurrentUser();
+  const authUser = auth.currentUser;
+
+  const isOwner = !pbgId 
+    ? true 
+    : Boolean(
+        activePbgAccount && (
+          (authUser && activePbgAccount.googleUid === authUser.uid) ||
+          (authUser?.email && activePbgAccount.email && activePbgAccount.email.toLowerCase() === authUser.email.toLowerCase()) ||
+          (currentUser && activePbgAccount.pbgId === currentUser.pbgId) ||
+          (sessionUser?.email && activePbgAccount.email && activePbgAccount.email.toLowerCase() === sessionUser.email.toLowerCase())
+        )
+      );
 
   // Handle generic player navigation
   const handleSelectPlayer = (targetId: string) => {
@@ -335,12 +367,6 @@ export function DotaGameProfileView({
   const isPbgLinked = Boolean(activePbgAccount);
 
   if (!activeDotaId && !isLoading) {
-    const isOwner = Boolean(
-      auth.currentUser &&
-      (activePbgAccount?.googleUid === auth.currentUser.uid ||
-        tournamentService.getCurrentPBGAccount()?.googleUid === auth.currentUser.uid)
-    );
-
     return (
       <div className="space-y-5 font-mono animate-in fade-in duration-200 pb-20">
         <div className="flex items-center gap-2">

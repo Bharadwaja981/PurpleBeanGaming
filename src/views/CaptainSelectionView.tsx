@@ -37,10 +37,10 @@ export function CaptainSelectionView({
   onNavigate, 
   tournamentId: propTournamentId
 }: CaptainSelectionViewProps) {
-  const [allTournaments, setAllTournaments] = useState(() => tournamentService.getTournaments());
+  const [allTournaments, setAllTournaments] = useState(() => tournamentService.getTournaments('All', 'All', true));
   const [activeTournamentId, setActiveTournamentId] = useState<string>(() => {
     if (propTournamentId) return propTournamentId;
-    const tourneys = tournamentService.getTournaments();
+    const tourneys = tournamentService.getTournaments('All', 'All', true);
     return tourneys[0]?.id || 'auction-basic-test-1';
   });
 
@@ -85,7 +85,7 @@ export function CaptainSelectionView({
 
   useEffect(() => {
     const unsub = tournamentService.subscribe(() => {
-      setAllTournaments(tournamentService.getTournaments());
+      setAllTournaments(tournamentService.getTournaments('All', 'All', true));
     });
     return unsub;
   }, []);

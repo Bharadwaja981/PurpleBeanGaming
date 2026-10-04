@@ -1,8 +1,10 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Search, X, Trophy, Shield, Users, ArrowRight, Calendar } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
+import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
 import { dotaCareerHistoryEngine } from '../domain/dotaCareerHistoryEngine';
 import { ViewType, Tournament, Team, Player } from '../types/tournament';
+import { matchesPlayerSearch } from '../utils/playerSearch';
 
 interface SearchModalProps {
   isOpen: boolean;
@@ -22,7 +24,13 @@ export function SearchModal({ isOpen, onClose, onNavigate }: SearchModalProps) {
       setTeams(tournamentService.getTeams());
       setPlayers(tournamentService.getPlayers());
     });
-    return unsub;
+    const unsubPbg = pbgAccountRegistry.subscribe(() => {
+      setPlayers(tournamentService.getPlayers());
+    });
+    return () => {
+      unsub();
+      unsubPbg();
+    };
   }, []);
 
   const effectiveTournaments = tournaments;
@@ -48,34 +56,38 @@ export function SearchModal({ isOpen, onClose, onNavigate }: SearchModalProps) {
 
   const filteredTournaments = useMemo(() => {
     if (!query.trim()) return effectiveTournaments.slice(0, 3);
+    const q = query.trim().toLowerCase();
     return effectiveTournaments.filter((t) =>
-      t.name.toLowerCase().includes(query.toLowerCase()) ||
-      t.game.toLowerCase().includes(query.toLowerCase())
+      t.name.toLowerCase().includes(q) ||
+      t.game.toLowerCase().includes(q) ||
+      (t.city && t.city.toLowerCase().includes(q)) ||
+      (t.region && t.region.toLowerCase().includes(q)) ||
+      (t.format && t.format.toLowerCase().includes(q))
     );
   }, [effectiveTournaments, query]);
 
   const filteredTeams = useMemo(() => {
     if (!query.trim()) return effectiveTeams.slice(0, 3);
+    const q = query.trim().toLowerCase();
     return effectiveTeams.filter((t) =>
-      t.name.toLowerCase().includes(query.toLowerCase()) ||
-      t.tag.toLowerCase().includes(query.toLowerCase())
+      t.name.toLowerCase().includes(q) ||
+      t.tag.toLowerCase().includes(q) ||
+      (t.city && t.city.toLowerCase().includes(q)) ||
+      (t.captainName && t.captainName.toLowerCase().includes(q))
     );
   }, [effectiveTeams, query]);
 
   const filteredPlayers = useMemo(() => {
     if (!query.trim()) return effectivePlayers.slice(0, 4);
-    return effectivePlayers.filter((p) =>
-      p.username.toLowerCase().includes(query.toLowerCase()) ||
-      p.realName.toLowerCase().includes(query.toLowerCase()) ||
-      p.primaryRole.toLowerCase().includes(query.toLowerCase())
-    );
+    return effectivePlayers.filter((p) => matchesPlayerSearch(p, query));
   }, [effectivePlayers, query]);
 
   const filteredSeasons = useMemo(() => {
     if (!query.trim()) return allSeasons.slice(0, 2);
+    const q = query.trim().toLowerCase();
     return allSeasons.filter((s) =>
-      s.name.toLowerCase().includes(query.toLowerCase()) ||
-      s.id.toLowerCase().includes(query.toLowerCase())
+      s.name.toLowerCase().includes(q) ||
+      s.id.toLowerCase().includes(q)
     );
   }, [query, allSeasons]);
 
@@ -109,7 +121,7 @@ export function SearchModal({ isOpen, onClose, onNavigate }: SearchModalProps) {
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search tournaments, teams, players (e.g. India Masters, Titans, SkRossi, Mumbai)..."
+              placeholder="Search by PBG ID (e.g. PBG-000188), player, team, tournament, city (Mumbai, Siddipet)..."
               className="w-full bg-white border-[2.5px] border-black px-4 py-3 font-mono text-sm font-bold text-black placeholder:text-stone-400 focus:outline-hidden shadow-[3px_3px_0px_0px_#000]"
             />
           </div>
@@ -204,24 +216,46 @@ export function SearchModal({ isOpen, onClose, onNavigate }: SearchModalProps) {
               <div className="space-y-1.5">
                 {filteredPlayers.map((player) => (
                   <button
-                    key={player.id}
+                    key={player.id || player.pbgId}
                     onClick={() => {
-                      onNavigate('player_profile', player.id);
+                      onNavigate('player_profile', player.pbgId || player.id);
                       onClose();
                     }}
-                    className="w-full flex items-center justify-between p-2 bg-stone-50 hover:bg-[#FF70A6] border-2 border-black shadow-[2px_2px_0px_0px_#000] text-left transition-colors cursor-pointer group"
+                    className="w-full flex items-center justify-between p-2.5 bg-stone-50 hover:bg-[#FF70A6] border-2 border-black shadow-[2px_2px_0px_0px_#000] text-left transition-colors cursor-pointer group"
                   >
                     <div className="flex items-center gap-2.5">
-                      <span className="text-base">{player.avatar}</span>
+                      {player.avatar && player.avatar.startsWith('http') ? (
+                        <img 
+                          src={player.avatar} 
+                          alt={player.username} 
+                          className="w-7 h-7 rounded-full border border-black object-cover shrink-0" 
+                        />
+                      ) : (
+                        <span className="text-base shrink-0">{player.avatar}</span>
+                      )}
                       <div>
-                        <span className="font-black text-black text-xs mr-2">{player.username}</span>
-                        <span className="text-[10px] text-stone-600">{player.realName}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-black text-black text-xs">
+                            {player.displayName || player.username}
+                          </span>
+                          {player.pbgId && (
+                            <span className="bg-[#5CE1E6] border border-black px-1.5 py-0.2 text-[9px] font-mono font-black text-black">
+                              {player.pbgId}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] text-stone-600">
+                          <span>{player.realName || player.city || 'India'}</span>
+                          {player.city && player.city !== player.realName && (
+                            <span className="text-stone-400"> · {player.city}</span>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 text-right">
-                      <span className="text-[10px] text-stone-600">{player.teamName}</span>
+                    <div className="flex items-center gap-3 text-right shrink-0">
+                      <span className="text-[10px] text-stone-600 hidden sm:inline">{player.teamName || 'Free Agent'}</span>
                       <span className="font-black text-black bg-[#FFDE59] border border-black px-1.5 py-0.5">
-                        {player.mmr.toLocaleString()} MMR
+                        {(player.mmr ?? player.tournamentMmr ?? 5000).toLocaleString()} MMR
                       </span>
                     </div>
                   </button>

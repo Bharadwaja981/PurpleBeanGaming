@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { Users, Filter, CheckCircle, Clock, AlertTriangle, ArrowLeft, MapPin, Trophy, Shield, Crown } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
 import { dotaPlayerRegistry, DotaTournamentRegistration } from '../domain/dotaPlayerEngine';
+import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
 import { ViewType, Player, Tournament } from '../types/tournament';
 import { SelectDropdown } from '../components/ui/Dropdown';
 
@@ -63,12 +64,33 @@ export function RegisteredPlayersView({ onNavigate, tournamentId }: RegisteredPl
 
       const matchesRole = roleFilter === 'All' || r.primaryRole.toLowerCase().includes(roleFilter.toLowerCase());
 
-      const matchesSearch = !searchQuery.trim() ||
-        r.ign.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        r.userId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (r.city && r.city.toLowerCase().includes(searchQuery.toLowerCase()));
+      const pbgAcc = pbgAccountRegistry.getAccountByUid(r.userId) || 
+                     pbgAccountRegistry.getAccountByPbgId(r.userId) ||
+                     (r.userEmail ? pbgAccountRegistry.getAccountByEmail(r.userEmail) : undefined);
+      const pbgId = pbgAcc?.pbgId || (r.userId.startsWith('PBG-') ? r.userId : '');
+      const realName = pbgAcc?.displayName || pbgAcc?.realName || '';
 
-      return matchesStatus && matchesRole && matchesSearch;
+      const qRaw = searchQuery.trim().toLowerCase();
+      const q = qRaw.replace(/\bpgb\b/g, 'pbg').replace(/pgb-/g, 'pbg-').replace(/pgb\s+/g, 'pbg ');
+      const qNum = q.replace(/[^0-9]/g, '');
+
+      let matchesSearch = !q;
+      if (q) {
+        matchesSearch = Boolean(
+          r.ign.toLowerCase().includes(q) ||
+          r.userId.toLowerCase().includes(q) ||
+          (r.city && r.city.toLowerCase().includes(q)) ||
+          realName.toLowerCase().includes(q) ||
+          realName.toLowerCase().includes(qRaw) ||
+          (pbgId ? (
+            pbgId.toLowerCase().includes(q) ||
+            (qNum && pbgId.replace(/[^0-9]/g, '').includes(qNum)) ||
+            (qNum && parseInt(pbgId.replace(/[^0-9]/g, ''), 10) === parseInt(qNum, 10))
+          ) : false)
+        );
+      }
+
+      return matchesStatus && matchesRole && Boolean(matchesSearch);
     });
   }, [effectiveRegistrations, statusFilter, roleFilter, searchQuery]);
 
@@ -210,10 +232,10 @@ export function RegisteredPlayersView({ onNavigate, tournamentId }: RegisteredPl
         <div className="flex items-center gap-2 w-full sm:w-auto">
           <input
             type="text"
-            placeholder="Search by IGN or City..."
+            placeholder="Search by PBG ID, IGN, name, or city..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="px-3 py-1.5 bg-white border-2 border-black font-mono text-xs text-black placeholder:text-stone-400 outline-none w-full sm:w-56"
+            className="px-3 py-1.5 bg-white border-2 border-black font-mono text-xs text-black placeholder:text-stone-400 outline-none w-full sm:w-64"
           />
         </div>
       </div>
@@ -256,6 +278,11 @@ export function RegisteredPlayersView({ onNavigate, tournamentId }: RegisteredPl
                   const tourneyObj = tournaments.find(t => t.id === reg.tournamentId);
                   const isVerified = reg.status === 'VERIFIED';
                   const effectiveMmr = reg.tournamentMmr || reg.declaredMmr || 5000;
+                  const pbgAcc = pbgAccountRegistry.getAccountByUid(reg.userId) || 
+                                 pbgAccountRegistry.getAccountByPbgId(reg.userId) ||
+                                 (reg.userEmail ? pbgAccountRegistry.getAccountByEmail(reg.userEmail) : undefined);
+                  const pbgId = pbgAcc?.pbgId || (reg.userId.startsWith('PBG-') ? reg.userId : undefined);
+                  const displayName = pbgAcc?.displayName || reg.ign;
 
                   return (
                     <tr
@@ -265,15 +292,25 @@ export function RegisteredPlayersView({ onNavigate, tournamentId }: RegisteredPl
                       <td className="p-3.5 font-black text-stone-500">{idx + 1}</td>
                       <td className="p-3.5">
                         <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 bg-stone-100 border border-black flex items-center justify-center font-bold text-sm">
+                          <div className="w-8 h-8 bg-stone-100 border border-black flex items-center justify-center font-bold text-sm shrink-0">
                             🎮
                           </div>
                           <div>
-                            <span className="font-black text-black text-sm block">
-                              {reg.ign}
-                            </span>
-                            <span className="text-[10px] text-stone-500">
-                              UID: {reg.userId.slice(0, 16)} · {reg.city || 'India'}
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span 
+                                onClick={() => onNavigate('player_profile', pbgId || reg.userId)}
+                                className="font-black text-black text-sm hover:underline cursor-pointer"
+                              >
+                                {displayName}
+                              </span>
+                              {pbgId && (
+                                <span className="bg-[#5CE1E6] border border-black px-1.5 py-0.2 text-[9px] font-mono font-black text-black shadow-[1px_1px_0px_0px_#000]">
+                                  {pbgId}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-stone-500 block">
+                              {reg.ign !== displayName ? `${reg.ign} · ` : ''}{reg.city || 'India'}
                             </span>
                           </div>
                         </div>

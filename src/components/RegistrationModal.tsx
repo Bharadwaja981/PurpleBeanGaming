@@ -12,9 +12,14 @@ import {
   Gamepad2, 
   Loader2, 
   ArrowRight,
-  HelpCircle
+  HelpCircle,
+  MessageSquare,
+  Check,
+  RefreshCw
 } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
+import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
+import { DiscordConnectModal } from './DiscordConnectModal';
 import { DotaRolePosition } from '../domain/dotaPlayerEngine';
 import { SelectDropdown } from './ui/Dropdown';
 
@@ -84,6 +89,29 @@ export function RegistrationModal({
   const [successData, setSuccessData] = useState<{ id: string; ign: string } | null>(null);
   const [withdrawBusy, setWithdrawBusy] = useState(false);
 
+  const [isDiscordModalOpen, setIsDiscordModalOpen] = useState(false);
+  const [isReconcilingDiscord, setIsReconcilingDiscord] = useState(false);
+  const [pbgAccountState, setPbgAccountState] = useState(() => 
+    (currentUser && currentUser.id !== 'guest-spectator')
+      ? (pbgAccountRegistry.getAccountByUid(currentUser.id) || pbgAccountRegistry.getAccountByEmail(currentUser.email || ''))
+      : undefined
+  );
+
+  // Subscribe to PBG Account registry to reflect Discord linkage immediately
+  useEffect(() => {
+    const unsub = pbgAccountRegistry.subscribe(() => {
+      if (currentUser && currentUser.id !== 'guest-spectator') {
+        const updated = pbgAccountRegistry.getAccountByUid(currentUser.id) || pbgAccountRegistry.getAccountByEmail(currentUser.email || '');
+        setPbgAccountState(updated);
+      }
+    });
+    return unsub;
+  }, [currentUser]);
+
+  const isGuest = Boolean(!currentUser || currentUser.id === 'guest-spectator');
+  const isDiscordLinked = Boolean(pbgAccountState?.discordLinked && pbgAccountState?.discordUserId);
+  const isPbgMemberActive = Boolean(pbgAccountState?.discordMemberVerified !== false && pbgAccountState?.pbgMemberRoleActive !== false);
+
   // Check if current user is already registered for this tournament
   const existingRegThisTourney = (currentUser && currentUser.id !== 'guest-spectator')
     ? tournamentService.getUserRegistration(targetTourneyId, currentUser.id)
@@ -106,18 +134,57 @@ export function RegistrationModal({
       })
     : undefined;
 
-  // Autofill user profile if available
+  // Autofill user profile from authoritative PBG account
   useEffect(() => {
     if (isOpen) {
       setErrorMessage(null);
       setSuccessData(null);
       if (currentUser && currentUser.id !== 'guest-spectator') {
-        setIgn(currentUser.ign || currentUser.displayName || '');
+        const acc = pbgAccountRegistry.getAccountByUid(currentUser.id) || pbgAccountRegistry.getAccountByEmail(currentUser.email || '');
+        if (acc) {
+          setPbgAccountState(acc);
+          setIgn(acc.displayName || currentUser.displayName || '');
+          if (acc.dotaMmr) setDeclaredMmr(acc.dotaMmr);
+          if (acc.dotaAccountId || acc.steamId) setSteamId(acc.dotaAccountId || acc.steamId || '');
+          if (acc.city) setCity(acc.city);
+        } else {
+          setIgn(currentUser.ign || currentUser.displayName || '');
+        }
       } else {
         setIgn('');
       }
     }
   }, [isOpen, currentUser]);
+
+  const handleReconcileDiscord = async () => {
+    if (!pbgAccountState) return;
+    setIsReconcilingDiscord(true);
+    setErrorMessage(null);
+    try {
+      await fetch(`/api/tournaments/${targetTourneyId}/discord/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: pbgAccountState.googleUid })
+      });
+      if (pbgAccountState.discordUserId) {
+        pbgAccountRegistry.linkDiscordAccount(pbgAccountState.googleUid, {
+          discordUserId: pbgAccountState.discordUserId,
+          discordUsername: pbgAccountState.discordUsername || 'Verified User',
+          discordDisplayName: pbgAccountState.discordDisplayName
+        });
+      }
+    } catch {
+      if (pbgAccountState.discordUserId) {
+        pbgAccountRegistry.linkDiscordAccount(pbgAccountState.googleUid, {
+          discordUserId: pbgAccountState.discordUserId,
+          discordUsername: pbgAccountState.discordUsername || 'Verified User',
+          discordDisplayName: pbgAccountState.discordDisplayName
+        });
+      }
+    } finally {
+      setIsReconcilingDiscord(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -456,6 +523,95 @@ export function RegistrationModal({
                 </div>
               )}
 
+              {/* PBG Authoritative Identity Banner */}
+              <div className="bg-[#FFFBEB] border-2 border-black p-3 shadow-[2px_2px_0px_0px_#000] flex flex-wrap items-center justify-between gap-2 font-mono text-xs">
+                <div className="flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-[#7C3AED]" />
+                  <span className="font-black text-black">Authoritative PBG Identity:</span>
+                  {pbgAccountState?.pbgId ? (
+                    <span className="bg-[#5CE1E6] border border-black px-2 py-0.5 text-[11px] font-mono font-black text-black shadow-[1px_1px_0px_0px_#000]">
+                      {pbgAccountState.pbgId}
+                    </span>
+                  ) : (
+                    <span className="text-stone-500 italic">Guest Session</span>
+                  )}
+                </div>
+                <span className="text-[11px] text-stone-600">
+                  {pbgAccountState?.displayName || currentUser.displayName || 'Unverified'}
+                </span>
+              </div>
+
+              {/* Guest Blocker */}
+              {isGuest && (
+                <div className="bg-amber-100 border-2 border-amber-600 p-3.5 font-mono text-xs space-y-2 shadow-[2px_2px_0px_0px_#000]">
+                  <div className="flex items-center gap-2 font-black text-amber-900">
+                    <AlertCircle className="w-4 h-4 text-amber-700" />
+                    <span>AUTHENTICATION REQUIRED</span>
+                  </div>
+                  <p className="text-stone-700">
+                    You must sign in with your official Purple Bean Gaming account to submit tournament registration and link your competitive rating.
+                  </p>
+                </div>
+              )}
+
+              {/* Discord Requirement Check */}
+              {!isGuest && (!isDiscordLinked ? (
+                <div className="bg-[#5865F2]/10 border-[2.5px] border-[#5865F2] p-4 font-mono text-xs space-y-2.5 shadow-[3px_3px_0px_0px_#5865F2]">
+                  <div className="flex items-center gap-2 font-black text-[#5865F2] text-sm">
+                    <MessageSquare className="w-4 h-4" />
+                    <span>DISCORD LINKAGE REQUIRED</span>
+                  </div>
+                  <p className="text-stone-700 leading-relaxed">
+                    Under Purple Bean Gaming tournament regulations, all participants must connect their official Discord account to synchronize tournament roles and access private team voice channels.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (pbgAccountState) {
+                        setIsDiscordModalOpen(true);
+                      } else {
+                        setErrorMessage('Please complete your PBG account setup first.');
+                      }
+                    }}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 bg-[#5865F2] hover:bg-[#4752C4] text-white border-2 border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                    <span>Connect Discord to register</span>
+                  </button>
+                </div>
+              ) : !isPbgMemberActive ? (
+                <div className="bg-amber-50 border-2 border-amber-500 p-3.5 font-mono text-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-black text-amber-900 flex items-center gap-1.5">
+                      <AlertCircle className="w-4 h-4 text-amber-600" />
+                      <span>PBG Member Role Inactive</span>
+                    </span>
+                    <button
+                      type="button"
+                      disabled={isReconcilingDiscord}
+                      onClick={handleReconcileDiscord}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-400 hover:bg-amber-300 text-black border border-black font-black uppercase text-[10px] cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isReconcilingDiscord ? 'animate-spin' : ''}`} />
+                      <span>{isReconcilingDiscord ? 'Reconciling...' : 'Reconcile Role'}</span>
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-amber-800">
+                    Discord is linked as <strong>{pbgAccountState?.discordUsername}</strong>, but the PBG Member role has not synced. Reconcile before final registration.
+                  </p>
+                </div>
+              ) : (
+                <div className="bg-[#EBFBF0] border-2 border-emerald-500 p-3 font-mono text-xs flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-emerald-900">
+                    <Check className="w-4 h-4 text-emerald-600" />
+                    <span>Discord Linked: <strong>{pbgAccountState?.discordUsername}</strong></span>
+                  </div>
+                  <span className="bg-[#70FFAF] text-black border border-black px-2 py-0.5 text-[10px] font-black uppercase shadow-[1px_1px_0px_0px_#000]">
+                    PBG Member Active
+                  </span>
+                </div>
+              ))}
+
               {/* Contender Credentials Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
@@ -630,8 +786,9 @@ export function RegistrationModal({
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmitting}
-                  className="px-6 py-2.5 bg-[#7C3AED] hover:bg-purple-700 text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                  disabled={isSubmitting || !isDiscordLinked || isGuest}
+                  title={!isDiscordLinked ? 'Connect Discord to register' : isGuest ? 'Sign in to register' : undefined}
+                  className="px-6 py-2.5 bg-[#7C3AED] hover:bg-purple-700 text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isSubmitting ? (
                     <>
@@ -650,6 +807,18 @@ export function RegistrationModal({
           )}
         </div>
       </div>
+
+      {isDiscordModalOpen && pbgAccountState && (
+        <DiscordConnectModal
+          isOpen={isDiscordModalOpen}
+          onClose={() => setIsDiscordModalOpen(false)}
+          account={pbgAccountState}
+          onLinked={(updated) => {
+            setPbgAccountState(updated);
+            setIsDiscordModalOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
