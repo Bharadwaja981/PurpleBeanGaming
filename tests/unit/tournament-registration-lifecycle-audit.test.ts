@@ -38,17 +38,17 @@ import {
 import { pbgAccountRegistry } from '../../src/domain/pbgAccountRegistry';
 
 const TEST_TOURNEY_ID = 'audit-test-tourney';
-const PBG_MEMBER_ROLE_ID = '1555885374713237524';
-const TOURNEY_PLAYER_ROLE_ID = 'role_tourney_player_999';
-const CAPTAIN_ROLE_ID = 'role_captain_888';
+const DISCORD_PBG_MEMBER_ROLE_ID = '1555885374713237524';
+const DISCORD_PBG_PLAYER_ROLE_ID = '1555884061111746651';
+const DISCORD_PBG_CAPTAIN_ROLE_ID = '1556338549807259658';
 const TEAM_ROLE_ID = 'role_team_777';
 
 const mockDiscordConfig: TournamentDiscordConfig = {
   enabled: true,
   guildId: '631715510631006219',
   roles: {
-    tournamentPlayerRoleId: TOURNEY_PLAYER_ROLE_ID,
-    captainRoleId: CAPTAIN_ROLE_ID
+    tournamentPlayerRoleId: DISCORD_PBG_PLAYER_ROLE_ID,
+    captainRoleId: DISCORD_PBG_CAPTAIN_ROLE_ID
   },
   teamRolesEnabled: true,
   cleanupPolicy: {
@@ -802,9 +802,9 @@ describe('Tournament Registration, Captain Selection & Discord Role Synchronizat
       participant,
       team: teamRecord,
       discordLink: { discordLinked: true, discordUserId: 'discord-contender-777', pbgMemberRoleActive: true },
-      pbgMemberRoleId: PBG_MEMBER_ROLE_ID
+      pbgMemberRoleId: DISCORD_PBG_MEMBER_ROLE_ID
     });
-    expect(eliminatedDesired.desiredRoleIds).toEqual([PBG_MEMBER_ROLE_ID]);
+    expect(eliminatedDesired.desiredRoleIds).toEqual([DISCORD_PBG_MEMBER_ROLE_ID]);
 
     // Now execute result correction restoration
     const successfulFetch = (async () => {
@@ -820,18 +820,18 @@ describe('Tournament Registration, Captain Selection & Discord Role Synchronizat
     expect(restoreRes.team.status).toBe('ACTIVE');
     expect(restoreRes.restoredParticipants[0].eliminated).toBe(false);
 
-    // Verify: restored state grants PBG Member + Tournament Player + Captain + Team Role
+    // Verify: restored state grants PBG Member + PBG Player + PBG Captain + Team Role
     const restoredDesired = getDesiredTournamentDiscordRoles({
       tournament: { id: TEST_TOURNEY_ID, status: 'LIVE', discordConfig: mockDiscordConfig },
       participant: restoreRes.restoredParticipants[0],
       team: restoreRes.team,
       discordLink: { discordLinked: true, discordUserId: 'discord-contender-777', pbgMemberRoleActive: true },
-      pbgMemberRoleId: PBG_MEMBER_ROLE_ID
+      pbgMemberRoleId: DISCORD_PBG_MEMBER_ROLE_ID
     });
 
-    expect(restoredDesired.desiredRoleIds).toContain(PBG_MEMBER_ROLE_ID);
-    expect(restoredDesired.desiredRoleIds).toContain(TOURNEY_PLAYER_ROLE_ID);
-    expect(restoredDesired.desiredRoleIds).toContain(CAPTAIN_ROLE_ID);
+    expect(restoredDesired.desiredRoleIds).toContain(DISCORD_PBG_MEMBER_ROLE_ID);
+    expect(restoredDesired.desiredRoleIds).toContain(DISCORD_PBG_PLAYER_ROLE_ID);
+    expect(restoredDesired.desiredRoleIds).toContain(DISCORD_PBG_CAPTAIN_ROLE_ID);
     expect(restoredDesired.desiredRoleIds).toContain(TEAM_ROLE_ID);
   });
 
@@ -937,29 +937,29 @@ describe('Tournament Registration, Captain Selection & Discord Role Synchronizat
         updatedAt: ''
       },
       discordLink: { discordLinked: true, discordUserId: 'discord-elim-999', pbgMemberRoleActive: true },
-      pbgMemberRoleId: PBG_MEMBER_ROLE_ID
+      pbgMemberRoleId: DISCORD_PBG_MEMBER_ROLE_ID
     };
 
     const desiredEliminated = getDesiredTournamentDiscordRoles(eliminatedContext);
-    expect(desiredEliminated.desiredRoleIds).toContain(PBG_MEMBER_ROLE_ID);
-    expect(desiredEliminated.undesiredRoleIds).toContain(TOURNEY_PLAYER_ROLE_ID);
+    expect(desiredEliminated.desiredRoleIds).toContain(DISCORD_PBG_MEMBER_ROLE_ID);
+    expect(desiredEliminated.undesiredRoleIds).toContain(DISCORD_PBG_PLAYER_ROLE_ID);
     expect(desiredEliminated.undesiredRoleIds).toContain(TEAM_ROLE_ID);
-    expect(desiredEliminated.undesiredRoleIds).not.toContain(PBG_MEMBER_ROLE_ID);
+    expect(desiredEliminated.undesiredRoleIds).not.toContain(DISCORD_PBG_MEMBER_ROLE_ID);
 
-    // Now generate reconciliation plan where user currently holds PBG Member + Tournament Player + Team Role
+    // Now generate reconciliation plan where user currently holds PBG Member + PBG Player + Team Role
     const plan = buildDiscordRoleReconciliationPlan({
       guildId: 'guild-1',
       discordUserId: 'discord-elim-999',
-      actualDiscordRoles: [PBG_MEMBER_ROLE_ID, TOURNEY_PLAYER_ROLE_ID, TEAM_ROLE_ID],
+      actualDiscordRoles: [DISCORD_PBG_MEMBER_ROLE_ID, DISCORD_PBG_PLAYER_ROLE_ID, TEAM_ROLE_ID],
       desiredResult: desiredEliminated,
-      managedRoleIds: [PBG_MEMBER_ROLE_ID, TOURNEY_PLAYER_ROLE_ID, CAPTAIN_ROLE_ID, TEAM_ROLE_ID],
-      pbgMemberRoleId: PBG_MEMBER_ROLE_ID
+      managedRoleIds: [DISCORD_PBG_MEMBER_ROLE_ID, DISCORD_PBG_PLAYER_ROLE_ID, DISCORD_PBG_CAPTAIN_ROLE_ID, TEAM_ROLE_ID],
+      pbgMemberRoleId: DISCORD_PBG_MEMBER_ROLE_ID
     });
 
     // Temporary tournament roles are stripped
-    expect(plan.rolesToRemove).toContain(TOURNEY_PLAYER_ROLE_ID);
+    expect(plan.rolesToRemove).toContain(DISCORD_PBG_PLAYER_ROLE_ID);
     expect(plan.rolesToRemove).toContain(TEAM_ROLE_ID);
     // CRUCIAL INVARIANT: PBG Member MUST NEVER be in rolesToRemove!
-    expect(plan.rolesToRemove).not.toContain(PBG_MEMBER_ROLE_ID);
+    expect(plan.rolesToRemove).not.toContain(DISCORD_PBG_MEMBER_ROLE_ID);
   });
 });

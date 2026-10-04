@@ -49,6 +49,12 @@ async function startServer() {
   if (!process.env.DISCORD_PBG_MEMBER_ROLE_ID) {
     process.env.DISCORD_PBG_MEMBER_ROLE_ID = '1555885374713237524';
   }
+  if (!process.env.DISCORD_PBG_PLAYER_ROLE_ID) {
+    process.env.DISCORD_PBG_PLAYER_ROLE_ID = '1555884061111746651';
+  }
+  if (!process.env.DISCORD_PBG_CAPTAIN_ROLE_ID) {
+    process.env.DISCORD_PBG_CAPTAIN_ROLE_ID = '1556338549807259658';
+  }
 
   const express = (await import('express')).default;
   const { apiRouter } = await import('./src/server/apiRouter');

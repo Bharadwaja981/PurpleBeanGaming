@@ -6,7 +6,8 @@
  * - Compares desired role state vs actual Discord roles.
  * - Idempotently applies differences using PBG Discord Bot.
  * - Never rolls back or corrupts PBG state if Discord API has an outage (creates retryable discordSyncJobs).
- * - Implements persistent PBG Member protection, temporary Tournament Player/Captain roles,
+ * - Implements persistent PBG Member protection (DISCORD_PBG_MEMBER_ROLE_ID),
+ *   temporary PBG Player (DISCORD_PBG_PLAYER_ROLE_ID) and PBG Captain (DISCORD_PBG_CAPTAIN_ROLE_ID) roles,
  *   and dynamic Team roles with elimination and tournament-completion cleanups.
  */
 
@@ -53,7 +54,9 @@ function getBotConfig(customConfig?: TournamentDiscordConfig) {
   const botToken = process.env.DISCORD_BOT_TOKEN || '';
   const guildId = customConfig?.guildId || process.env.DISCORD_GUILD_ID || '631715510631006219';
   const pbgMemberRoleId = process.env.DISCORD_PBG_MEMBER_ROLE_ID || '1555885374713237524';
-  return { botToken, guildId, pbgMemberRoleId };
+  const pbgPlayerRoleId = customConfig?.roles?.tournamentPlayerRoleId || process.env.DISCORD_PBG_PLAYER_ROLE_ID || '1555884061111746651';
+  const pbgCaptainRoleId = customConfig?.roles?.captainRoleId || process.env.DISCORD_PBG_CAPTAIN_ROLE_ID || '1556338549807259658';
+  return { botToken, guildId, pbgMemberRoleId, pbgPlayerRoleId, pbgCaptainRoleId };
 }
 
 /**
@@ -326,7 +329,7 @@ export async function syncDiscordTournamentRoles(params: {
     };
   }
 
-  const { botToken, guildId, pbgMemberRoleId } = getBotConfig(discordConfig);
+  const { botToken, guildId, pbgMemberRoleId, pbgPlayerRoleId, pbgCaptainRoleId } = getBotConfig(discordConfig);
 
   const context: DiscordSyncContext = {
     tournament: {
@@ -336,8 +339,8 @@ export async function syncDiscordTournamentRoles(params: {
         enabled: true,
         guildId,
         roles: {
-          tournamentPlayerRoleId: 'role_tourney_player_default',
-          captainRoleId: 'role_captain_default'
+          tournamentPlayerRoleId: pbgPlayerRoleId,
+          captainRoleId: pbgCaptainRoleId
         },
         teamRolesEnabled: true,
         cleanupPolicy: { onElimination: true, onTournamentCompletion: true }
@@ -346,7 +349,9 @@ export async function syncDiscordTournamentRoles(params: {
     participant: participantData,
     team: teamData,
     discordLink,
-    pbgMemberRoleId
+    pbgMemberRoleId,
+    pbgPlayerRoleId,
+    pbgCaptainRoleId
   };
 
   // Skip explicit test identities cleanly without error
@@ -428,8 +433,8 @@ export async function syncDiscordTournamentRoles(params: {
   // Collect all PBG-managed role IDs to avoid tampering with unrelated server roles
   const managedRoleIds = [
     pbgMemberRoleId,
-    context.tournament.discordConfig?.roles.tournamentPlayerRoleId,
-    context.tournament.discordConfig?.roles.captainRoleId,
+    context.tournament.discordConfig?.roles?.tournamentPlayerRoleId || pbgPlayerRoleId,
+    context.tournament.discordConfig?.roles?.captainRoleId || pbgCaptainRoleId,
     teamData?.discord?.roleId
   ].filter(Boolean) as string[];
 

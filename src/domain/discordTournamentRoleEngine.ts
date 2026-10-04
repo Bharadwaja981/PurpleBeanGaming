@@ -6,14 +6,17 @@
  * - Discord is strictly a projection of PBG tournament state.
  * - This engine calculates DESIRED role state deterministically and reconciles actual Discord roles.
  * 
- * Role Categories:
+ * Role Categories & Canonical PBG Naming:
  * 1. Persistent platform role:
  *    - "PBG Member" (MUST NEVER be removed by tournament sync while Discord is linked)
+ *      → DISCORD_PBG_MEMBER_ROLE_ID (Default: 1555885374713237524)
  * 2. Temporary tournament roles:
- *    - "Tournament Player"
- *    - "Captain"
+ *    - "PBG Player"
+ *      → DISCORD_PBG_PLAYER_ROLE_ID (Default: 1555884061111746651)
+ *    - "PBG Captain"
+ *      → DISCORD_PBG_CAPTAIN_ROLE_ID (Default: 1556338549807259658)
  * 3. Dynamic team roles:
- *    - One Discord role per finalized team (<Team Name>), assigned to active team members.
+ *    - One Discord role per finalized team (<Team Name>), created automatically and stored by returned Discord roleId.
  */
 
 import {
@@ -21,6 +24,19 @@ import {
   TournamentTeamRecord,
   TournamentDiscordConfig
 } from './tournamentRegistrationEngine';
+
+/**
+ * PurpleBeanGaming canonical Discord role IDs.
+ * Matches the official PBG environment convention:
+ * - DISCORD_PBG_MEMBER_ROLE_ID: Persistent guild membership role
+ * - DISCORD_PBG_PLAYER_ROLE_ID: Temporary tournament participant role
+ * - DISCORD_PBG_CAPTAIN_ROLE_ID: Temporary tournament team captain role
+ */
+export const PBG_DISCORD_ROLE_DEFAULTS = {
+  DISCORD_PBG_MEMBER_ROLE_ID: '1555885374713237524',
+  DISCORD_PBG_PLAYER_ROLE_ID: '1555884061111746651',
+  DISCORD_PBG_CAPTAIN_ROLE_ID: '1556338549807259658'
+} as const;
 
 export interface DiscordSyncContext {
   tournament: {
@@ -36,6 +52,8 @@ export interface DiscordSyncContext {
     pbgMemberRoleActive?: boolean;
   };
   pbgMemberRoleId?: string;
+  pbgPlayerRoleId?: string;
+  pbgCaptainRoleId?: string;
 }
 
 export type RoleCategory = 'PERSISTENT' | 'TOURNAMENT' | 'TEAM';
@@ -66,13 +84,105 @@ export interface DiscordRoleReconciliationPlan {
 }
 
 /**
+ * Discord Role Configuration Validation Result
+ */
+export interface DiscordRoleConfigValidation {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+  roles: {
+    DISCORD_PBG_MEMBER_ROLE_ID: string;
+    DISCORD_PBG_PLAYER_ROLE_ID: string;
+    DISCORD_PBG_CAPTAIN_ROLE_ID: string;
+  };
+}
+
+/**
+ * Validates Discord role environment and tournament config against PBG convention.
+ */
+export function validateDiscordRoleConfig(config?: Partial<TournamentDiscordConfig>): DiscordRoleConfigValidation {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  const memberRoleId = process.env.DISCORD_PBG_MEMBER_ROLE_ID || PBG_DISCORD_ROLE_DEFAULTS.DISCORD_PBG_MEMBER_ROLE_ID;
+  const playerRoleId = config?.roles?.tournamentPlayerRoleId || process.env.DISCORD_PBG_PLAYER_ROLE_ID || PBG_DISCORD_ROLE_DEFAULTS.DISCORD_PBG_PLAYER_ROLE_ID;
+  const captainRoleId = config?.roles?.captainRoleId || process.env.DISCORD_PBG_CAPTAIN_ROLE_ID || PBG_DISCORD_ROLE_DEFAULTS.DISCORD_PBG_CAPTAIN_ROLE_ID;
+
+  const snowflakeRegex = /^\d{17,20}$/;
+
+  if (!memberRoleId) {
+    errors.push('Missing DISCORD_PBG_MEMBER_ROLE_ID: Persistent member role ID must be configured.');
+  } else if (!snowflakeRegex.test(memberRoleId)) {
+    warnings.push(`DISCORD_PBG_MEMBER_ROLE_ID "${memberRoleId}" is not a standard 17-20 digit Discord snowflake.`);
+  }
+
+  if (!playerRoleId) {
+    errors.push('Missing DISCORD_PBG_PLAYER_ROLE_ID: Temporary tournament player role ID must be configured.');
+  } else if (!snowflakeRegex.test(playerRoleId)) {
+    warnings.push(`DISCORD_PBG_PLAYER_ROLE_ID "${playerRoleId}" is not a standard 17-20 digit Discord snowflake.`);
+  }
+
+  if (!captainRoleId) {
+    errors.push('Missing DISCORD_PBG_CAPTAIN_ROLE_ID: Temporary tournament captain role ID must be configured.');
+  } else if (!snowflakeRegex.test(captainRoleId)) {
+    warnings.push(`DISCORD_PBG_CAPTAIN_ROLE_ID "${captainRoleId}" is not a standard 17-20 digit Discord snowflake.`);
+  }
+
+  // Ensure role IDs are distinct
+  if (memberRoleId && playerRoleId && memberRoleId === playerRoleId) {
+    errors.push('Collision: DISCORD_PBG_MEMBER_ROLE_ID and DISCORD_PBG_PLAYER_ROLE_ID cannot share the same Discord role ID.');
+  }
+  if (memberRoleId && captainRoleId && memberRoleId === captainRoleId) {
+    errors.push('Collision: DISCORD_PBG_MEMBER_ROLE_ID and DISCORD_PBG_CAPTAIN_ROLE_ID cannot share the same Discord role ID.');
+  }
+  if (playerRoleId && captainRoleId && playerRoleId === captainRoleId) {
+    errors.push('Collision: DISCORD_PBG_PLAYER_ROLE_ID and DISCORD_PBG_CAPTAIN_ROLE_ID cannot share the same Discord role ID.');
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    warnings,
+    roles: {
+      DISCORD_PBG_MEMBER_ROLE_ID: memberRoleId,
+      DISCORD_PBG_PLAYER_ROLE_ID: playerRoleId,
+      DISCORD_PBG_CAPTAIN_ROLE_ID: captainRoleId
+    }
+  };
+}
+
+/**
+ * Diagnostic helper: returns a human-readable diagnostic report for Discord role configuration.
+ */
+export function getDiscordRoleConfigDiagnostics(config?: Partial<TournamentDiscordConfig>): {
+  status: 'OK' | 'WARNING' | 'ERROR';
+  summary: string;
+  validation: DiscordRoleConfigValidation;
+} {
+  const validation = validateDiscordRoleConfig(config);
+  const status = validation.errors.length > 0 ? 'ERROR' : (validation.warnings.length > 0 ? 'WARNING' : 'OK');
+  const summary = status === 'OK'
+    ? 'Discord PBG role configuration is valid and matches PurpleBeanGaming convention.'
+    : (status === 'WARNING'
+      ? `Discord PBG role configuration has warnings: ${validation.warnings.join('; ')}`
+      : `Discord PBG role configuration has errors: ${validation.errors.join('; ')}`);
+
+  return { status, summary, validation };
+}
+
+/**
  * Pure function: calculates the exact DESIRED Discord roles for a user based on PBG tournament state.
+ * Mapping convention:
+ * - PBG Member  → DISCORD_PBG_MEMBER_ROLE_ID
+ * - PBG Player  → DISCORD_PBG_PLAYER_ROLE_ID
+ * - PBG Captain → DISCORD_PBG_CAPTAIN_ROLE_ID
+ * - Team Role   → Dynamic team role created automatically
  */
 export function getDesiredTournamentDiscordRoles(
   context: DiscordSyncContext
 ): DesiredDiscordRolesResult {
   const { tournament, participant, team, discordLink } = context;
-  const pbgMemberRoleId = context.pbgMemberRoleId || process.env.DISCORD_PBG_MEMBER_ROLE_ID || '1555885374713237524';
+  const pbgMemberRoleId = context.pbgMemberRoleId || process.env.DISCORD_PBG_MEMBER_ROLE_ID || PBG_DISCORD_ROLE_DEFAULTS.DISCORD_PBG_MEMBER_ROLE_ID;
   const discordConfig = tournament.discordConfig;
 
   const roleDetails: DesiredRoleItem[] = [];
@@ -103,8 +213,18 @@ export function getDesiredTournamentDiscordRoles(
     };
   }
 
-  const tournamentPlayerRoleId = discordConfig?.roles?.tournamentPlayerRoleId;
-  const captainRoleId = discordConfig?.roles?.captainRoleId;
+  const pbgPlayerRoleId = 
+    context.pbgPlayerRoleId || 
+    discordConfig?.roles?.tournamentPlayerRoleId || 
+    process.env.DISCORD_PBG_PLAYER_ROLE_ID || 
+    PBG_DISCORD_ROLE_DEFAULTS.DISCORD_PBG_PLAYER_ROLE_ID;
+
+  const pbgCaptainRoleId = 
+    context.pbgCaptainRoleId || 
+    discordConfig?.roles?.captainRoleId || 
+    process.env.DISCORD_PBG_CAPTAIN_ROLE_ID || 
+    PBG_DISCORD_ROLE_DEFAULTS.DISCORD_PBG_CAPTAIN_ROLE_ID;
+
   const teamRoleId = team?.discord?.roleId;
 
   const isTournamentCompleted = 
@@ -116,8 +236,8 @@ export function getDesiredTournamentDiscordRoles(
 
   // If tournament is completed: ALL temporary tournament roles and team roles must be removed!
   if (isTournamentCompleted) {
-    if (tournamentPlayerRoleId) undesiredRoleIds.add(tournamentPlayerRoleId);
-    if (captainRoleId) undesiredRoleIds.add(captainRoleId);
+    if (pbgPlayerRoleId) undesiredRoleIds.add(pbgPlayerRoleId);
+    if (pbgCaptainRoleId) undesiredRoleIds.add(pbgCaptainRoleId);
     if (teamRoleId) undesiredRoleIds.add(teamRoleId);
 
     return {
@@ -133,8 +253,8 @@ export function getDesiredTournamentDiscordRoles(
 
   // If team is eliminated: temporary tournament roles (Player, Captain, Team Role) are removed!
   if (isTeamEliminated) {
-    if (tournamentPlayerRoleId) undesiredRoleIds.add(tournamentPlayerRoleId);
-    if (captainRoleId) undesiredRoleIds.add(captainRoleId);
+    if (pbgPlayerRoleId) undesiredRoleIds.add(pbgPlayerRoleId);
+    if (pbgCaptainRoleId) undesiredRoleIds.add(pbgCaptainRoleId);
     if (teamRoleId) undesiredRoleIds.add(teamRoleId);
 
     return {
@@ -150,32 +270,32 @@ export function getDesiredTournamentDiscordRoles(
 
   // Active participant in an ongoing tournament
   if (isParticipantActive) {
-    // 2. Tournament Player Role
-    if (tournamentPlayerRoleId) {
-      desiredRoleIds.add(tournamentPlayerRoleId);
+    // 2. PBG Player Role (Temporary Tournament Player)
+    if (pbgPlayerRoleId) {
+      desiredRoleIds.add(pbgPlayerRoleId);
       roleDetails.push({
-        roleId: tournamentPlayerRoleId,
-        roleName: 'Tournament Player',
+        roleId: pbgPlayerRoleId,
+        roleName: 'PBG Player',
         category: 'TOURNAMENT'
       });
     }
 
-    // 3. Captain Role
+    // 3. PBG Captain Role (Temporary Team Captain)
     if (participant.tournamentRole === 'CAPTAIN') {
-      if (captainRoleId) {
-        desiredRoleIds.add(captainRoleId);
+      if (pbgCaptainRoleId) {
+        desiredRoleIds.add(pbgCaptainRoleId);
         roleDetails.push({
-          roleId: captainRoleId,
-          roleName: 'Captain',
+          roleId: pbgCaptainRoleId,
+          roleName: 'PBG Captain',
           category: 'TOURNAMENT'
         });
       }
     } else {
       // If not captain, captain role should be removed if present
-      if (captainRoleId) undesiredRoleIds.add(captainRoleId);
+      if (pbgCaptainRoleId) undesiredRoleIds.add(pbgCaptainRoleId);
     }
 
-    // 4. Team Role (if active team finalized)
+    // 4. Dynamic Team Role (if active team finalized)
     if (team && team.status === 'ACTIVE' && teamRoleId) {
       desiredRoleIds.add(teamRoleId);
       roleDetails.push({
@@ -186,8 +306,8 @@ export function getDesiredTournamentDiscordRoles(
     }
   } else {
     // Non-participant or inactive: strip any temporary roles
-    if (tournamentPlayerRoleId) undesiredRoleIds.add(tournamentPlayerRoleId);
-    if (captainRoleId) undesiredRoleIds.add(captainRoleId);
+    if (pbgPlayerRoleId) undesiredRoleIds.add(pbgPlayerRoleId);
+    if (pbgCaptainRoleId) undesiredRoleIds.add(pbgCaptainRoleId);
     if (teamRoleId) undesiredRoleIds.add(teamRoleId);
   }
 
@@ -210,7 +330,7 @@ export function buildDiscordRoleReconciliationPlan(params: {
   discordUserId: string;
   actualDiscordRoles: string[];
   desiredResult: DesiredDiscordRolesResult;
-  managedRoleIds: string[]; // all role IDs governed by PBG (PBG Member, Tournament Player, Captain, Team roles)
+  managedRoleIds: string[]; // all role IDs governed by PBG (PBG Member, PBG Player, PBG Captain, Team roles)
   pbgMemberRoleId?: string;
 }): DiscordRoleReconciliationPlan {
   const { guildId, discordUserId, actualDiscordRoles, desiredResult, managedRoleIds } = params;
@@ -222,7 +342,7 @@ export function buildDiscordRoleReconciliationPlan(params: {
   const pbgMemberRoleId = params.pbgMemberRoleId || 
     desiredResult.roleDetails.find(r => r.category === 'PERSISTENT' || r.roleName === 'PBG Member')?.roleId ||
     process.env.DISCORD_PBG_MEMBER_ROLE_ID || 
-    '1555885374713237524';
+    PBG_DISCORD_ROLE_DEFAULTS.DISCORD_PBG_MEMBER_ROLE_ID;
 
   const rolesToAdd: string[] = [];
   const rolesToRemove: string[] = [];

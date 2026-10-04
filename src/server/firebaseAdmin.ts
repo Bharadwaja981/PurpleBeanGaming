@@ -86,7 +86,7 @@ export async function verifyFirebaseBearerToken(authHeader?: string): Promise<De
     const cleanUid = token.replace('test-token-', '').replace('fallback-token-', '');
     return {
       uid: cleanUid,
-      email: `${cleanUid}@local.purplebeangaming.com`,
+      email: cleanUid.includes('@') ? cleanUid : `${cleanUid}@local.purplebeangaming.com`,
       isTest: true
     };
   }

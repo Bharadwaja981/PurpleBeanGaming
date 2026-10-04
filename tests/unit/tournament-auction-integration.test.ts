@@ -54,17 +54,17 @@ import {
 import { pbgAccountRegistry } from '../../src/domain/pbgAccountRegistry';
 
 const TEST_TOURNEY_ID = 'auction-e2e-tourney-01';
-const PBG_MEMBER_ROLE_ID = '1555885374713237524';
-const TOURNEY_PLAYER_ROLE_ID = 'role_tourney_player_999';
-const CAPTAIN_ROLE_ID = 'role_captain_888';
+const DISCORD_PBG_MEMBER_ROLE_ID = '1555885374713237524';
+const DISCORD_PBG_PLAYER_ROLE_ID = '1555884061111746651';
+const DISCORD_PBG_CAPTAIN_ROLE_ID = '1556338549807259658';
 const GUILD_ID = '631715510631006219';
 
 const mockDiscordConfig: TournamentDiscordConfig = {
   enabled: true,
   guildId: GUILD_ID,
   roles: {
-    tournamentPlayerRoleId: TOURNEY_PLAYER_ROLE_ID,
-    captainRoleId: CAPTAIN_ROLE_ID
+    tournamentPlayerRoleId: DISCORD_PBG_PLAYER_ROLE_ID,
+    captainRoleId: DISCORD_PBG_CAPTAIN_ROLE_ID
   },
   teamRolesEnabled: true,
   cleanupPolicy: {
@@ -828,7 +828,7 @@ describe('PurpleBeanGaming Auction Integration Phase — Complete End-to-End Sui
         if (url.includes('/roles/')) {
           return new Response('', { status: 204 });
         }
-        return new Response(JSON.stringify({ roles: [PBG_MEMBER_ROLE_ID] }), { status: 200 });
+        return new Response(JSON.stringify({ roles: [DISCORD_PBG_MEMBER_ROLE_ID] }), { status: 200 });
       });
 
       const { finalizedTeams, discordRolesCreated } = await finalizeAuctionTeamsAuthoritative({

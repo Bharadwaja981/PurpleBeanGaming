@@ -21,10 +21,12 @@ import {
   AuthoritativeAuctionSession
 } from '../domain/tournamentAuctionEngine';
 import {
-  inMemoryRegistrations
+  inMemoryRegistrations,
+  inMemoryCaptains
 } from './tournamentRegistrationOperations';
 import {
-  inMemoryParticipants
+  inMemoryParticipants,
+  inMemoryTournamentTeams
 } from './discordTournamentSyncService';
 import {
   inMemoryAuctionSessions,
@@ -35,6 +37,8 @@ import {
 import { getAuctionEngine } from '../domain/dotaAuctionEngine';
 import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
 import { tournamentService } from '../services/firebaseService';
+import { getAdminDb } from './firebaseAdmin';
+import { MOCK_TOURNAMENTS } from '../data/mockData';
 
 export * from '../domain/auctionTestFixtures';
 import {
@@ -399,9 +403,63 @@ export function resetAuctionTestData(
   let realPreserved = 0;
 
   if (fullResetIncludingReal) {
-    // Purge everything
+    // Purge everything in memory
     inMemoryRegistrations.delete(tournamentId);
     inMemoryParticipants.delete(tournamentId);
+    inMemoryCaptains.delete(tournamentId);
+    inMemoryTournamentTeams.delete(tournamentId);
+
+    // Also purge Firestore asynchronously
+    const db = getAdminDb();
+    if (db) {
+      (async () => {
+        try {
+          const tourneyRef = db.collection('tournaments').doc(tournamentId);
+          const subcols = await tourneyRef.listCollections();
+          for (const subcol of subcols) {
+            const snap = await subcol.get();
+            for (const d of snap.docs) {
+              await d.ref.delete().catch(() => {});
+            }
+          }
+          const rootRegs = await db.collection('registrations').where('tournamentId', '==', tournamentId).get();
+          for (const d of rootRegs.docs) {
+            await d.ref.delete().catch(() => {});
+          }
+          const aucRef = db.collection('auctions').doc(tournamentId);
+          const aucSubcols = await aucRef.listCollections();
+          for (const subcol of aucSubcols) {
+            const snap = await subcol.get();
+            for (const d of snap.docs) {
+              await d.ref.delete().catch(() => {});
+            }
+          }
+          await aucRef.delete().catch(() => {});
+
+          // Remove from deleted_tournaments
+          const delDocRef = db.collection('system_config').doc('deleted_tournaments');
+          const delDoc = await delDocRef.get();
+          if (delDoc.exists) {
+            const ids: string[] = delDoc.data()?.ids || [];
+            const filtered = ids.filter(id => id.toLowerCase() !== tournamentId.toLowerCase());
+            await delDocRef.set({ ids: filtered, updatedAt: new Date().toISOString() }, { merge: true });
+          }
+
+          // Ensure fresh tournament doc exists
+          const testTourney = MOCK_TOURNAMENTS.find(t => t.id === tournamentId);
+          if (testTourney) {
+            await tourneyRef.set({
+              ...testTourney,
+              status: 'Registration Open',
+              lifecycle: 'REGISTRATION_OPEN',
+              updatedAt: new Date().toISOString()
+            }, { merge: true });
+          }
+        } catch (e) {
+          console.warn('[resetAuctionTestData] Firestore async purge error:', e);
+        }
+      })();
+    }
   } else {
     // Keep real registrations, reset their participant auction state to AVAILABLE, and keep dummy registrations
     if (regMap && partMap) {

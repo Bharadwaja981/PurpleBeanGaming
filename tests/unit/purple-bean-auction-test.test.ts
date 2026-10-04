@@ -362,8 +362,8 @@ describe('Purple Bean Auction Test Suite — Production-Safe Validation Sandbox'
       expect(realSync.success).toBe(true);
       expect(realSync.skipped).toBeFalsy();
       expect(realSync.discordUserId).toBe('discord-real-captain-1');
-      expect(realSync.rolesAdded).toContain('role_tourney_player_default');
-      expect(realSync.rolesAdded).toContain('role_captain_default');
+      expect(realSync.rolesAdded).toContain('1555884061111746651');
+      expect(realSync.rolesAdded).toContain('1556338549807259658');
     });
   });
 

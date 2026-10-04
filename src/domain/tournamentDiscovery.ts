@@ -172,8 +172,8 @@ export function normalizeVisibility(t: any): 'PUBLIC' | 'DRAFT' | 'PRIVATE' | 'U
   return 'PUBLIC';
 }
 
-export function normalizeGameId(gameOrId?: string | null): string {
-  if (!gameOrId) return 'dota2';
+export function normalizeGameId(gameOrId?: string | null | any): string {
+  if (!gameOrId || typeof gameOrId !== 'string') return 'dota2';
   const clean = gameOrId.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
   if (clean === 'dota2' || clean === 'dota') return 'dota2';
   if (clean === 'cs2' || clean === 'counterstrike2') return 'cs2';
@@ -253,14 +253,14 @@ export function matchesGameFilter(tournamentGame?: string, tournamentGameId?: st
   return normTourney === normFilter;
 }
 
-export function matchesRegionFilter(tournamentRegion?: string | null, filter?: string | null): boolean {
-  if (!filter) return true;
+export function matchesRegionFilter(tournamentRegion?: string | null | any, filter?: string | null | any): boolean {
+  if (!filter || typeof filter !== 'string') return true;
   const fLower = filter.trim().toLowerCase();
   if (fLower === 'all' || fLower.includes('all')) {
     return true; // All India Regions: show Pan India and all other tournaments
   }
 
-  if (!tournamentRegion) return true;
+  if (!tournamentRegion || typeof tournamentRegion !== 'string') return true;
   const tLower = tournamentRegion.trim().toLowerCase();
   if (tLower === 'pan india' || tLower === 'all india') {
     return true;

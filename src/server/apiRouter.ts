@@ -67,6 +67,11 @@ import {
   inMemoryTournamentTeams
 } from './discordTournamentSyncService';
 import {
+  validateDiscordRoleConfig,
+  getDiscordRoleConfigDiagnostics,
+  PBG_DISCORD_ROLE_DEFAULTS
+} from '../domain/discordTournamentRoleEngine';
+import {
   evaluateRegistrationEligibility
 } from '../domain/tournamentRegistrationEngine';
 import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
@@ -1430,6 +1435,35 @@ const handleDiscordUnlink = async (req: Request, res: Response) => {
 
 apiRouter.post('/auth/discord/unlink', handleDiscordUnlink);
 apiRouter.post('/discord/auth/unlink', handleDiscordUnlink);
+
+/**
+ * Discord PBG Role Configuration & Diagnostics Endpoint
+ * Returns authoritative status and configuration for:
+ * - DISCORD_PBG_MEMBER_ROLE_ID
+ * - DISCORD_PBG_PLAYER_ROLE_ID
+ * - DISCORD_PBG_CAPTAIN_ROLE_ID
+ */
+apiRouter.get(['/discord/roles/config', '/tournaments/discord/config'], (_req: Request, res: Response) => {
+  const diagnostics = getDiscordRoleConfigDiagnostics();
+  return res.json({
+    ok: diagnostics.status !== 'ERROR',
+    status: diagnostics.status,
+    summary: diagnostics.summary,
+    guildId: process.env.DISCORD_GUILD_ID || '631715510631006219',
+    roles: {
+      DISCORD_PBG_MEMBER_ROLE_ID: process.env.DISCORD_PBG_MEMBER_ROLE_ID || PBG_DISCORD_ROLE_DEFAULTS.DISCORD_PBG_MEMBER_ROLE_ID,
+      DISCORD_PBG_PLAYER_ROLE_ID: process.env.DISCORD_PBG_PLAYER_ROLE_ID || PBG_DISCORD_ROLE_DEFAULTS.DISCORD_PBG_PLAYER_ROLE_ID,
+      DISCORD_PBG_CAPTAIN_ROLE_ID: process.env.DISCORD_PBG_CAPTAIN_ROLE_ID || PBG_DISCORD_ROLE_DEFAULTS.DISCORD_PBG_CAPTAIN_ROLE_ID
+    },
+    mapping: {
+      'PBG Member': 'DISCORD_PBG_MEMBER_ROLE_ID',
+      'PBG Player': 'DISCORD_PBG_PLAYER_ROLE_ID',
+      'PBG Captain': 'DISCORD_PBG_CAPTAIN_ROLE_ID',
+      'Team Roles': 'Dynamic per team, created automatically'
+    },
+    validation: diagnostics.validation
+  });
+});
 
 /**
  * 5. Admin Bootstrap & Verification Endpoint
