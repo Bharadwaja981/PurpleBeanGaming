@@ -22,7 +22,7 @@ import {
   MessageSquare,
   ExternalLink
 } from 'lucide-react';
-import { tournamentService } from '../services/firebaseService';
+import { tournamentService, UserSession } from '../services/firebaseService';
 import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
 import { Tournament, Match, Player, Team, ViewType, CompetitiveGame } from '../types/tournament';
 import { PurpleBeanLogo } from '../components/PurpleBeanLogo';
@@ -51,6 +51,7 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
   const [matches, setMatches] = useState<Match[]>(() => tournamentService.getMatches());
   const [players, setPlayers] = useState<Player[]>(() => tournamentService.getPlayers());
   const [teams, setTeams] = useState<Team[]>(() => tournamentService.getTeams());
+  const [currentUser, setCurrentUser] = useState<UserSession>(() => tournamentService.getCurrentUser());
 
   useEffect(() => {
     const unsubGames = gameManagementEngine.subscribe(() => {
@@ -65,6 +66,7 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
       setMatches(tournamentService.getMatches());
       setPlayers(tournamentService.getPlayers());
       setTeams(tournamentService.getTeams());
+      setCurrentUser(tournamentService.getCurrentUser());
     };
     const unsubService = tournamentService.subscribe(sync);
     const unsubRegistry = tournamentConfigRegistry.subscribe(sync);
@@ -73,6 +75,8 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
       unsubRegistry();
     };
   }, []);
+
+  const isAuthenticated = currentUser.id !== 'guest-spectator' && Boolean(currentUser.email);
 
   const hasMultipleGames = activeGames.length > 1;
 
@@ -122,7 +126,112 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
     ).slice(0, 8);
 
   return (
-    <div className="space-y-12 pb-16">
+    <div className="space-y-10 pb-16">
+      {/* ============================================================ */}
+      {/* WELCOME INTRODUCTION: PURPLE BEAN GAMING INTRODUCTION */}
+      {/* ============================================================ */}
+      <section className="w-full bg-[#FFE600] border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-6 sm:p-8 lg:p-10 relative overflow-hidden">
+        {/* Subtle decorative background pattern */}
+        <div className="absolute -right-10 -bottom-10 opacity-15 pointer-events-none hidden sm:block">
+          <PurpleBeanLogo size="xl" />
+        </div>
+
+        <div className="relative z-10 max-w-4xl space-y-4">
+          <div className="flex flex-wrap items-center gap-2 font-mono text-xs font-black">
+            <span className="bg-black text-[#FFE600] px-2.5 py-0.5 uppercase tracking-wide border border-black shadow-[1px_1px_0px_0px_#000]">
+              WELCOME TO PURPLE BEAN GAMING
+            </span>
+            <span className="bg-white text-black px-2.5 py-0.5 uppercase tracking-wide border border-black shadow-[1px_1px_0px_0px_#000] flex items-center gap-1">
+              <Zap className="w-3.5 h-3.5 text-[#7C3AED]" />
+              INDIA'S DOTA 2 COMPETITIVE CIRCUIT
+            </span>
+            <span className="bg-[#70FFAF] text-black px-2 py-0.5 uppercase border border-black text-[11px] font-bold">
+              ₹ INR PRIZE POOLS &amp; LOW LATENCY RELAYS
+            </span>
+          </div>
+
+          <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black text-black uppercase font-sans tracking-tight leading-[0.95]">
+            COMPETE. GET DRAFTED. <br className="hidden sm:inline" />
+            <span className="bg-white px-2 py-0.5 border-2 border-black inline-block mt-1 shadow-[3px_3px_0px_0px_#000]">
+              BUILD YOUR DOTA 2 CAREER.
+            </span>
+          </h1>
+
+          <p className="font-mono text-xs sm:text-sm font-bold text-stone-900 max-w-3xl leading-relaxed">
+            PurpleBeanGaming is India’s dedicated esports platform for Dota 2 competitors. Link your Steam profile, receive an automated PBG ID &amp; MMR tier calibration, enter real-time captain purse auctions, and compete in organized brackets with verified ₹ INR payouts.
+          </p>
+
+          {/* Quick Intro Feature Badges */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-xs">
+            <div className="bg-white border-2 border-black p-2.5 shadow-[2px_2px_0px_0px_#000]">
+              <div className="font-black text-black uppercase flex items-center gap-1.5 text-xs">
+                <Gavel className="w-3.5 h-3.5 text-[#7C3AED]" />
+                Auction Drafts
+              </div>
+              <p className="text-[10px] text-stone-600 mt-0.5 leading-tight">Solo players bid on by captains</p>
+            </div>
+            <div className="bg-white border-2 border-black p-2.5 shadow-[2px_2px_0px_0px_#000]">
+              <div className="font-black text-black uppercase flex items-center gap-1.5 text-xs">
+                <Users className="w-3.5 h-3.5 text-[#7C3AED]" />
+                Premade 5v5
+              </div>
+              <p className="text-[10px] text-stone-600 mt-0.5 leading-tight">Bring your campus or friend stack</p>
+            </div>
+            <div className="bg-white border-2 border-black p-2.5 shadow-[2px_2px_0px_0px_#000]">
+              <div className="font-black text-black uppercase flex items-center gap-1.5 text-xs">
+                <Shield className="w-3.5 h-3.5 text-[#7C3AED]" />
+                Anti-Smurf
+              </div>
+              <p className="text-[10px] text-stone-600 mt-0.5 leading-tight">Steam 64 &amp; OpenDota audit</p>
+            </div>
+            <div className="bg-white border-2 border-black p-2.5 shadow-[2px_2px_0px_0px_#000]">
+              <div className="font-black text-black uppercase flex items-center gap-1.5 text-xs">
+                <Coins className="w-3.5 h-3.5 text-[#7C3AED]" />
+                Verified INR
+              </div>
+              <p className="text-[10px] text-stone-600 mt-0.5 leading-tight">Fast UPI &amp; IMPS prize payouts</p>
+            </div>
+          </div>
+
+          {/* Intro Call-to-actions */}
+          <div className="flex flex-wrap items-center gap-2.5 pt-2">
+            {!isAuthenticated ? (
+              <button
+                onClick={onOpenRegister}
+                className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white border-2 border-black px-5 py-3 font-mono text-xs sm:text-sm font-black uppercase tracking-tight shadow-[3px_3px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer flex items-center gap-2"
+              >
+                <Flame className="w-4 h-4 text-[#FFE600]" />
+                <span>Join PBG — Create Profile</span>
+              </button>
+            ) : (
+              <button
+                onClick={onOpenRegister}
+                className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white border-2 border-black px-5 py-3 font-mono text-xs sm:text-sm font-black uppercase tracking-tight shadow-[3px_3px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer flex items-center gap-2"
+              >
+                <Flame className="w-4 h-4 text-[#FFE600]" />
+                <span>Register for Next Tournament</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => onNavigate('tournaments')}
+              className="bg-black hover:bg-stone-900 text-white border-2 border-black px-5 py-3 font-mono text-xs sm:text-sm font-black uppercase tracking-tight shadow-[3px_3px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer flex items-center gap-2"
+            >
+              <Trophy className="w-4 h-4 text-[#FFE600]" />
+              <span>Explore Tournaments</span>
+            </button>
+
+            <button
+              onClick={() => onNavigate('how_it_works')}
+              className="bg-white hover:bg-stone-100 text-black border-2 border-black px-4 py-3 font-mono text-xs sm:text-sm font-black uppercase tracking-tight shadow-[3px_3px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer flex items-center gap-1.5"
+            >
+              <span>How It Works</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      </section>
+
       {/* ============================================================ */}
       {/* 0. GAME CATEGORIES BAR / SWITCHER (Dynamic when > 1 active game) */}
       {/* ============================================================ */}

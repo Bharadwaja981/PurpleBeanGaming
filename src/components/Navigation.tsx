@@ -236,8 +236,6 @@ export function Navigation({
   const primaryNavItems: Array<{ view: ViewType; label: string; icon: typeof Trophy }> = [
     { view: 'tournaments', label: 'Tournaments', icon: Trophy },
     { view: 'players', label: 'Players', icon: Users },
-    { view: 'rankings', label: 'Rankings', icon: Award },
-    { view: 'how_it_works', label: 'How It Works', icon: Zap },
     { view: 'community', label: 'Community', icon: MessageSquare },
     { view: 'about', label: 'About', icon: Shield },
   ];
@@ -318,13 +316,13 @@ export function Navigation({
       </div>
 
       {/* 2. Main Navigation Bar */}
-      <div className="max-w-7xl mx-auto px-3 sm:px-4 lg:px-6 h-15 sm:h-16 flex items-center justify-between gap-2">
-        {/* Left: Logo & Brand */}
-        <div className="flex items-center gap-2 shrink-0">
+      <div className="max-w-7xl mx-auto px-2 sm:px-4 lg:px-6 h-15 sm:h-16 flex items-center justify-between gap-1.5 sm:gap-2">
+        {/* Left: Hamburger & Brand */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Mobile hamburger button */}
           <button
             onClick={() => setMobileDrawerOpen(true)}
-            className="lg:hidden p-1.5 bg-stone-100 hover:bg-stone-200 border-2 border-black shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+            className="lg:hidden p-1.5 bg-stone-100 hover:bg-stone-200 border-2 border-black shadow-[2px_2px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer"
             aria-label="Open Navigation Menu"
           >
             <Menu className="w-5 h-5 text-black" />
@@ -332,43 +330,41 @@ export function Navigation({
 
           <button
             onClick={() => onNavigate('home')}
-            className="flex items-center gap-2 text-left group cursor-pointer"
+            className="flex items-center gap-1.5 sm:gap-2 text-left group cursor-pointer"
             title="Purple Bean Gaming Home"
           >
             <PurpleBeanLogo size="sm" animated={true} />
             <div className="flex flex-col">
               <div className="flex items-center gap-1">
-                <span className="text-base sm:text-lg font-black tracking-tight text-black uppercase leading-none font-sans group-hover:text-[#7C3AED] transition-colors">
+                <span className="text-sm sm:text-base lg:text-lg font-black tracking-tight text-black dark:text-white uppercase leading-none font-sans group-hover:text-[#7C3AED] transition-colors">
                   PURPLE BEAN
                 </span>
                 <span className="bg-[#FFE600] text-black border border-black text-[8px] font-mono font-black px-1 py-0.2 shadow-[1px_1px_0px_0px_#000] uppercase">
                   DOTA
                 </span>
               </div>
-              <span className="hidden xs:inline-block text-[8px] sm:text-[9px] font-mono font-bold tracking-wider text-stone-600 uppercase">
+              <span className="hidden sm:inline-block text-[8px] sm:text-[9px] font-mono font-bold tracking-wider text-stone-600 dark:text-stone-400 uppercase">
                 ESPORTS INFRASTRUCTURE
               </span>
             </div>
           </button>
         </div>
 
-        {/* Center: Desktop Nav Links (Progressively Condensed) */}
-        <nav className="hidden lg:flex items-center gap-1 xl:gap-1.5">
+        {/* Center: Desktop Nav Links (Responsive & Clean) */}
+        <nav className="hidden lg:flex items-center gap-1 xl:gap-1.5 min-w-0">
           {primaryNavItems.map((item) => {
             const isActive = currentView === item.view || 
               (item.view === 'tournaments' && (currentView === 'tournament_detail' || currentView === 'bracket' || currentView === 'standings')) ||
-              (item.view === 'matches' && currentView === 'match_detail') ||
-              (item.view === 'teams' && currentView === 'team_profile') ||
               (item.view === 'players' && (currentView === 'player_profile' || currentView === 'registered_players' || currentView === 'captain_selection'));
 
             return (
               <button
                 key={item.view}
                 onClick={() => onNavigate(item.view)}
-                className={`px-2.5 xl:px-3 py-1.5 font-mono text-xs font-black uppercase tracking-tight transition-all border-2 cursor-pointer ${
+                className={`px-2 xl:px-2.5 py-1.5 font-mono text-xs font-black uppercase tracking-tight transition-all border-2 cursor-pointer whitespace-nowrap ${
                   isActive
                     ? 'bg-[#FFE600] text-black border-black shadow-[2px_2px_0px_0px_#000] -translate-x-0.5 -translate-y-0.5'
-                    : 'bg-transparent text-stone-800 border-transparent hover:border-black hover:bg-stone-100 hover:shadow-[2px_2px_0px_0px_#000]'
+                    : 'bg-transparent text-stone-800 dark:text-stone-200 border-transparent hover:border-black hover:bg-stone-100 dark:hover:bg-stone-800 hover:shadow-[2px_2px_0px_0px_#000]'
                 }`}
               >
                 {item.label}
@@ -376,7 +372,7 @@ export function Navigation({
             );
           })}
 
-          {/* Desktop Direct Links for 2XL / Wide displays */}
+          {/* Desktop Direct Links for Extra Wide displays (2XL) */}
           <div className="hidden 2xl:flex items-center gap-1">
             {secondaryNavItems.map((item) => {
               const isActive = currentView === item.view;
@@ -384,10 +380,10 @@ export function Navigation({
                 <button
                   key={item.view}
                   onClick={() => onNavigate(item.view)}
-                  className={`px-2.5 py-1.5 font-mono text-xs font-black uppercase tracking-tight transition-all border-2 cursor-pointer ${
+                  className={`px-2 py-1.5 font-mono text-xs font-black uppercase tracking-tight transition-all border-2 cursor-pointer whitespace-nowrap ${
                     isActive
                       ? 'bg-[#FFE600] text-black border-black shadow-[2px_2px_0px_0px_#000] -translate-x-0.5 -translate-y-0.5'
-                      : 'bg-transparent text-stone-800 border-transparent hover:border-black hover:bg-stone-100 hover:shadow-[2px_2px_0px_0px_#000]'
+                      : 'bg-transparent text-stone-800 dark:text-stone-200 border-transparent hover:border-black hover:bg-stone-100 dark:hover:bg-stone-800 hover:shadow-[2px_2px_0px_0px_#000]'
                   }`}
                 >
                   {item.label}
@@ -396,21 +392,7 @@ export function Navigation({
             })}
           </div>
 
-          {/* Game Quick Selector (Strictly hidden when only 1 active game, dynamic when > 1) */}
-          {hasMultipleGames && (
-            <div className="ml-1">
-              <SelectDropdown
-                value={selectedGame}
-                onChange={handleGameSelect}
-                options={gameOptions}
-                icon={Gamepad2}
-                size="sm"
-                align="left"
-              />
-            </div>
-          )}
-
-          {/* "More" Dropdown for condensed laptop view (1024px - 1439px) */}
+          {/* "More" Dropdown for condensed desktop view */}
           <div className="2xl:hidden">
             <MenuDropdown
               align="left"
@@ -418,19 +400,31 @@ export function Navigation({
               trigger={(isOpen) => (
                 <button
                   type="button"
-                  className={`px-2.5 py-1.5 font-mono text-xs font-black uppercase tracking-tight border-2 border-black transition-all flex items-center gap-1 cursor-pointer ${
+                  className={`px-2 py-1.5 font-mono text-xs font-black uppercase tracking-tight border-2 border-black transition-all flex items-center gap-1 cursor-pointer whitespace-nowrap ${
                     isOpen
                       ? 'bg-[#FFE600] shadow-[2px_2px_0px_0px_#000]'
-                      : 'bg-stone-100 hover:bg-stone-200 shadow-[2px_2px_0px_0px_#000]'
+                      : 'bg-stone-100 hover:bg-stone-200 text-black shadow-[2px_2px_0px_0px_#000]'
                   }`}
                 >
                   <MoreHorizontal className="w-3.5 h-3.5" />
-                  <span>More</span>
+                  <span className="hidden xl:inline">More</span>
                   <ChevronDown className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                 </button>
               )}
             >
-              <MenuHeader>Platform Navigation</MenuHeader>
+              <MenuHeader>Platform Destinations</MenuHeader>
+              <MenuItem
+                icon={Award}
+                label="Player &amp; Team Rankings"
+                selected={currentView === 'rankings'}
+                onClick={() => onNavigate('rankings')}
+              />
+              <MenuItem
+                icon={Zap}
+                label="How PBG Works"
+                selected={currentView === 'how_it_works'}
+                onClick={() => onNavigate('how_it_works')}
+              />
               <MenuItem
                 icon={Shield}
                 label="Teams &amp; Rosters"
@@ -444,16 +438,8 @@ export function Navigation({
                 onClick={() => onNavigate('matches')}
               />
               <MenuItem
-                icon={Shield}
-                label="Interactive Bracket Engine"
-                selected={currentView === 'bracket'}
-                onClick={() => onNavigate('bracket')}
-              />
-              <MenuSeparator />
-              <MenuHeader>Community &amp; Governance</MenuHeader>
-              <MenuItem
                 icon={HelpCircle}
-                label="Frequently Asked Questions (FAQ)"
+                label="FAQ &amp; Help Desk"
                 selected={currentView === 'faq'}
                 onClick={() => onNavigate('faq')}
               />
@@ -465,7 +451,7 @@ export function Navigation({
               />
               <MenuItem
                 icon={Wrench}
-                label="Support &amp; Dispute Desk"
+                label="Support &amp; Tickets"
                 selected={currentView === 'support'}
                 onClick={() => onNavigate('support')}
               />
@@ -503,13 +489,13 @@ export function Navigation({
           </div>
         </nav>
 
-        {/* Right: Actions (Theme Toggle, Search, Notifications, Join CTA, User Profile) */}
-        <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-          {/* Light / Dark Mode Toggle (Neo-Brutalist Match to Site Design) */}
+        {/* Right: Actions & User / Auth Controls */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          {/* Light / Dark Mode Toggle */}
           {onToggleDarkMode && (
             <button
               onClick={onToggleDarkMode}
-              className={`flex items-center gap-1.5 border-2 px-2 sm:px-2.5 py-1.5 font-mono text-xs font-black uppercase transition-all cursor-pointer ${
+              className={`flex items-center gap-1 border-2 p-1.5 sm:px-2 sm:py-1.5 font-mono text-xs font-black uppercase transition-all cursor-pointer ${
                 isDarkMode
                   ? 'bg-[#1E1B2E] hover:bg-[#2B2644] text-[#FFE600] border-[#FFE600] shadow-[2px_2px_0px_0px_#FFE600]'
                   : 'bg-[#FFE600] hover:bg-[#FFDE59] text-black border-black shadow-[2px_2px_0px_0px_#000]'
@@ -520,18 +506,12 @@ export function Navigation({
               {isDarkMode ? (
                 <>
                   <Sun className="w-3.5 h-3.5 text-[#FFE600] fill-[#FFE600] shrink-0" />
-                  <span className="font-mono text-[11px] font-black tracking-wider text-[#FFE600]">
-                    <span className="inline sm:hidden">LT</span>
-                    <span className="hidden sm:inline">LIGHT</span>
-                  </span>
+                  <span className="font-mono text-[10px] font-black hidden xl:inline">LIGHT</span>
                 </>
               ) : (
                 <>
                   <Moon className="w-3.5 h-3.5 text-black fill-black shrink-0" />
-                  <span className="font-mono text-[11px] font-black tracking-wider text-black">
-                    <span className="inline sm:hidden">DK</span>
-                    <span className="hidden sm:inline">DARK</span>
-                  </span>
+                  <span className="font-mono text-[10px] font-black hidden xl:inline">DARK</span>
                 </>
               )}
             </button>
@@ -540,18 +520,17 @@ export function Navigation({
           {/* Search Button */}
           <button
             onClick={onOpenSearch}
-            className="flex items-center gap-1.5 bg-stone-100 hover:bg-white text-black border-2 border-black px-2 sm:px-2.5 py-1.5 font-mono text-xs font-bold shadow-[2px_2px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all cursor-pointer"
+            className="flex items-center gap-1 bg-stone-100 hover:bg-white text-black border-2 border-black p-1.5 sm:px-2.5 sm:py-1.5 font-mono text-xs font-bold shadow-[2px_2px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all cursor-pointer"
             title="Search Tournaments, Teams & Players (Cmd+K)"
           >
             <Search className="w-3.5 h-3.5" />
             <span className="hidden xl:inline">Search</span>
-            <kbd className="hidden 2xl:inline bg-black text-white text-[9px] px-1 font-mono">⌘K</kbd>
           </button>
 
           {/* Notifications Button */}
           <button
             onClick={onOpenNotifications}
-            className="relative bg-white hover:bg-[#FFF9E6] text-black border-2 border-black p-1.5 sm:px-2.5 sm:py-1.5 font-mono text-xs font-bold shadow-[2px_2px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all cursor-pointer flex items-center gap-1"
+            className="relative bg-white hover:bg-[#FFF9E6] text-black border-2 border-black p-1.5 sm:px-2 sm:py-1.5 font-mono text-xs font-bold shadow-[2px_2px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all cursor-pointer flex items-center gap-1"
             title="Notifications"
           >
             <Bell className="w-3.5 h-3.5" />
@@ -562,49 +541,74 @@ export function Navigation({
             )}
           </button>
 
-          {/* Join Cup CTA (Visible on wide screens, accessible via drawer/more on compact) */}
-          <button
-            onClick={onOpenRegister}
-            className="hidden xl:flex items-center gap-1 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white border-2 border-black px-2.5 py-1.5 font-mono text-xs font-black uppercase tracking-tight shadow-[2px_2px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer"
-          >
-            <Flame className="w-3.5 h-3.5 text-[#FFE600]" />
-            <span>Join Cup</span>
-          </button>
-
-          {/* User Profile Menu (Shared Neo-Brutalist Dropdown) */}
-          <MenuDropdown
-            align="right"
-            mobileTitle="Account &amp; Profile"
-            trigger={(isOpen) => (
+          {/* Explicit Sign In & Join PBG buttons when not logged in */}
+          {!isAuthenticated ? (
+            <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                className={`flex items-center gap-1.5 border-2 border-black p-1 sm:px-2 sm:py-1 font-mono text-xs font-bold transition-all cursor-pointer ${
-                  isOpen
-                    ? 'bg-[#FFE600] shadow-[2px_2px_0px_0px_#000] -translate-x-0.5 -translate-y-0.5'
-                    : 'bg-[#FFF9E6] hover:bg-white shadow-[2px_2px_0px_0px_#000]'
-                }`}
+                disabled={isSigningIn}
+                onClick={handleGoogleSignIn}
+                className="hidden sm:flex items-center gap-1.5 bg-white hover:bg-stone-50 text-black border-2 border-black px-2.5 py-1.5 font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer whitespace-nowrap"
+                title="Sign In with Google"
               >
-                <div className="w-6 h-6 rounded-full bg-[#8B5CF6] text-white flex items-center justify-center font-black text-xs border border-black overflow-hidden shrink-0">
-                  {currentUser.avatarUrl ? (
-                    <img src={currentUser.avatarUrl} alt="" className="w-full h-full object-cover" />
-                  ) : (
-                    <span>{currentUser.role === 'organizer' ? '👑' : currentUser.role === 'captain' ? '⭐' : '🎮'}</span>
-                  )}
-                </div>
-
-                <span className="hidden sm:inline font-mono font-black text-xs max-w-[85px] lg:max-w-[110px] truncate">
-                  {currentUser.displayName || 'Player'}
-                </span>
-
-                {/* PBG ID Badge */}
-                <span className="text-[9px] font-mono px-1 py-0.2 border border-black uppercase font-black bg-[#FFE600] text-black">
-                  {currentUser.pbgId || tournamentService.getCurrentPBGAccount()?.pbgId || 'PBG-MEMBER'}
-                </span>
-
-                <ChevronDown className={`w-3 h-3 text-stone-700 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                {isSigningIn ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-black" />
+                ) : (
+                  <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                    <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                    <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                    <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                  </svg>
+                )}
+                <span>{isSigningIn ? '...' : 'Sign In'}</span>
               </button>
-            )}
-          >
+
+              <button
+                onClick={onOpenRegister}
+                className="flex items-center gap-1 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white border-2 border-black px-2.5 py-1.5 font-mono text-xs font-black uppercase tracking-tight shadow-[2px_2px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 transition-all cursor-pointer whitespace-nowrap"
+                title="Create Profile & Register"
+              >
+                <Flame className="w-3.5 h-3.5 text-[#FFE600]" />
+                <span className="hidden xs:inline">Join PBG</span>
+                <span className="xs:hidden">Join</span>
+              </button>
+            </div>
+          ) : (
+            /* Logged-in User Profile Dropdown */
+            <MenuDropdown
+              align="right"
+              mobileTitle="Account &amp; Profile"
+              trigger={(isOpen) => (
+                <button
+                  type="button"
+                  className={`flex items-center gap-1.5 border-2 border-black p-1 sm:px-2 sm:py-1 font-mono text-xs font-bold transition-all cursor-pointer ${
+                    isOpen
+                      ? 'bg-[#FFE600] shadow-[2px_2px_0px_0px_#000] -translate-x-0.5 -translate-y-0.5'
+                      : 'bg-[#FFF9E6] hover:bg-white shadow-[2px_2px_0px_0px_#000]'
+                  }`}
+                >
+                  <div className="w-6 h-6 rounded-full bg-[#8B5CF6] text-white flex items-center justify-center font-black text-xs border border-black overflow-hidden shrink-0">
+                    {currentUser.avatarUrl ? (
+                      <img src={currentUser.avatarUrl} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <span>{currentUser.role === 'organizer' ? '👑' : currentUser.role === 'captain' ? '⭐' : '🎮'}</span>
+                    )}
+                  </div>
+
+                  <span className="hidden md:inline font-mono font-black text-xs max-w-[80px] lg:max-w-[100px] truncate text-black">
+                    {currentUser.displayName || 'Player'}
+                  </span>
+
+                  {/* PBG ID Badge */}
+                  <span className="hidden sm:inline-block text-[9px] font-mono px-1 py-0.2 border border-black uppercase font-black bg-[#FFE600] text-black">
+                    {currentUser.pbgId || tournamentService.getCurrentPBGAccount()?.pbgId || 'PBG'}
+                  </span>
+
+                  <ChevronDown className={`w-3 h-3 text-stone-700 shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                </button>
+              )}
+            >
             {/* Real Authenticated User Details & PBG Identity */}
             <div className="px-3 py-2 bg-[#FFF9E6] border-b-2 border-black space-y-1">
               <div className="flex items-center justify-between gap-2">
@@ -788,6 +792,7 @@ export function Navigation({
               )}
             </div>
           </MenuDropdown>
+          )}
         </div>
       </div>
 
@@ -820,6 +825,8 @@ export function Navigation({
                 {[
                   ...primaryNavItems, 
                   ...secondaryNavItems,
+                  { view: 'rankings' as ViewType, label: 'Rankings', icon: Award },
+                  { view: 'how_it_works' as ViewType, label: 'How It Works', icon: Zap },
                   { view: 'fair_play' as ViewType, label: 'Fair Play', icon: ShieldCheck },
                   { view: 'support' as ViewType, label: 'Support', icon: Wrench },
                   { view: 'organisers' as ViewType, label: 'Organisers', icon: Trophy },
