@@ -471,3 +471,46 @@ export function validateAuctionRuntimeIntegrity(session: AuthoritativeAuctionSes
     warnings
   };
 }
+
+/**
+ * PurpleBeanGaming Authoritative Rule:
+ * UNSOLD players may be recalled only after all normal AVAILABLE players have been resolved to SOLD or UNSOLD.
+ */
+export function canRecallUnsold(
+  session: AuthoritativeAuctionSession,
+  playerId: string,
+  options?: { forceOverride?: boolean }
+): { allowed: boolean; reason?: string } {
+  const player = session.players[playerId];
+  if (!player) {
+    return { allowed: false, reason: 'PLAYER_NOT_FOUND: Player not found in auction pool.' };
+  }
+  if (player.status !== 'UNSOLD') {
+    return { allowed: false, reason: `INVALID_STATUS: Player status is ${player.status}, expected UNSOLD.` };
+  }
+  if (session.status === 'COMPLETED' || session.status === 'CANCELLED') {
+    return { 
+      allowed: false, 
+      reason: 'AUCTION_COMPLETED: Auction is completed. Reopening the auction room is required to recall unsold players.' 
+    };
+  }
+  // Allowed only when no normal AVAILABLE players remain
+  const availableRemaining = Object.values(session.players).filter(p => p.status === 'AVAILABLE');
+  if (availableRemaining.length > 0 && !options?.forceOverride) {
+    return {
+      allowed: false,
+      reason: `AVAILABLE_POOL_NOT_EXHAUSTED: ${availableRemaining.length} normal AVAILABLE player(s) remain in the pool. UNSOLD re-auction begins only after all regular players are resolved.`
+    };
+  }
+  // Roster / Stand-in constraints
+  const allPrimaryComplete = Object.values(session.teams).every(
+    t => t.primaryRosterUserIds.length >= (session.config.primaryRosterSize || 5)
+  );
+  if (allPrimaryComplete && session.status !== 'STANDIN_PHASE' && !options?.forceOverride) {
+    return {
+      allowed: false,
+      reason: 'PRIMARY_ROSTERS_COMPLETE: Primary rosters are full (5/5). Stand-In auction phase must be active to recall players.'
+    };
+  }
+  return { allowed: true };
+}

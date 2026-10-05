@@ -20,6 +20,16 @@ export interface PrivateDiscordAccountStatus {
   userId: string;
   pbgId?: string;
   discord?: DiscordIdentityData | null;
+  tournamentRoles?: {
+    pbgMemberRoleActive: boolean;
+    pbgPlayerRoleActive: boolean;
+    pbgCaptainRoleActive: boolean;
+    teamRoleActive: boolean;
+    teamName: string | null;
+    expectedRoles: string[];
+    actualRoleNames: string[];
+    syncRequired: boolean;
+  };
   discordLinked: boolean;
   discordVerified: boolean;
   discordUserId: string | null;

@@ -26,7 +26,11 @@ import {
   Plus,
   Sparkles,
   Sun,
-  Moon
+  Moon,
+  MessageSquare,
+  HelpCircle,
+  ShieldCheck,
+  Wrench
 } from 'lucide-react';
 import { ViewType, CompetitiveGame, Match, Tournament } from '../types/tournament';
 import { PurpleBeanLogo } from './PurpleBeanLogo';
@@ -230,15 +234,18 @@ export function Navigation({
   };
 
   const primaryNavItems: Array<{ view: ViewType; label: string; icon: typeof Trophy }> = [
-    { view: 'home', label: 'Home', icon: Trophy },
     { view: 'tournaments', label: 'Tournaments', icon: Trophy },
-    { view: 'matches', label: 'Matches', icon: Swords },
-    { view: 'teams', label: 'Teams', icon: Shield },
     { view: 'players', label: 'Players', icon: Users },
+    { view: 'rankings', label: 'Rankings', icon: Award },
+    { view: 'how_it_works', label: 'How It Works', icon: Zap },
+    { view: 'community', label: 'Community', icon: MessageSquare },
+    { view: 'about', label: 'About', icon: Shield },
   ];
 
   const secondaryNavItems: Array<{ view: ViewType; label: string; icon: typeof Trophy; badge?: string }> = [
-    { view: 'rankings', label: 'Rankings', icon: Award },
+    { view: 'teams', label: 'Teams', icon: Shield },
+    { view: 'matches', label: 'Matches', icon: Swords },
+    { view: 'faq', label: 'FAQ', icon: HelpCircle },
   ];
 
   const isOrganiserUser = currentUser.role === 'organizer' || currentUser.isAdmin;
@@ -425,16 +432,48 @@ export function Navigation({
             >
               <MenuHeader>Platform Navigation</MenuHeader>
               <MenuItem
-                icon={Award}
-                label="Rankings &amp; Elo Leaderboard"
-                selected={currentView === 'rankings'}
-                onClick={() => onNavigate('rankings')}
+                icon={Shield}
+                label="Teams &amp; Rosters"
+                selected={currentView === 'teams'}
+                onClick={() => onNavigate('teams')}
+              />
+              <MenuItem
+                icon={Swords}
+                label="Live Matches &amp; Schedule"
+                selected={currentView === 'matches'}
+                onClick={() => onNavigate('matches')}
               />
               <MenuItem
                 icon={Shield}
                 label="Interactive Bracket Engine"
                 selected={currentView === 'bracket'}
                 onClick={() => onNavigate('bracket')}
+              />
+              <MenuSeparator />
+              <MenuHeader>Community &amp; Governance</MenuHeader>
+              <MenuItem
+                icon={HelpCircle}
+                label="Frequently Asked Questions (FAQ)"
+                selected={currentView === 'faq'}
+                onClick={() => onNavigate('faq')}
+              />
+              <MenuItem
+                icon={ShieldCheck}
+                label="Fair Play &amp; Anti-Cheat"
+                selected={currentView === 'fair_play'}
+                onClick={() => onNavigate('fair_play')}
+              />
+              <MenuItem
+                icon={Wrench}
+                label="Support &amp; Dispute Desk"
+                selected={currentView === 'support'}
+                onClick={() => onNavigate('support')}
+              />
+              <MenuItem
+                icon={Trophy}
+                label="For Tournament Organisers"
+                selected={currentView === 'organisers'}
+                onClick={() => onNavigate('organisers')}
               />
               {isOrganiserUser && (
                 <>
@@ -778,7 +817,14 @@ export function Navigation({
 
             <div className="overflow-y-auto divide-y divide-stone-100 max-h-[65vh] py-1">
               <div className="grid grid-cols-2 gap-2 pb-3">
-                {[...primaryNavItems, ...secondaryNavItems].map((item) => {
+                {[
+                  ...primaryNavItems, 
+                  ...secondaryNavItems,
+                  { view: 'fair_play' as ViewType, label: 'Fair Play', icon: ShieldCheck },
+                  { view: 'support' as ViewType, label: 'Support', icon: Wrench },
+                  { view: 'organisers' as ViewType, label: 'Organisers', icon: Trophy },
+                  { view: 'contact' as ViewType, label: 'Contact', icon: MessageSquare }
+                ].map((item) => {
                   const isActive = currentView === item.view;
                   return (
                     <button

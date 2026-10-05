@@ -16,7 +16,11 @@ import {
   MapPin,
   Sparkles,
   Zap,
-  Play
+  Play,
+  Gavel,
+  UserCheck,
+  MessageSquare,
+  ExternalLink
 } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
 import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
@@ -592,6 +596,100 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
       </section>
 
       {/* ============================================================ */}
+      {/* HOW IT WORKS SUMMARY */}
+      {/* ============================================================ */}
+      <section className="bg-white dark:bg-[#141222] border-[3.5px] border-black p-6 sm:p-8 shadow-[6px_6px_0px_0px_#000] space-y-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b-2 border-black pb-3">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-mono font-black text-[#7C3AED] uppercase">
+              <Zap className="w-4 h-4" />
+              <span>THE 7-STEP CAREER LADDER</span>
+            </div>
+            <h2 className="text-2xl sm:text-3xl font-black uppercase text-black dark:text-white font-sans tracking-tight">
+              HOW PURPLE BEAN WORKS
+            </h2>
+          </div>
+          <button
+            onClick={() => onNavigate('how_it_works')}
+            className="px-4 py-2 bg-[#FFE600] hover:bg-[#FFDE59] text-black font-mono text-xs font-black uppercase border-2 border-black shadow-[2px_2px_0px_0px_#000] cursor-pointer self-start sm:self-auto"
+          >
+            Explore Complete Guide →
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3 font-mono text-center">
+          {[
+            { num: '01', title: 'Create Profile', desc: 'Generate unique PBG ID' },
+            { num: '02', title: 'Link Dota', desc: 'Steam OpenID & OpenDota' },
+            { num: '03', title: 'Find Tourney', desc: 'Pan-India tier circuits' },
+            { num: '04', title: 'Register', desc: 'Lock in roles & MMR' },
+            { num: '05', title: 'Auction / Draft', desc: 'Live credit bidding rooms' },
+            { num: '06', title: 'Compete', desc: 'Double elimination brackets' },
+            { num: '07', title: 'Build Career', desc: 'Earn Elo rating & INR prizes' },
+          ].map((st, i) => (
+            <div key={i} className="p-3 bg-stone-50 dark:bg-stone-900 border-2 border-black space-y-1 shadow-[2px_2px_0px_0px_#000]">
+              <span className="text-[#7C3AED] font-black text-xs block">{st.num}</span>
+              <h4 className="font-sans font-black text-xs text-black dark:text-white uppercase leading-tight">{st.title}</h4>
+              <p className="text-[10px] text-stone-500 leading-tight">{st.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* ============================================================ */}
+      {/* AUCTION VS PREMADE TOURNAMENTS */}
+      {/* ============================================================ */}
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="bg-white dark:bg-[#141222] border-[3.5px] border-black p-6 shadow-[5px_5px_0px_0px_#000] space-y-3 font-mono">
+          <div className="flex items-center justify-between">
+            <span className="font-black text-xs text-[#7C3AED] uppercase flex items-center gap-1.5">
+              <Gavel className="w-4 h-4" />
+              AUCTION DRAFT TOURNAMENTS
+            </span>
+            <span className="text-[10px] bg-[#FFE600] text-black px-2 py-0.5 border border-black font-black uppercase">
+              SOLO PLAYERS
+            </span>
+          </div>
+          <h3 className="font-sans font-black text-xl text-black dark:text-white uppercase">
+            Live Credit Purse Bidding
+          </h3>
+          <p className="text-xs text-stone-600 dark:text-stone-300 leading-relaxed">
+            Enter the draft pool as an individual competitor. Appointed captains bid virtual credits in real time to recruit you. Balanced teams, fair drafts, and zero premade stack gatekeeping.
+          </p>
+          <button
+            onClick={() => onNavigate('tournaments')}
+            className="text-xs font-black text-[#7C3AED] hover:underline uppercase pt-1 block cursor-pointer"
+          >
+            Browse Auction Tournaments →
+          </button>
+        </div>
+
+        <div className="bg-white dark:bg-[#141222] border-[3.5px] border-black p-6 shadow-[5px_5px_0px_0px_#000] space-y-3 font-mono">
+          <div className="flex items-center justify-between">
+            <span className="font-black text-xs text-black dark:text-stone-300 uppercase flex items-center gap-1.5">
+              <Users className="w-4 h-4" />
+              PREMADE TEAM TOURNAMENTS
+            </span>
+            <span className="text-[10px] bg-stone-200 dark:bg-stone-800 text-black dark:text-white px-2 py-0.5 border border-black font-black uppercase">
+              5-MAN STACKS
+            </span>
+          </div>
+          <h3 className="font-sans font-black text-xl text-black dark:text-white uppercase">
+            Clash Under One Team Banner
+          </h3>
+          <p className="text-xs text-stone-600 dark:text-stone-300 leading-relaxed">
+            Register your established team or campus stack. Lock in your 5-man roster and 1 substitute, climb the Team Leaderboard, and battle in high-intensity double-elimination brackets.
+          </p>
+          <button
+            onClick={() => onNavigate('teams')}
+            className="text-xs font-black text-black dark:text-white hover:underline uppercase pt-1 block cursor-pointer"
+          >
+            Explore Registered Teams →
+          </button>
+        </div>
+      </section>
+
+      {/* ============================================================ */}
       {/* 4. TOP INDIAN PLAYERS & TEAMS */}
       {/* ============================================================ */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -721,9 +819,9 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
       </div>
 
       {/* ============================================================ */}
-      {/* 5. INDIAN ESPORTS PLATFORM PILLARS BANNER */}
+      {/* 5. INDIAN ESPORTS PLATFORM PILLARS & COMMUNITY BANNER */}
       {/* ============================================================ */}
-      <section className="bg-black text-white border-[3.5px] border-black shadow-[8px_8px_0px_0px_#FFE600] p-6 sm:p-8">
+      <section className="bg-black text-white border-[3.5px] border-black shadow-[8px_8px_0px_0px_#FFE600] p-6 sm:p-8 space-y-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="space-y-2 max-w-xl">
             <div className="flex items-center gap-2">
@@ -745,7 +843,7 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
               onClick={onOpenRegister}
               className="bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-white px-5 py-2.5 font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#fff] cursor-pointer"
             >
-              Register Team Now
+              Join PBG &amp; Register
             </button>
             <button
               onClick={() => onNavigate('tournaments')}
@@ -753,6 +851,31 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
             >
               Explore Tournaments
             </button>
+          </div>
+        </div>
+
+        {/* Discord & Community Connect Bar */}
+        <div className="pt-4 border-t border-stone-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 font-mono text-xs">
+          <div className="flex items-center gap-2 text-stone-300">
+            <MessageSquare className="w-4 h-4 text-[#5865F2]" />
+            <span>Join 1,200+ verified Indian competitors on the official Purple Bean Discord server</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => onNavigate('community')}
+              className="text-[#FFE600] hover:underline font-black uppercase cursor-pointer"
+            >
+              View Community Hub →
+            </button>
+            <a
+              href="https://discord.gg/w8h6Jv8wsq"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#5865F2] hover:bg-[#4752C4] text-white font-black uppercase text-[11px] border border-white"
+            >
+              <span>Join Discord</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
           </div>
         </div>
       </section>

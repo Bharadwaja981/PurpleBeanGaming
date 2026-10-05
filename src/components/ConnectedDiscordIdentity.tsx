@@ -24,7 +24,9 @@ import {
   Settings,
   Calendar,
   Lock,
-  Loader2
+  Loader2,
+  Crown,
+  Shield
 } from 'lucide-react';
 import { 
   fetchDiscordLinkStatus, 
@@ -61,6 +63,37 @@ export function ConnectedDiscordIdentity({
   const [privateAccount, setPrivateAccount] = useState<PrivateDiscordAccountStatus | null>(null);
   const [isManageModalOpen, setIsManageModalOpen] = useState(false);
   const [isAuthorizing, setIsAuthorizing] = useState(false);
+
+  const handleSyncDiscordRoles = async () => {
+    setActionInProgress(true);
+    setErrorMessage(null);
+    setSuccessNotice(null);
+    try {
+      let token = '';
+      try {
+        token = await getIdToken();
+      } catch {}
+      const res = await fetch(`/api/tournaments/purple-bean-auction-test/discord/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({ userId: targetUserId || account.googleUid })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.ok || data.success) {
+        setSuccessNotice('✓ Tournament Discord roles synchronized successfully!');
+        await loadStatus();
+      } else {
+        setErrorMessage(data.error || 'Failed to sync Discord roles.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'Error syncing Discord roles.');
+    } finally {
+      setActionInProgress(false);
+    }
+  };
 
   const getIdToken = async (): Promise<string> => {
     const user = auth.currentUser;
@@ -318,7 +351,7 @@ export function ConnectedDiscordIdentity({
                     <span>@{displayUsername}</span>
                   </div>
 
-                  {/* Badges for Joined PBG Discord and PBG Member Role Active */}
+                  {/* Badges for Joined PBG Discord, PBG Member, PBG Player, PBG Captain, and Team Roles */}
                   <div className="flex flex-wrap items-center gap-2 pt-0.5 font-mono text-[10px]">
                     {isGuildMember ? (
                       <span className="bg-[#5865F2] text-white px-2 py-0.5 border border-black font-black uppercase shadow-[1px_1px_0px_0px_#000] flex items-center gap-1">
@@ -340,9 +373,49 @@ export function ConnectedDiscordIdentity({
                     ) : (
                       <span className="bg-stone-200 text-stone-700 dark:bg-stone-800 dark:text-stone-300 px-2 py-0.5 border border-black font-black uppercase shadow-[1px_1px_0px_0px_#000] flex items-center gap-1">
                         <AlertTriangle className="w-3 h-3 text-amber-700 dark:text-amber-400" />
-                        ROLE INACTIVE
+                        MEMBER ROLE INACTIVE
                       </span>
                     )}
+
+                    {/* Verified Temporary Tournament Roles from live Discord verification */}
+                    {privateAccount?.tournamentRoles?.pbgPlayerRoleActive && (
+                      <span className="bg-[#70FFAF] text-black px-2 py-0.5 border border-black font-black uppercase shadow-[1px_1px_0px_0px_#000] flex items-center gap-1">
+                        <ShieldCheck className="w-3 h-3 text-emerald-950" />
+                        PBG PLAYER ROLE ACTIVE
+                      </span>
+                    )}
+
+                    {privateAccount?.tournamentRoles?.pbgCaptainRoleActive && (
+                      <span className="bg-[#FFE600] text-black px-2 py-0.5 border border-black font-black uppercase shadow-[1px_1px_0px_0px_#000] flex items-center gap-1">
+                        <Crown className="w-3 h-3 text-black" />
+                        PBG CAPTAIN ROLE ACTIVE
+                      </span>
+                    )}
+
+                    {privateAccount?.tournamentRoles?.teamRoleActive && privateAccount?.tournamentRoles?.teamName && (
+                      <span className="bg-[#7C3AED] text-white px-2 py-0.5 border border-black font-black uppercase shadow-[1px_1px_0px_0px_#000] flex items-center gap-1">
+                        <Shield className="w-3 h-3 text-white" />
+                        TEAM ROLE: {privateAccount.tournamentRoles.teamName}
+                      </span>
+                    )}
+
+                    {/* If tournament roles are expected but missing from actual Discord membership */}
+                    {privateAccount?.tournamentRoles?.syncRequired ? (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="bg-[#FF70A6] text-black px-2 py-0.5 border border-black font-black uppercase shadow-[1px_1px_0px_0px_#000] flex items-center gap-1" title={`Expected: ${privateAccount.tournamentRoles.expectedRoles.join(', ')}. Actual on Discord: ${privateAccount.tournamentRoles.actualRoleNames.join(', ') || 'None'}`}>
+                          <AlertTriangle className="w-3 h-3 text-black" />
+                          SYNC REQUIRED
+                        </span>
+                        <button
+                          onClick={handleSyncDiscordRoles}
+                          disabled={actionInProgress}
+                          className="px-2 py-0.5 bg-[#FFE600] hover:bg-yellow-400 text-black border border-black text-[10px] font-black uppercase shadow-[1px_1px_0px_0px_#000] cursor-pointer flex items-center gap-1"
+                        >
+                          <RefreshCw className={`w-2.5 h-2.5 ${actionInProgress ? 'animate-spin' : ''}`} />
+                          <span>Reconcile Now</span>
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
 
                   {/* Discord ID & Linked to PBG ID */}
@@ -392,14 +465,26 @@ export function ConnectedDiscordIdentity({
                 <ExternalLink className="w-3.5 h-3.5" />
               </a>
 
-              <button
-                onClick={loadStatus}
-                disabled={loading}
-                className="px-3 py-1.5 bg-white hover:bg-stone-100 text-black border-2 border-black text-xs font-bold uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-                <span>Refresh Data</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSyncDiscordRoles}
+                  disabled={actionInProgress || loading}
+                  className="px-3.5 py-1.5 bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black text-xs font-bold uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  title="Re-synchronize tournament and member Discord roles"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${actionInProgress ? 'animate-spin' : ''}`} />
+                  <span>Sync Discord Roles</span>
+                </button>
+
+                <button
+                  onClick={loadStatus}
+                  disabled={loading}
+                  className="px-3 py-1.5 bg-white hover:bg-stone-100 text-black border-2 border-black text-xs font-bold uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                  <span>Refresh</span>
+                </button>
+              </div>
             </div>
           </div>
         ) : (

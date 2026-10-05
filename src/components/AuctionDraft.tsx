@@ -319,6 +319,7 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
     };
 
     handleSync();
+    engine.syncWithServer().then(() => handleSync()).catch(() => {});
     return engine.subscribe(handleSync);
   }, [selectedTournamentId]);
 
@@ -1080,24 +1081,59 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
                     <span className="bg-[#FF70A6] text-black text-[10px] font-black uppercase px-2 py-0.5 border border-black">
                       PASSED AS UNSOLD
                     </span>
+                    {auctionState.isCompleted && (
+                      <span className="bg-black text-white text-[10px] font-black uppercase px-1.5 py-0.5 border border-black">
+                        AUCTION COMPLETED
+                      </span>
+                    )}
                   </div>
                   <strong className="text-black text-base block mt-1">
                     {auctionState.lastLotResult.player.username} concluded without winning bids.
                   </strong>
                   <p className="text-xs text-stone-600">
-                    Contender was moved to the Unsold Contenders Pool. Organiser can re-auction this player at any time.
+                    {auctionState.isCompleted
+                      ? 'Contender moved to Unsold Contenders Pool. Primary rosters are filled (5/5). Auction is marked COMPLETED. Reopen the auction room or initiate the Stand-In phase to recall this player.'
+                      : 'UNSOLD players may be recalled only after all normal AVAILABLE players have been resolved to SOLD or UNSOLD.'}
                   </p>
                 </div>
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
                 {isOrganiserDeskActive && (
-                  <button
-                    onClick={() => handleReauctionPlayer(auctionState.lastLotResult!.player.id)}
-                    className="px-3 py-1.5 bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
-                  >
-                    ⚡ Re-Auction Now
-                  </button>
+                  auctionState.isCompleted ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={handleReopenAuction}
+                        className="px-3 py-1.5 bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                        title="Reopen completed auction room to recall or adjust rosters"
+                      >
+                        🔓 Reopen for Unsold
+                      </button>
+                      <button
+                        onClick={handleStartStandInAuction}
+                        className="px-3 py-1.5 bg-[#7C3AED] hover:bg-purple-700 text-white border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                        title="Enter stand-in phase to allow teams to purchase optional 6th contenders"
+                      >
+                        ⚡ Stand-In Phase
+                      </button>
+                    </div>
+                  ) : (
+                    (() => {
+                      const recallCheck = activeEngine.canRecallUnsold(auctionState.lastLotResult!.player.id);
+                      return recallCheck.allowed ? (
+                        <button
+                          onClick={() => handleReauctionPlayer(auctionState.lastLotResult!.player.id)}
+                          className="px-3 py-1.5 bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                        >
+                          ⚡ Re-Auction Now
+                        </button>
+                      ) : (
+                        <span className="text-[11px] font-mono text-stone-500 bg-stone-100 border border-black/30 px-2 py-1" title={recallCheck.reason}>
+                          ⏳ {recallCheck.reason?.slice(0, 40)}...
+                        </span>
+                      );
+                    })()
+                  )
                 )}
                 <button
                   onClick={() => dotaAuctionEngine.dismissLastLotResult()}

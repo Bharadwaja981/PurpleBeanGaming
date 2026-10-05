@@ -743,12 +743,86 @@ export async function getPrivateDiscordAccount(userId: string): Promise<PrivateD
     const doc = await db.collection('privatePlayerAccounts').doc(userId).get();
     if (doc.exists) {
       const data = doc.data() as PrivateDiscordAccount;
-      if (data.discordLinked) return data;
+      if (data.discordLinked && data.discordUserId) return data;
     }
 
     // Check for pending finalization to automatically reconcile
     const reconciled = await reconcilePendingDiscordFinalization(userId);
-    if (reconciled) return reconciled;
+    if (reconciled && reconciled.discordLinked && reconciled.discordUserId) return reconciled;
+
+    // Check pbgAccounts collection for linked Discord
+    const pbgDoc = await db.collection('pbgAccounts').doc(userId).get();
+    if (pbgDoc.exists) {
+      const pbgData = pbgDoc.data() || {};
+      const discUserId = pbgData.discordUserId || pbgData.discord?.userId;
+      if (discUserId) {
+        // Also check discord_links doc
+        const linkDoc = await db.collection('discord_links').doc(discUserId).get();
+        const linkData = linkDoc.exists ? (linkDoc.data() as DiscordLinkDocument) : null;
+
+        const resolved: PrivateDiscordAccount = {
+          userId,
+          pbgId: pbgData.pbgId || linkData?.pbgId,
+          discord: {
+            userId: discUserId,
+            username: linkData?.discordUsername || pbgData.discordUsername || pbgData.discord?.username || 'player',
+            globalName: linkData?.globalName || pbgData.discordDisplayName || pbgData.discord?.globalName || null,
+            avatarUrl: linkData?.avatarUrl || pbgData.discordAvatarUrl || pbgData.discordAvatar || null,
+            connectedAt: linkData?.linkedAt || pbgData.discordLinkedAt || Date.now(),
+            guildMember: linkData?.guildMember ?? pbgData.discord?.guildMember ?? true,
+            pbgMemberRole: linkData?.pbgMemberRole ?? pbgData.discord?.pbgMemberRole ?? true,
+            verified: true
+          },
+          discordUserId: discUserId,
+          discordUsername: linkData?.discordUsername || pbgData.discordUsername || pbgData.discord?.username || 'player',
+          discordDisplayName: linkData?.globalName || pbgData.discordDisplayName || pbgData.discord?.globalName || null,
+          discordAvatarUrl: linkData?.avatarUrl || pbgData.discordAvatarUrl || pbgData.discordAvatar || null,
+          discordLinked: true,
+          discordVerified: true,
+          discordVerificationMethod: 'discord_oauth_2',
+          discordLinkedAt: linkData?.linkedAt || Date.now(),
+          discordVerifiedAt: linkData?.linkedAt || Date.now(),
+          updatedAt: Date.now()
+        };
+
+        // Cache into privatePlayerAccounts
+        await db.collection('privatePlayerAccounts').doc(userId).set(resolved, { merge: true }).catch(() => {});
+        return resolved;
+      }
+    }
+
+    // Query discord_links by pbgUserId
+    const linkQuery = await db.collection('discord_links').where('pbgUserId', '==', userId).limit(1).get();
+    if (!linkQuery.empty) {
+      const linkData = linkQuery.docs[0].data() as DiscordLinkDocument;
+      const resolved: PrivateDiscordAccount = {
+        userId,
+        pbgId: linkData.pbgId || undefined,
+        discord: {
+          userId: linkData.discordUserId,
+          username: linkData.discordUsername || 'player',
+          globalName: linkData.globalName || null,
+          avatarUrl: linkData.avatarUrl || null,
+          connectedAt: linkData.linkedAt || Date.now(),
+          guildMember: Boolean(linkData.guildMember),
+          pbgMemberRole: Boolean(linkData.pbgMemberRole),
+          verified: true
+        },
+        discordUserId: linkData.discordUserId,
+        discordUsername: linkData.discordUsername || null,
+        discordDisplayName: linkData.globalName || null,
+        discordAvatarUrl: linkData.avatarUrl || null,
+        discordLinked: true,
+        discordVerified: true,
+        discordVerificationMethod: 'discord_oauth_2',
+        discordLinkedAt: linkData.linkedAt || Date.now(),
+        discordVerifiedAt: linkData.linkedAt || Date.now(),
+        updatedAt: Date.now()
+      };
+
+      await db.collection('privatePlayerAccounts').doc(userId).set(resolved, { merge: true }).catch(() => {});
+      return resolved;
+    }
 
     if (doc.exists) {
       return doc.data() as PrivateDiscordAccount;

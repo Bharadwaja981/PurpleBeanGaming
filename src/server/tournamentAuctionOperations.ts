@@ -33,7 +33,8 @@ import {
   calculateTeamMMR,
   validateBidFeasibility,
   validateAuctionRuntimeIntegrity,
-  AuctionRuntimeIntegrityResult
+  AuctionRuntimeIntegrityResult,
+  canRecallUnsold
 } from '../domain/tournamentAuctionEngine';
 import {
   inMemoryRegistrations,
@@ -716,12 +717,9 @@ export async function reintroduceUnsoldPlayerAuthoritative(params: {
       throw new Error(`INVALID_STATUS: Player status is ${player.status}, expected UNSOLD.`);
     }
 
-    // Check if normal AVAILABLE pool players remain
-    const availableRemaining = Object.values(session.players).filter(p => p.status === 'AVAILABLE');
-    if (availableRemaining.length > 0 && !forceOverride) {
-      throw new Error(
-        `AVAILABLE_POOL_NOT_EXHAUSTED: ${availableRemaining.length} regular available player(s) remain in the pool. UNSOLD re-auction begins only after all regular players are resolved.`
-      );
+    const recallCheck = canRecallUnsold(session, playerId, { forceOverride });
+    if (!recallCheck.allowed && !forceOverride) {
+      throw new Error(recallCheck.reason || 'RECALL_NOT_ALLOWED');
     }
 
     const now = new Date().toISOString();

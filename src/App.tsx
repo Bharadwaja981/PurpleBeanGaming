@@ -49,6 +49,18 @@ import { AuctionDraft } from './components/AuctionDraft';
 import { OrganiserDashboardView } from './views/OrganiserDashboardView';
 import { AdminDashboardView } from './views/AdminDashboardView';
 import { NotFoundView } from './views/NotFoundView';
+import { HowItWorksView } from './views/HowItWorksView';
+import { AboutView } from './views/AboutView';
+import { ContactView } from './views/ContactView';
+import { FaqView } from './views/FaqView';
+import { FairPlayView } from './views/FairPlayView';
+import { CommunityView } from './views/CommunityView';
+import { SupportView } from './views/SupportView';
+import { TermsView } from './views/TermsView';
+import { PrivacyView } from './views/PrivacyView';
+import { CookiesView } from './views/CookiesView';
+import { CommunityGuidelinesView } from './views/CommunityGuidelinesView';
+import { OrganisersView } from './views/OrganisersView';
 import { themeManager, ColorMode, ThemePalette, PBG_PALETTES } from './services/themeManager';
 
 import { Trophy, Shield, Swords, Users, Heart, ArrowUpRight, Flame, MapPin, Key, Loader2, Zap, Sun, Moon } from 'lucide-react';
@@ -274,6 +286,8 @@ export default function App() {
     const tournamentPathMatch = pathname.match(/^\/tournaments\/([^/]+)\/?$/);
     const dotaPlayerMatch = pathname.match(/^\/game\/dota2\/players\/([^/]+)\/?$/);
     const dotaMatchMatch = pathname.match(/^\/game\/dota2\/matches\/([^/]+)\/?$/);
+    const playerMatch = pathname.match(/^\/players\/([^/]+)\/?$/);
+    const teamMatch = pathname.match(/^\/teams\/([^/]+)\/?$/);
 
     if (dotaMatchMatch) {
       const matchId = dotaMatchMatch[1];
@@ -296,6 +310,46 @@ export default function App() {
       } else {
         setCurrentView('tournament_detail');
       }
+    } else if (playerMatch) {
+      setActiveEntityId(playerMatch[1]);
+      setCurrentView('player_profile');
+    } else if (teamMatch) {
+      setActiveEntityId(teamMatch[1]);
+      setCurrentView('team_profile');
+    } else if (pathname === '/how-it-works' || pathname === '/how-it-works/') {
+      setCurrentView('how_it_works');
+    } else if (pathname === '/about' || pathname === '/about/') {
+      setCurrentView('about');
+    } else if (pathname === '/contact' || pathname === '/contact/') {
+      setCurrentView('contact');
+    } else if (pathname === '/faq' || pathname === '/faq/') {
+      setCurrentView('faq');
+    } else if (pathname === '/fair-play' || pathname === '/fair-play/') {
+      setCurrentView('fair_play');
+    } else if (pathname === '/community' || pathname === '/community/') {
+      setCurrentView('community');
+    } else if (pathname === '/support' || pathname === '/support/') {
+      setCurrentView('support');
+    } else if (pathname === '/terms' || pathname === '/terms/') {
+      setCurrentView('terms');
+    } else if (pathname === '/privacy' || pathname === '/privacy/') {
+      setCurrentView('privacy');
+    } else if (pathname === '/cookies' || pathname === '/cookies/') {
+      setCurrentView('cookies');
+    } else if (pathname === '/community-guidelines' || pathname === '/community-guidelines/') {
+      setCurrentView('community_guidelines');
+    } else if (pathname === '/organisers' || pathname === '/organisers/') {
+      setCurrentView('organisers');
+    } else if (pathname === '/players' || pathname === '/players/') {
+      setCurrentView('players');
+    } else if (pathname === '/rankings' || pathname === '/rankings/') {
+      setCurrentView('rankings');
+    } else if (pathname === '/teams' || pathname === '/teams/') {
+      setCurrentView('teams');
+    } else if (pathname === '/matches' || pathname === '/matches/') {
+      setCurrentView('matches');
+    } else if (pathname === '/bracket' || pathname === '/bracket/') {
+      setCurrentView('bracket');
     } else if (pathname === '/auction' || pathname === '/auction/') {
       // Direct un-scoped /auction URL requested: redirect to tournaments directory
       window.history.replaceState({}, '', '/tournaments');
@@ -406,6 +460,8 @@ export default function App() {
       const dotaPlayer = p.match(/^\/game\/dota2\/players\/([^/]+)\/?$/);
       const tourneyMatch = p.match(/^\/tournaments\/([^/]+)\/?$/);
       const auctionMatch = p.match(/^\/tournaments\/([^/]+)\/auction\/?$/);
+      const playerMatch = p.match(/^\/players\/([^/]+)\/?$/);
+      const teamMatch = p.match(/^\/teams\/([^/]+)\/?$/);
 
       if (dotaMatch) {
         setActiveEntityId(dotaMatch[1]);
@@ -419,6 +475,46 @@ export default function App() {
       } else if (tourneyMatch) {
         setActiveEntityId(tourneyMatch[1]);
         setCurrentView('tournament_detail');
+      } else if (playerMatch) {
+        setActiveEntityId(playerMatch[1]);
+        setCurrentView('player_profile');
+      } else if (teamMatch) {
+        setActiveEntityId(teamMatch[1]);
+        setCurrentView('team_profile');
+      } else if (p === '/how-it-works' || p === '/how-it-works/') {
+        setCurrentView('how_it_works');
+      } else if (p === '/about' || p === '/about/') {
+        setCurrentView('about');
+      } else if (p === '/contact' || p === '/contact/') {
+        setCurrentView('contact');
+      } else if (p === '/faq' || p === '/faq/') {
+        setCurrentView('faq');
+      } else if (p === '/fair-play' || p === '/fair-play/') {
+        setCurrentView('fair_play');
+      } else if (p === '/community' || p === '/community/') {
+        setCurrentView('community');
+      } else if (p === '/support' || p === '/support/') {
+        setCurrentView('support');
+      } else if (p === '/terms' || p === '/terms/') {
+        setCurrentView('terms');
+      } else if (p === '/privacy' || p === '/privacy/') {
+        setCurrentView('privacy');
+      } else if (p === '/cookies' || p === '/cookies/') {
+        setCurrentView('cookies');
+      } else if (p === '/community-guidelines' || p === '/community-guidelines/') {
+        setCurrentView('community_guidelines');
+      } else if (p === '/organisers' || p === '/organisers/') {
+        setCurrentView('organisers');
+      } else if (p === '/players' || p === '/players/') {
+        setCurrentView('players');
+      } else if (p === '/rankings' || p === '/rankings/') {
+        setCurrentView('rankings');
+      } else if (p === '/teams' || p === '/teams/') {
+        setCurrentView('teams');
+      } else if (p === '/matches' || p === '/matches/') {
+        setCurrentView('matches');
+      } else if (p === '/bracket' || p === '/bracket/') {
+        setCurrentView('bracket');
       } else if (p === '/tournaments' || p === '/tournaments/') {
         setCurrentView('tournaments');
       } else if (p === '/admin' || p === '/admin/') {
@@ -461,6 +557,44 @@ export default function App() {
           window.history.pushState({ view }, '', '/');
         } else if (view === 'tournaments') {
           window.history.pushState({ view }, '', '/tournaments');
+        } else if (view === 'how_it_works') {
+          window.history.pushState({ view }, '', '/how-it-works');
+        } else if (view === 'about') {
+          window.history.pushState({ view }, '', '/about');
+        } else if (view === 'contact') {
+          window.history.pushState({ view }, '', '/contact');
+        } else if (view === 'faq') {
+          window.history.pushState({ view }, '', '/faq');
+        } else if (view === 'fair_play') {
+          window.history.pushState({ view }, '', '/fair-play');
+        } else if (view === 'community') {
+          window.history.pushState({ view }, '', '/community');
+        } else if (view === 'support') {
+          window.history.pushState({ view }, '', '/support');
+        } else if (view === 'terms') {
+          window.history.pushState({ view }, '', '/terms');
+        } else if (view === 'privacy') {
+          window.history.pushState({ view }, '', '/privacy');
+        } else if (view === 'cookies') {
+          window.history.pushState({ view }, '', '/cookies');
+        } else if (view === 'community_guidelines') {
+          window.history.pushState({ view }, '', '/community-guidelines');
+        } else if (view === 'organisers') {
+          window.history.pushState({ view }, '', '/organisers');
+        } else if (view === 'players') {
+          window.history.pushState({ view }, '', '/players');
+        } else if (view === 'player_profile' && entityId) {
+          window.history.pushState({ view, entityId }, '', `/players/${entityId}`);
+        } else if (view === 'teams') {
+          window.history.pushState({ view }, '', '/teams');
+        } else if (view === 'team_profile' && entityId) {
+          window.history.pushState({ view, entityId }, '', `/teams/${entityId}`);
+        } else if (view === 'rankings') {
+          window.history.pushState({ view }, '', '/rankings');
+        } else if (view === 'matches') {
+          window.history.pushState({ view }, '', '/matches');
+        } else if (view === 'bracket') {
+          window.history.pushState({ view }, '', '/bracket');
         }
       } catch {
         // Ignore iframe pushState restrictions
@@ -764,6 +898,66 @@ export default function App() {
                 <NotFoundView onNavigate={handleNavigate} />
               )}
 
+              {currentView === 'how_it_works' && (
+                <HowItWorksView 
+                  onNavigate={handleNavigate} 
+                  onOpenRegister={handleOpenRegister} 
+                />
+              )}
+
+              {currentView === 'about' && (
+                <AboutView 
+                  onNavigate={handleNavigate} 
+                  onOpenRegister={handleOpenRegister} 
+                />
+              )}
+
+              {currentView === 'contact' && (
+                <ContactView onNavigate={handleNavigate} />
+              )}
+
+              {currentView === 'faq' && (
+                <FaqView onNavigate={handleNavigate} />
+              )}
+
+              {currentView === 'fair_play' && (
+                <FairPlayView onNavigate={handleNavigate} />
+              )}
+
+              {currentView === 'community' && (
+                <CommunityView 
+                  onNavigate={handleNavigate} 
+                  onOpenRegister={handleOpenRegister} 
+                />
+              )}
+
+              {currentView === 'support' && (
+                <SupportView onNavigate={handleNavigate} />
+              )}
+
+              {currentView === 'terms' && (
+                <TermsView onNavigate={handleNavigate} />
+              )}
+
+              {currentView === 'privacy' && (
+                <PrivacyView onNavigate={handleNavigate} />
+              )}
+
+              {currentView === 'cookies' && (
+                <CookiesView onNavigate={handleNavigate} />
+              )}
+
+              {currentView === 'community_guidelines' && (
+                <CommunityGuidelinesView onNavigate={handleNavigate} />
+              )}
+
+              {currentView === 'organisers' && (
+                <OrganisersView 
+                  onNavigate={handleNavigate} 
+                  onOpenCreateTournament={() => setIsCreateTournamentOpen(true)} 
+                />
+              )}
+
               {/* Robust Fallback in case of any unmapped view state */}
               {![
                 'home',
@@ -788,7 +982,19 @@ export default function App() {
                 'register',
                 'dota_game_profile',
                 'dota_match_detail',
-                'not_found'
+                'not_found',
+                'how_it_works',
+                'about',
+                'contact',
+                'faq',
+                'fair_play',
+                'community',
+                'support',
+                'terms',
+                'privacy',
+                'cookies',
+                'community_guidelines',
+                'organisers'
               ].includes(currentView) && (
                 <HomeView 
                   onNavigate={handleNavigate} 
@@ -885,10 +1091,11 @@ export default function App() {
       )}
 
       {/* Neo-brutalist Footer */}
-      <footer className="w-full border-t-[3.5px] border-black bg-white mt-auto">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-8">
-          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-            <div className="space-y-2">
+      <footer className="w-full border-t-[3.5px] border-black bg-white dark:bg-[#141222] mt-auto transition-colors">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-10">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-8">
+            {/* Brand column */}
+            <div className="lg:col-span-2 space-y-3">
               <div 
                 onClick={() => handleNavigate('home')}
                 className="inline-block cursor-pointer group"
@@ -896,38 +1103,146 @@ export default function App() {
               >
                 <PurpleBeanLogo size="md" showText={true} />
               </div>
-              <p className="font-mono text-xs text-stone-600 max-w-sm mt-2">
+              <p className="font-mono text-xs text-stone-600 dark:text-stone-300 max-w-sm leading-relaxed">
                 India’s premier esports tournament infrastructure featuring real-time captain purse auctions, double-elimination routing, OpenDota verification, and anti-cheat referee auditing for competitive Dota 2.
               </p>
+              <div className="pt-1 flex items-center gap-2 font-mono text-[11px] text-stone-500">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse border border-black" />
+                <span>SERVER RELAYS ONLINE · MUMBAI &amp; BENGALURU</span>
+              </div>
             </div>
 
-            {/* Quick Links Matrix */}
-            <div className="flex flex-wrap items-center gap-4 font-mono text-xs font-black uppercase">
-              <button onClick={() => handleNavigate('home')} className="hover:underline cursor-pointer">Home</button>
-              <span>·</span>
-              <button onClick={() => handleNavigate('tournaments')} className="hover:underline cursor-pointer">Tournaments</button>
-              <span>·</span>
-              <button onClick={() => handleNavigate('matches')} className="hover:underline cursor-pointer">Matches</button>
-              <span>·</span>
-              <button onClick={() => handleNavigate('bracket')} className="hover:underline cursor-pointer">Bracket Engine</button>
-              <span>·</span>
-              <button onClick={() => handleNavigate('rankings')} className="hover:underline cursor-pointer">Rankings</button>
-              <span>·</span>
-              <button onClick={() => handleNavigate('organiser_dashboard')} className="hover:underline cursor-pointer">Organiser Desk</button>
+            {/* Column 1: PLATFORM */}
+            <div className="space-y-3 font-mono">
+              <h4 className="font-sans font-black text-xs uppercase tracking-wider text-black dark:text-white">
+                PLATFORM
+              </h4>
+              <ul className="space-y-2 text-xs font-bold text-stone-600 dark:text-stone-300">
+                <li>
+                  <button onClick={() => handleNavigate('tournaments')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    Tournaments
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => handleNavigate('players')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    Players
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => handleNavigate('teams')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    Teams
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => handleNavigate('rankings')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    Rankings
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => handleNavigate('how_it_works')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    How It Works
+                  </button>
+                </li>
+              </ul>
+            </div>
+
+            {/* Column 2: COMMUNITY */}
+            <div className="space-y-3 font-mono">
+              <h4 className="font-sans font-black text-xs uppercase tracking-wider text-black dark:text-white">
+                COMMUNITY
+              </h4>
+              <ul className="space-y-2 text-xs font-bold text-stone-600 dark:text-stone-300">
+                <li>
+                  <a href="https://discord.gg/w8h6Jv8wsq" target="_blank" rel="noreferrer" className="hover:text-black dark:hover:text-white hover:underline inline-flex items-center gap-1">
+                    <span>Discord</span>
+                    <ArrowUpRight className="w-3 h-3" />
+                  </a>
+                </li>
+                <li>
+                  <button onClick={() => handleNavigate('faq')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    FAQ
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => handleNavigate('fair_play')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    Fair Play
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => handleNavigate('support')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    Support
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => handleNavigate('community')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    Community Hub
+                  </button>
+                </li>
+              </ul>
+            </div>
+
+            {/* Column 3: COMPANY */}
+            <div className="space-y-3 font-mono">
+              <h4 className="font-sans font-black text-xs uppercase tracking-wider text-black dark:text-white">
+                COMPANY
+              </h4>
+              <ul className="space-y-2 text-xs font-bold text-stone-600 dark:text-stone-300">
+                <li>
+                  <button onClick={() => handleNavigate('about')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    About
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => handleNavigate('contact')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    Contact
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => handleNavigate('organisers')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    Organisers
+                  </button>
+                </li>
+              </ul>
+            </div>
+
+            {/* Column 4: LEGAL */}
+            <div className="space-y-3 font-mono">
+              <h4 className="font-sans font-black text-xs uppercase tracking-wider text-black dark:text-white">
+                LEGAL
+              </h4>
+              <ul className="space-y-2 text-xs font-bold text-stone-600 dark:text-stone-300">
+                <li>
+                  <button onClick={() => handleNavigate('terms')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    Terms
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => handleNavigate('privacy')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    Privacy
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => handleNavigate('cookies')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    Cookies
+                  </button>
+                </li>
+                <li>
+                  <button onClick={() => handleNavigate('community_guidelines')} className="hover:text-black dark:hover:text-white hover:underline cursor-pointer">
+                    Community Guidelines
+                  </button>
+                </li>
+              </ul>
             </div>
           </div>
 
-          <div className="pt-6 border-t-2 border-black flex flex-col sm:flex-row items-center justify-between gap-4 font-mono text-[11px] sm:text-xs text-stone-600 text-center sm:text-left">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 bg-emerald-500 border border-black rounded-full inline-block animate-pulse shrink-0" />
-              <span>VALVE &amp; RIOT API SYNC · MUMBAI &amp; BENGALURU RELAYS ONLINE</span>
+          <div className="pt-6 border-t-2 border-black dark:border-stone-800 flex flex-col sm:flex-row items-center justify-between gap-4 font-mono text-[11px] sm:text-xs text-stone-600 dark:text-stone-400 text-center sm:text-left">
+            <div>
+              <span>DESIGNED FOR INDIAN ESPORTS</span>
+              <span className="mx-2">·</span>
+              <span>© 2026 PURPLE BEAN GAMING</span>
             </div>
 
             <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
-              <span>DESIGNED FOR INDIAN ESPORTS</span>
-              <span>·</span>
-              <span>© 2026 PURPLE BEAN GAMING</span>
-              <span>·</span>
               <button
                 onClick={handleToggleDarkMode}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-stone-100 hover:bg-[#FFE600] text-black border-2 border-black shadow-[2px_2px_0px_0px_#000] cursor-pointer active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all font-mono text-[10px] font-black uppercase"

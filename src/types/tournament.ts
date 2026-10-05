@@ -469,4 +469,16 @@ export type ViewType =
   | 'admin_dashboard'
   | 'dota_game_profile'
   | 'dota_match_detail'
-  | 'not_found';
+  | 'not_found'
+  | 'how_it_works'
+  | 'about'
+  | 'contact'
+  | 'faq'
+  | 'fair_play'
+  | 'community'
+  | 'support'
+  | 'terms'
+  | 'privacy'
+  | 'cookies'
+  | 'community_guidelines'
+  | 'organisers';

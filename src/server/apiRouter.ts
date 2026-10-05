@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { verifyFirebaseBearerToken } from './firebaseAdmin';
+import { verifyFirebaseBearerToken, getAdminDb } from './firebaseAdmin';
 import { generateSignedSteamState, verifySignedSteamState } from './steamState';
 import { buildSteamOpenIdLoginUrl, validateSteamOpenIdCallback } from './steamOpenId';
 import {
@@ -63,6 +63,8 @@ import {
   cleanupEliminatedTeamDiscordRoles,
   cleanupTournamentCompletionDiscordRoles,
   retryPendingDiscordSyncJobs,
+  syncTournamentDiscordRolesAll,
+  getTournamentDiscordDiagnostics,
   inMemoryParticipants,
   inMemoryTournamentTeams
 } from './discordTournamentSyncService';
@@ -1316,7 +1318,17 @@ const handleDiscordStatus = async (req: Request, res: Response) => {
 
     const guildId = process.env.DISCORD_GUILD_ID || '631715510631006219';
     const roleId = process.env.DISCORD_PBG_MEMBER_ROLE_ID || '1555885374713237524';
+    const playerRoleId = process.env.DISCORD_PBG_PLAYER_ROLE_ID || '1555884061111746651';
+    const captainRoleId = process.env.DISCORD_PBG_CAPTAIN_ROLE_ID || '1556338549807259658';
     const botToken = process.env.DISCORD_BOT_TOKEN;
+
+    let pbgPlayerRole = false;
+    let pbgCaptainRole = false;
+    let teamRoleActive = false;
+    let teamName: string | null = null;
+    let expectedRoles: string[] = [];
+    let actualRoleNames: string[] = [];
+    let syncRequired = false;
 
     // Live authoritative verification against Discord API:
     // Ensures status reflects reality on Discord and updates Firestore if state is stale
@@ -1335,6 +1347,81 @@ const handleDiscordStatus = async (req: Request, res: Response) => {
           const memberData = await verifyRes.json();
           const roles: string[] = Array.isArray(memberData?.roles) ? memberData.roles : [];
           pbgMemberRole = roles.includes(roleId);
+          pbgPlayerRole = roles.includes(playerRoleId);
+          pbgCaptainRole = roles.includes(captainRoleId);
+
+          if (pbgMemberRole) actualRoleNames.push('PBG Member');
+          if (pbgPlayerRole) actualRoleNames.push('PBG Player');
+          if (pbgCaptainRole) actualRoleNames.push('PBG Captain');
+
+          // Check if user is enrolled in an active or recent tournament
+          const db = getAdminDb();
+          if (db) {
+            try {
+              const matchedUids = new Set([targetUserId, account.userId, account.pbgId].filter(Boolean));
+              if (account.discordUserId) {
+                const lDoc = await db.collection('discord_links').doc(account.discordUserId).get();
+                if (lDoc.exists && lDoc.data()?.pbgUserId) {
+                  matchedUids.add(lDoc.data()!.pbgUserId);
+                }
+              }
+
+              const tSnap = await db.collection('tournaments').limit(30).get();
+              for (const tDoc of tSnap.docs) {
+                const tData = tDoc.data();
+                if (tData.status === 'Completed' || tData.status === 'Archived' || tData.lifecycle === 'COMPLETED') continue;
+
+                const cap = tData.captains?.find((c: any) => matchedUids.has(c.userId) || matchedUids.has(c.pbgId));
+                const team = tData.teams?.find((t: any) => 
+                  matchedUids.has(t.captainId) || matchedUids.has(t.captainUserId) ||
+                  (t.primaryRoster || []).some((p: any) => matchedUids.has(p.userId) || matchedUids.has(p.id)) ||
+                  (t.roster || []).some((pid: any) => matchedUids.has(typeof pid === 'string' ? pid : pid?.id || pid?.userId))
+                );
+
+                if (cap || team) {
+                  expectedRoles = ['PBG Member', 'PBG Player'];
+                  if (cap || team?.captainId === targetUserId || team?.captainUserId === targetUserId) {
+                    expectedRoles.push('PBG Captain');
+                  }
+                  if (team?.name) {
+                    teamName = team.name;
+                    expectedRoles.push(team.name);
+                    if (team.discord?.roleId && roles.includes(team.discord.roleId)) {
+                      teamRoleActive = true;
+                      actualRoleNames.push(team.name);
+                    }
+                  }
+                  break;
+                }
+              }
+
+              // Also check if any team role currently exists on user in Discord
+              if (!teamRoleActive && tSnap.docs.length > 0) {
+                for (const tDoc of tSnap.docs) {
+                  const tData = tDoc.data();
+                  for (const t of (tData.teams || [])) {
+                    if (t.discord?.roleId && roles.includes(t.discord.roleId)) {
+                      teamRoleActive = true;
+                      teamName = t.name;
+                      if (!actualRoleNames.includes(t.name)) actualRoleNames.push(t.name);
+                      break;
+                    }
+                  }
+                  if (teamRoleActive) break;
+                }
+              }
+            } catch (dbErr) {
+              console.warn('[handleDiscordStatus] Tournament role expectation query warning:', dbErr);
+            }
+          }
+
+          // Check if sync is required
+          if (expectedRoles.length > 0) {
+            if (!pbgMemberRole) syncRequired = true;
+            if (expectedRoles.includes('PBG Player') && !pbgPlayerRole) syncRequired = true;
+            if (expectedRoles.includes('PBG Captain') && !pbgCaptainRole) syncRequired = true;
+            if (expectedRoles.includes(teamName || '') && !teamRoleActive) syncRequired = true;
+          }
         } else if (verifyRes.status === 404) {
           guildMember = false;
           pbgMemberRole = false;
@@ -1381,6 +1468,16 @@ const handleDiscordStatus = async (req: Request, res: Response) => {
           pbgMemberRole,
           verified: true
         } : null),
+        tournamentRoles: {
+          pbgMemberRoleActive: pbgMemberRole,
+          pbgPlayerRoleActive: pbgPlayerRole,
+          pbgCaptainRoleActive: pbgCaptainRole,
+          teamRoleActive,
+          teamName,
+          expectedRoles,
+          actualRoleNames,
+          syncRequired
+        },
         discordLinked: account.discordLinked,
         discordVerified: account.discordVerified,
         discordUserId: isOwner ? account.discordUserId : (account.discordUserId ? account.discordUserId.slice(-4).padStart(account.discordUserId.length, '•') : null),
@@ -1941,6 +2038,56 @@ apiRouter.post('/tournaments/:tournamentId/discord/sync', async (req: Request, r
       ok: result.success,
       success: result.success,
       result
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Retroactive Full Tournament Discord Role Sync
+ * Iterates through all real active participants, reconciles roles, skips test identities.
+ */
+apiRouter.post('/tournaments/:tournamentId/discord/sync-all', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const report = await syncTournamentDiscordRolesAll({ tournamentId });
+
+    return res.json({
+      ok: report.failed === 0,
+      success: true,
+      report
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Organizer Tournament Discord Diagnostics
+ */
+apiRouter.get('/tournaments/:tournamentId/discord/diagnostics', async (req: Request, res: Response) => {
+  try {
+    const tournamentId = req.params.tournamentId;
+    const diagnostics = await getTournamentDiscordDiagnostics(tournamentId);
+
+    return res.json({
+      ok: true,
+      success: true,
+      tournamentId,
+      diagnostics
     });
   } catch (err: any) {
     return res.status(500).json({

@@ -324,6 +324,9 @@ export class DotaAuctionEngine {
           }
         }
 
+        // Immediate initial sync with server
+        this.syncWithServer().catch(() => {});
+
         // Fast periodic poll fallback (every 2.5s) to guarantee zero desync
         this.ssePollInterval = setInterval(() => {
           if (this.isApplyingRemoteUpdate) return;
@@ -336,8 +339,16 @@ export class DotaAuctionEngine {
                 const serverNominee = data.snapshot.state?.nominee?.id;
                 const localNominee = this.state.nominee?.id;
 
-                // Sync if server has newer revision or different nominee state
-                if (serverRev > localRev || serverNominee !== localNominee || (data.snapshot.state?.status === 'LIVE' && this.state.status !== 'LIVE')) {
+                // Sync if server has newer revision or different state
+                if (
+                  serverRev > localRev || 
+                  serverNominee !== localNominee || 
+                  (data.snapshot.state?.status === 'LIVE' && this.state.status !== 'LIVE') ||
+                  this.players.size !== (data.snapshot.players?.length || 0) ||
+                  this.getUnsoldPlayers().length !== (data.snapshot.state?.unsoldCount || 0) ||
+                  this.getSoldPlayers().length !== (data.snapshot.state?.soldCount || 0) ||
+                  this.state.status !== data.snapshot.state?.status
+                ) {
                   this.importSnapshot(data.snapshot);
                 }
               }
@@ -443,6 +454,25 @@ export class DotaAuctionEngine {
     }
   }
 
+  /**
+   * Fetches latest authoritative server snapshot and imports it immediately.
+   */
+  public async syncWithServer(): Promise<boolean> {
+    if (typeof window === 'undefined' || typeof fetch === 'undefined') return false;
+    try {
+      const res = await fetch(`/api/auction/${encodeURIComponent(this.config.tournamentId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.success && data?.snapshot) {
+          return this.importSnapshot(data.snapshot);
+        }
+      }
+    } catch (err) {
+      console.warn('[DotaAuctionEngine] syncWithServer warning:', err);
+    }
+    return false;
+  }
+
   private broadcastUpdate(persist = true) {
     if (this.isApplyingRemoteUpdate) return;
     if (persist) {
@@ -490,8 +520,66 @@ export class DotaAuctionEngine {
         this.teams = new Map(snapshot.teams.map((t: DotaAuctionTeam) => [t.id, { ...t }]));
       }
       if (Array.isArray(snapshot.players)) {
-        this.players = new Map(snapshot.players.map((p: DotaAuctionPlayer) => [p.id, { ...p }]));
+        this.players = new Map(snapshot.players.map((p: DotaAuctionPlayer) => {
+          const clone: DotaAuctionPlayer = { ...p };
+          if ((clone as any).auctionStatus && !clone.status) clone.status = (clone as any).auctionStatus;
+          if (clone.status && !(clone as any).auctionStatus) (clone as any).auctionStatus = clone.status;
+          return [clone.id, clone];
+        }));
       }
+
+      // Self-heal player statuses from teams and nomination audits to guarantee single source of truth
+      for (const t of this.teams.values()) {
+        for (const rosterPlayer of (t.primaryRoster || [])) {
+          const p = this.players.get(rosterPlayer.id);
+          if (p) {
+            p.status = 'SOLD';
+            (p as any).auctionStatus = 'SOLD';
+            p.teamId = t.id;
+            p.teamName = t.name;
+          }
+        }
+        for (const standIn of (t.standIns || [])) {
+          const p = this.players.get(standIn.id);
+          if (p) {
+            p.status = 'SOLD';
+            (p as any).auctionStatus = 'SOLD';
+            p.teamId = t.id;
+            p.teamName = t.name;
+            p.isStandIn = true;
+          }
+        }
+      }
+
+      // If lastLotResult was UNSOLD, ensure that player is UNSOLD
+      if (this.state.lastLotResult?.outcome === 'UNSOLD' && this.state.lastLotResult.player?.id) {
+        const lastUnsold = this.players.get(this.state.lastLotResult.player.id);
+        if (lastUnsold && lastUnsold.status !== 'SOLD') {
+          lastUnsold.status = 'UNSOLD';
+          (lastUnsold as any).auctionStatus = 'UNSOLD';
+        }
+      }
+
+      // Reconcile nomination audits for unsold players
+      if (Array.isArray(snapshot.nominationAudits)) {
+        for (const audit of snapshot.nominationAudits) {
+          if (audit.outcome === 'UNSOLD' && audit.nomineeId) {
+            const p = this.players.get(audit.nomineeId);
+            if (p && p.status !== 'SOLD') {
+              p.status = 'UNSOLD';
+              (p as any).auctionStatus = 'UNSOLD';
+            }
+          }
+        }
+      }
+
+      // Authoritative count derivation: counters MUST strictly match this.players Map
+      const unsoldList = Array.from(this.players.values()).filter(p => p.status === 'UNSOLD' || (p as any).auctionStatus === 'UNSOLD');
+      this.state.unsoldCount = unsoldList.length;
+      const soldList = Array.from(this.players.values()).filter(p => p.status === 'SOLD' || (p as any).auctionStatus === 'SOLD');
+      this.state.soldCount = soldList.length;
+      const unselectedList = Array.from(this.players.values()).filter(p => p.status === 'UNSELECTED' || (p as any).auctionStatus === 'UNSELECTED');
+      this.state.unselectedCount = unselectedList.length;
       if (Array.isArray(snapshot.bidHistory)) {
         this.bidHistory = [...snapshot.bidHistory];
       }
@@ -1361,28 +1449,100 @@ export class DotaAuctionEngine {
   }
 
   /**
-   * Restores an individual UNSOLD or UNSELECTED contender back to AVAILABLE auction pool.
-   * If the auction was previously marked completed, reopens it.
+   * PurpleBeanGaming Authoritative Rule:
+   * UNSOLD players may be recalled only after all normal AVAILABLE players have been resolved to SOLD or UNSOLD.
    */
-  public reauctionPlayer(playerId: string, staffActorId = 'organizer'): { success: boolean; player?: DotaAuctionPlayer; error?: string } {
+  public canRecallUnsold(
+    playerId: string,
+    options?: { forceOverride?: boolean }
+  ): { allowed: boolean; reason?: string } {
+    const player = this.players.get(playerId);
+    if (!player) {
+      return { allowed: false, reason: 'Player not found in auction pool.' };
+    }
+    if (player.status !== 'UNSOLD' && (player as any).auctionStatus !== 'UNSOLD') {
+      return { allowed: false, reason: `Player status is ${player.status}, expected UNSOLD.` };
+    }
+    if (this.state.isCompleted || this.state.status === 'COMPLETED') {
+      return {
+        allowed: false,
+        reason: 'Auction is COMPLETED (Primary rosters complete). Reopening the auction room ("Reopen for Unsold") or initiating the Stand-In phase is required.'
+      };
+    }
+    // Check if normal AVAILABLE players remain
+    const availableNormal = Array.from(this.players.values()).filter(p => (p.status === 'AVAILABLE' || (p as any).auctionStatus === 'AVAILABLE') && !p.isCaptain);
+    if (availableNormal.length > 0 && !options?.forceOverride) {
+      return {
+        allowed: false,
+        reason: `Recall not permitted: ${availableNormal.length} normal AVAILABLE player(s) remain in the pool. All regular players must be resolved to SOLD or UNSOLD first.`
+      };
+    }
+    // Roster / Stand-in constraints
+    const allPrimaryFilled = Array.from(this.teams.values()).length > 0 && Array.from(this.teams.values()).every(
+      t => t.primaryRoster.length >= this.config.primaryRosterSize
+    );
+    if (allPrimaryFilled && !this.state.standInRoundActive && !options?.forceOverride) {
+      return {
+        allowed: false,
+        reason: 'Primary rosters are full (5/5). Stand-In auction phase must be active to purchase another contender.'
+      };
+    }
+    return { allowed: true };
+  }
+
+  /**
+   * Explicit organizer reopening of completed auction room for unsold contender resolution.
+   */
+  public reopenAuctionForUnsold(staffActorId = 'organizer', reason = 'Reopening room to resolve unsold contenders'): { success: boolean; error?: string } {
+    this.state.isCompleted = false;
+    this.state.status = 'PAUSED';
+    this.logAudit('AUCTION_REOPENED_FOR_UNSOLD', staffActorId, `Auction reopened: ${reason}`);
+    this.broadcastUpdate();
+    this.notify();
+    return { success: true };
+  }
+
+  /**
+   * Restores an individual UNSOLD or UNSELECTED contender back to AVAILABLE auction pool.
+   * Emits audited PLAYER_REINTRODUCED event.
+   */
+  public reauctionPlayer(
+    playerId: string, 
+    staffActorId = 'organizer',
+    options?: { forceOverride?: boolean; overrideReason?: string }
+  ): { success: boolean; player?: DotaAuctionPlayer; error?: string } {
+    if (this.state.isCompleted || this.state.status === 'COMPLETED') {
+      return {
+        success: false,
+        error: 'AUCTION_LOCKED_COMPLETED: Auction is COMPLETED and locked. Reopen the auction room via "Reopen for Unsold" or initiate the Stand-In phase before recalling players.'
+      };
+    }
     const p = this.players.get(playerId);
     if (!p) return { success: false, error: `Player '${playerId}' not found.` };
-    if (p.status !== 'UNSOLD' && p.status !== 'UNSELECTED') {
+    if (p.status !== 'UNSOLD' && p.status !== 'UNSELECTED' && (p as any).auctionStatus !== 'UNSOLD' && (p as any).auctionStatus !== 'UNSELECTED') {
       return { success: false, error: `Player '${p.username}' is not UNSOLD or UNSELECTED (status: ${p.status}).` };
     }
+
     if (p.status === 'UNSOLD') {
+      const check = this.canRecallUnsold(playerId, options);
+      if (!check.allowed && !options?.forceOverride) {
+        return { success: false, error: check.reason };
+      }
       this.state.unsoldCount = Math.max(0, this.state.unsoldCount - 1);
     }
+
     if (p.status === 'UNSELECTED') {
       this.state.unselectedCount = Math.max(0, (this.state.unselectedCount || 0) - 1);
     }
+
     p.status = 'AVAILABLE';
     this.unsoldQueue = this.unsoldQueue.filter(id => id !== playerId);
-    if (this.state.isCompleted) {
-      this.state.isCompleted = false;
-      this.state.status = 'READY';
-    }
-    this.logAudit('player_reauction_restored', staffActorId, `Restored ${p.username} back to available auction pool for re-auction.`);
+    
+    this.logAudit(
+      'PLAYER_REINTRODUCED', 
+      staffActorId, 
+      `Player ${p.username} recalled from ${p.status} to AVAILABLE auction pool.${options?.forceOverride ? ` [ORGANIZER OVERRIDE: ${options.overrideReason || 'Admin approved'}]` : ''}`
+    );
     this.notify();
     return { success: true, player: p };
   }
@@ -1390,11 +1550,15 @@ export class DotaAuctionEngine {
   /**
    * Re-auctions and immediately puts the UNSOLD or UNSELECTED contender on the live auction block.
    */
-  public reauctionAndNominatePlayer(playerId: string, staffActorId = 'organizer'): { success: boolean; nominee?: DotaAuctionPlayer; error?: string } {
+  public reauctionAndNominatePlayer(
+    playerId: string, 
+    staffActorId = 'organizer',
+    options?: { forceOverride?: boolean; overrideReason?: string }
+  ): { success: boolean; nominee?: DotaAuctionPlayer; error?: string } {
     const p = this.players.get(playerId);
     if (!p) return { success: false, error: `Player '${playerId}' not found.` };
     if (p.status === 'UNSOLD' || p.status === 'UNSELECTED') {
-      const rest = this.reauctionPlayer(playerId, staffActorId);
+      const rest = this.reauctionPlayer(playerId, staffActorId, options);
       if (!rest.success) return { success: false, error: rest.error };
     }
     return this.nominatePlayer(playerId, staffActorId);
@@ -2235,6 +2399,18 @@ export class DotaAuctionEngine {
       );
     }
 
+    // Authoritative state synchronization: ensure this.players Map is immediately updated with authoritative status
+    const existingPlayer = this.players.get(nominee.id);
+    if (existingPlayer) {
+      existingPlayer.status = nominee.status;
+      existingPlayer.teamId = nominee.teamId;
+      existingPlayer.teamName = nominee.teamName;
+      existingPlayer.soldAmount = nominee.soldAmount;
+      existingPlayer.isStandIn = nominee.isStandIn;
+    } else {
+      this.players.set(nominee.id, { ...nominee });
+    }
+
     // Record nomination audit
     this.stopTimer();
     this.state.timerEndsAt = undefined;
@@ -2444,19 +2620,19 @@ export class DotaAuctionEngine {
   }
 
   public getAvailablePlayers(): DotaAuctionPlayer[] {
-    return Array.from(this.players.values()).filter(p => p.status === 'AVAILABLE');
+    return Array.from(this.players.values()).filter(p => ((p.status === 'AVAILABLE' || (p as any).auctionStatus === 'AVAILABLE') && !p.isCaptain));
   }
 
   public getSoldPlayers(): DotaAuctionPlayer[] {
-    return Array.from(this.players.values()).filter(p => p.status === 'SOLD');
+    return Array.from(this.players.values()).filter(p => p.status === 'SOLD' || (p as any).auctionStatus === 'SOLD');
   }
 
   public getUnsoldPlayers(): DotaAuctionPlayer[] {
-    return Array.from(this.players.values()).filter(p => p.status === 'UNSOLD');
+    return Array.from(this.players.values()).filter(p => p.status === 'UNSOLD' || (p as any).auctionStatus === 'UNSOLD');
   }
 
   public getUnselectedPlayers(): DotaAuctionPlayer[] {
-    return Array.from(this.players.values()).filter(p => p.status === 'UNSELECTED');
+    return Array.from(this.players.values()).filter(p => p.status === 'UNSELECTED' || (p as any).auctionStatus === 'UNSELECTED');
   }
 
   public getBidHistory(): DotaBidRecord[] {

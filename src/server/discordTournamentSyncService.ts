@@ -165,7 +165,8 @@ export async function removeGuildMemberRole(params: {
 }
 
 /**
- * Creates a dynamic Discord team role (e.g. "Mumbai Mavericks").
+ * Creates or retrieves a dynamic Discord team role (e.g. "Robinhood's Squad").
+ * Idempotently checks if the role already exists on Discord to prevent duplicate team roles.
  */
 export async function createDiscordTeamRoleAuthoritative(params: {
   guildId: string;
@@ -181,8 +182,30 @@ export async function createDiscordTeamRoleAuthoritative(params: {
   }
 
   try {
-    const url = `https://discord.com/api/v10/guilds/${guildId}/roles`;
-    const res = await fetchFn(url, {
+    const rolesUrl = `https://discord.com/api/v10/guilds/${guildId}/roles`;
+    
+    // 1. Idempotency Check: search for existing role by name to prevent duplicate roles
+    try {
+      const existingRes = await fetchFn(rolesUrl, {
+        headers: { Authorization: `Bot ${botToken}` }
+      });
+      if (existingRes.ok) {
+        const rolesList = await existingRes.json();
+        if (Array.isArray(rolesList)) {
+          const match = rolesList.find(
+            (r: any) => r.name.toLowerCase().trim() === teamName.toLowerCase().trim()
+          );
+          if (match) {
+            return { success: true, roleId: match.id };
+          }
+        }
+      }
+    } catch (checkErr) {
+      console.warn('[createDiscordTeamRoleAuthoritative] Existing roles check note:', checkErr);
+    }
+
+    // 2. Create the role if not existing
+    const res = await fetchFn(rolesUrl, {
       method: 'POST',
       headers: {
         Authorization: `Bot ${botToken}`,
@@ -289,22 +312,156 @@ export async function syncDiscordTournamentRoles(params: {
   try {
     const db = getAdminDb();
     if (db) {
+      if (!tournamentData) {
+        const tDoc = await db.collection('tournaments').doc(tournamentId).get();
+        if (tDoc.exists) {
+          tournamentData = tDoc.data();
+        }
+      }
+
       if (!participantData) {
         const pSnap = await db.collection(`tournaments/${tournamentId}/participants`).doc(userId).get();
         if (pSnap.exists) {
           participantData = pSnap.data() as TournamentParticipantRecord;
+        } else {
+          // Fallback 1: Check tournament document captains / teams
+          const cap = tournamentData?.captains?.find((c: any) => c.userId === userId);
+          const tMember = tournamentData?.teams?.flatMap((t: any) => t.primaryRoster || []).find((p: any) => p.userId === userId || p.id === userId);
+          
+          if (cap) {
+            participantData = {
+              userId,
+              tournamentId,
+              registrationId: userId,
+              pbgId: cap.pbgId || userId,
+              displayName: cap.displayName || cap.name || userId,
+              tournamentRole: 'CAPTAIN',
+              captainSlotId: cap.slotId || `slot-${cap.teamId}`,
+              teamId: cap.teamId || null,
+              participantStatus: 'ACTIVE',
+              auctionStatus: 'NOT_IN_POOL',
+              eliminated: false,
+              source: 'REGISTRATION',
+              joinedAt: cap.assignedAt || new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+          } else if (tMember) {
+            participantData = {
+              userId,
+              tournamentId,
+              registrationId: userId,
+              pbgId: tMember.pbgId || userId,
+              displayName: tMember.name || tMember.displayName || userId,
+              tournamentRole: tMember.isCaptain ? 'CAPTAIN' : 'PLAYER',
+              captainSlotId: tMember.isCaptain ? `slot-${tMember.teamId}` : null,
+              teamId: tMember.teamId || null,
+              participantStatus: 'ACTIVE',
+              auctionStatus: 'SOLD',
+              eliminated: false,
+              source: 'REGISTRATION',
+              joinedAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+          } else {
+            // Fallback 2: Check memberships subcollection
+            const mSnap = await db.collection(`tournaments/${tournamentId}/memberships`).doc(userId).get();
+            if (mSnap.exists) {
+              const mData = mSnap.data();
+              participantData = {
+                userId,
+                tournamentId,
+                registrationId: userId,
+                pbgId: mData?.pbgId || userId,
+                displayName: mData?.displayName || mData?.name || userId,
+                tournamentRole: mData?.role === 'captain' ? 'CAPTAIN' : 'PLAYER',
+                captainSlotId: mData?.role === 'captain' ? `slot-${mData?.teamId}` : null,
+                teamId: mData?.teamId || null,
+                participantStatus: 'ACTIVE',
+                auctionStatus: mData?.role === 'captain' ? 'NOT_IN_POOL' : 'AVAILABLE',
+                eliminated: false,
+                source: 'REGISTRATION',
+                joinedAt: mData?.assignedAt || new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+              };
+            } else {
+              // Fallback 3: Check registrations subcollection
+              const rSnap = await db.collection(`tournaments/${tournamentId}/registrations`).doc(userId).get();
+              if (rSnap.exists) {
+                const rData = rSnap.data();
+                const isApproved = rData?.status === 'verified' || rData?.status === 'registered' || rData?.status === 'APPROVED';
+                participantData = {
+                  userId,
+                  tournamentId,
+                  registrationId: rData?.id || userId,
+                  pbgId: rData?.pbgId || userId,
+                  displayName: rData?.ign || rData?.displayName || userId,
+                  tournamentRole: rData?.isCaptainApproved ? 'CAPTAIN' : 'PLAYER',
+                  captainSlotId: rData?.isCaptainApproved ? `slot-${rData?.teamId || 'pending'}` : null,
+                  teamId: rData?.teamId || null,
+                  participantStatus: isApproved ? 'ACTIVE' : 'INACTIVE',
+                  auctionStatus: rData?.isCaptainApproved ? 'NOT_IN_POOL' : 'AVAILABLE',
+                  eliminated: false,
+                  source: 'REGISTRATION',
+                  joinedAt: rData?.registeredAt || new Date().toISOString(),
+                  updatedAt: new Date().toISOString()
+                };
+              }
+            }
+          }
         }
       }
+
       if (!discordConfig) {
         const cSnap = await db.collection(`tournaments/${tournamentId}/discordConfig`).doc('config').get();
         if (cSnap.exists) {
           discordConfig = cSnap.data() as TournamentDiscordConfig;
         }
       }
+
       if (participantData?.teamId && !teamData) {
         const tSnap = await db.collection(`tournaments/${tournamentId}/teams`).doc(participantData.teamId).get();
         if (tSnap.exists) {
           teamData = tSnap.data() as TournamentTeamRecord;
+        } else {
+          // Check tournamentData.teams array
+          const rawTeam = tournamentData?.teams?.find((t: any) => t.id === participantData?.teamId);
+          if (rawTeam) {
+            teamData = {
+              teamId: rawTeam.id,
+              tournamentId,
+              name: rawTeam.name,
+              captainUserId: rawTeam.captainId || rawTeam.captainUserId,
+              status: 'ACTIVE',
+              discord: rawTeam.discord || null
+            } as any;
+          }
+        }
+      }
+
+      // If team is active and finalized, ensure dynamic team Discord role exists
+      if (teamData && !teamData.discord?.roleId) {
+        const botConfig = getBotConfig(discordConfig);
+        if (botConfig.botToken) {
+          const roleRes = await createDiscordTeamRoleAuthoritative({
+            guildId: botConfig.guildId,
+            teamName: teamData.name,
+            botToken: botConfig.botToken,
+            fetchFn
+          });
+          if (roleRes.success && roleRes.roleId) {
+            teamData.discord = {
+              roleId: roleRes.roleId,
+              roleName: teamData.name,
+              createdAt: new Date().toISOString()
+            };
+            // Persist back to Firestore team document
+            const targetTeamId = teamData.id || (teamData as any).teamId;
+            if (targetTeamId) {
+              await db.collection(`tournaments/${tournamentId}/teams`).doc(targetTeamId).set({
+                discord: teamData.discord
+              }, { merge: true }).catch(() => {});
+            }
+          }
         }
       }
     }
@@ -665,4 +822,212 @@ export async function retryPendingDiscordSyncJobs(params?: {
   }
 
   return { totalRetried, succeeded, failed, jobs: processedJobs };
+}
+
+export interface TournamentDiscordSyncReport {
+  processed: number;
+  updated: number;
+  alreadyCorrect: number;
+  skippedTestIdentities: number;
+  failed: number;
+  failures: Array<{ userId: string; username?: string; error: string }>;
+  results: DiscordSyncResult[];
+}
+
+/**
+ * -------------------------------------------------------------
+ * RETROACTIVE DISCORD RECONCILIATION FOR TOURNAMENT
+ * -------------------------------------------------------------
+ * Iterates through all real Discord-linked active participants in a tournament,
+ * calculates current desired roles from authoritative PBG state, reconciles,
+ * and skips dummy TEST_SEED identities cleanly.
+ */
+export async function syncTournamentDiscordRolesAll(params: {
+  tournamentId: string;
+  fetchFn?: typeof fetch;
+}): Promise<TournamentDiscordSyncReport> {
+  const { tournamentId, fetchFn = fetch } = params;
+  const db = getAdminDb();
+  let participants: TournamentParticipantRecord[] = [];
+
+  if (db) {
+    try {
+      const pSnap = await db.collection(`tournaments/${tournamentId}/participants`).get();
+      participants = pSnap.docs.map(d => d.data() as TournamentParticipantRecord);
+    } catch {}
+  }
+  if (participants.length === 0) {
+    const pMap = inMemoryParticipants.get(tournamentId);
+    if (pMap) participants = Array.from(pMap.values());
+  }
+
+  const report: TournamentDiscordSyncReport = {
+    processed: 0,
+    updated: 0,
+    alreadyCorrect: 0,
+    skippedTestIdentities: 0,
+    failed: 0,
+    failures: [],
+    results: []
+  };
+
+  for (const part of participants) {
+    report.processed++;
+    const isTest = Boolean(
+      part.isTestAccount ||
+      part.source === 'TEST_SEED' ||
+      part.userId.startsWith('pbg-test-') ||
+      part.userId.startsWith('dummy-') ||
+      part.userId.startsWith('p-user-')
+    );
+
+    if (isTest) {
+      report.skippedTestIdentities++;
+      continue;
+    }
+
+    try {
+      const syncRes = await syncDiscordTournamentRoles({
+        userId: part.userId,
+        tournamentId,
+        fetchFn
+      });
+      report.results.push(syncRes);
+
+      if (syncRes.skipped) {
+        report.skippedTestIdentities++;
+      } else if (!syncRes.success) {
+        report.failed++;
+        report.failures.push({
+          userId: part.userId,
+          username: part.displayName || (part as any).username || part.userId,
+          error: syncRes.error || 'SYNC_FAILED'
+        });
+      } else if (syncRes.rolesAdded.length > 0 || syncRes.rolesRemoved.length > 0) {
+        report.updated++;
+      } else {
+        report.alreadyCorrect++;
+      }
+    } catch (err: any) {
+      report.failed++;
+      report.failures.push({
+        userId: part.userId,
+        username: part.displayName || (part as any).username || part.userId,
+        error: err.message || 'UNEXPECTED_ERROR'
+      });
+    }
+  }
+
+  return report;
+}
+
+export interface ParticipantDiscordDiagnostic {
+  userId: string;
+  username: string;
+  tournamentRole: string;
+  captainSlotId: string | null;
+  teamId: string | null;
+  teamName: string | null;
+  isTestAccount: boolean;
+  discordLinked: boolean;
+  discordUserId: string | null;
+  guildMemberVerified: boolean;
+  desiredRoles: string[];
+  actualRoles: string[];
+  syncStatus: 'SYNCED' | 'OUT_OF_SYNC' | 'NOT_LINKED' | 'SKIPPED_TEST_IDENTITY';
+}
+
+export async function getTournamentDiscordDiagnostics(tournamentId: string): Promise<ParticipantDiscordDiagnostic[]> {
+  const db = getAdminDb();
+  let participants: TournamentParticipantRecord[] = [];
+
+  if (db) {
+    try {
+      const pSnap = await db.collection(`tournaments/${tournamentId}/participants`).get();
+      participants = pSnap.docs.map(d => d.data() as TournamentParticipantRecord);
+    } catch {}
+  }
+  if (participants.length === 0) {
+    const pMap = inMemoryParticipants.get(tournamentId);
+    if (pMap) participants = Array.from(pMap.values());
+  }
+
+  const { botToken, guildId, pbgMemberRoleId, pbgPlayerRoleId, pbgCaptainRoleId } = getBotConfig();
+  const diagnostics: ParticipantDiscordDiagnostic[] = [];
+
+  for (const p of participants) {
+    const isTest = Boolean(
+      p.isTestAccount ||
+      p.source === 'TEST_SEED' ||
+      p.userId.startsWith('pbg-test-') ||
+      p.userId.startsWith('dummy-') ||
+      p.userId.startsWith('p-user-')
+    );
+
+    if (isTest) {
+      diagnostics.push({
+        userId: p.userId,
+        username: p.displayName || (p as any).username || p.userId,
+        tournamentRole: p.tournamentRole,
+        captainSlotId: p.captainSlotId || null,
+        teamId: p.teamId || null,
+        teamName: (p as any).teamName || null,
+        isTestAccount: true,
+        discordLinked: false,
+        discordUserId: null,
+        guildMemberVerified: false,
+        desiredRoles: [],
+        actualRoles: [],
+        syncStatus: 'SKIPPED_TEST_IDENTITY'
+      });
+      continue;
+    }
+
+    const privateAccount = await getPrivateDiscordAccount(p.userId);
+    const discordUserId = privateAccount?.discordUserId || null;
+    const discordLinked = Boolean(privateAccount?.discordLinked && discordUserId);
+
+    let actualRoles: string[] = [];
+    let guildMemberVerified = false;
+
+    if (discordLinked && discordUserId && botToken && guildId) {
+      try {
+        const verifyRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${discordUserId}`, {
+          headers: { Authorization: `Bot ${botToken}` }
+        });
+        if (verifyRes.ok) {
+          guildMemberVerified = true;
+          const memberData = await verifyRes.json();
+          actualRoles = Array.isArray(memberData?.roles) ? memberData.roles : [];
+        }
+      } catch {}
+    }
+
+    const desired: string[] = [pbgMemberRoleId, pbgPlayerRoleId];
+    if (p.tournamentRole === 'CAPTAIN') desired.push(pbgCaptainRoleId);
+
+    let syncStatus: ParticipantDiscordDiagnostic['syncStatus'] = 'NOT_LINKED';
+    if (discordLinked) {
+      const allPresent = desired.every(r => actualRoles.includes(r));
+      syncStatus = allPresent ? 'SYNCED' : 'OUT_OF_SYNC';
+    }
+
+    diagnostics.push({
+      userId: p.userId,
+      username: p.displayName || (p as any).username || p.userId,
+      tournamentRole: p.tournamentRole,
+      captainSlotId: p.captainSlotId || null,
+      teamId: p.teamId || null,
+      teamName: (p as any).teamName || null,
+      isTestAccount: false,
+      discordLinked,
+      discordUserId,
+      guildMemberVerified,
+      desiredRoles: desired,
+      actualRoles,
+      syncStatus
+    });
+  }
+
+  return diagnostics;
 }
