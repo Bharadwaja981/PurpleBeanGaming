@@ -169,7 +169,13 @@ export interface TournamentDiscordConfig {
 
 export interface DiscordSyncJobRecord {
   id: string;
-  type: 'SYNC_TOURNAMENT_ROLES' | 'CLEANUP_ELIMINATED_TEAM' | 'CLEANUP_TOURNAMENT_COMPLETION';
+  type: 
+    | 'SYNC_TOURNAMENT_ROLES' 
+    | 'CLEANUP_ELIMINATED_TEAM' 
+    | 'CLEANUP_TOURNAMENT_COMPLETION'
+    | 'SYNC_USER_GLOBAL_ROLES'
+    | 'CLEANUP_TOURNAMENT_DISCORD'
+    | 'DELETE_TOURNAMENT_TEAM_ROLES';
   tournamentId: string;
   userId?: string;
   teamId?: string;
@@ -178,6 +184,7 @@ export interface DiscordSyncJobRecord {
   lastError?: string;
   createdAt: string;
   updatedAt: string;
+  metadata?: any;
 }
 
 export type TournamentRegistrationLifecycle = 

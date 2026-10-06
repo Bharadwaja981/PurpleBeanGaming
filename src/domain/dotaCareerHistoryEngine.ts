@@ -244,15 +244,21 @@ export class DotaCareerHistoryEngine {
       // Ignored if testCup not yet initialized
     }
 
-    // Seed initial teams from test cup
+    // Seed initial teams from test cup or default seed teams
     const tcTeams = testCupEngine.getTeams();
-    for (const t of tcTeams) {
-      this.ensureTeamCareer(t.id, t.name, t.name.slice(0, 3).toUpperCase(), '⚔️', t.rating || 1500);
+    const seedTeams = [
+      { id: 'tc-team-1', name: 'Mumbai Mavericks', tag: 'MMV', logo: '⚡', rating: 1650 },
+      { id: 'tc-team-2', name: 'Hyderabad Raiders', tag: 'HRD', logo: '💥', rating: 1580 },
+      { id: 'tc-team-3', name: 'Bengaluru Blaze', tag: 'BLZ', logo: '🐉', rating: 1520 }
+    ];
+    for (const t of (tcTeams.length > 0 ? tcTeams : seedTeams)) {
+      this.ensureTeamCareer(t.id, t.name, t.tag || t.name.slice(0, 3).toUpperCase(), t.logo || '⚔️', t.rating || 1500);
     }
   }
 
   public ensurePlayerCareer(pOrId: DotaPlayerProfile | string): PlayerCareerRecord {
-    const pId = typeof pOrId === 'string' ? pOrId : pOrId?.id;
+    const rawPId = typeof pOrId === 'string' ? pOrId : pOrId?.id;
+    const pId = String(rawPId || '');
     if (!pId) {
       throw new Error('Player ID is required for career tracking.');
     }
@@ -263,7 +269,7 @@ export class DotaCareerHistoryEngine {
 
     let p: any = typeof pOrId === 'object' ? pOrId : dotaPlayerRegistry.getPlayer(pId);
     if (!p) {
-      const tc = testCupEngine.getPlayers().find(pl => pl.id === pId || pl.username.toLowerCase() === pId.toLowerCase());
+      const tc = testCupEngine.getPlayers().find(pl => pl.id === pId || String(pl.username || '').toLowerCase() === pId.toLowerCase());
       if (tc) {
         p = {
           id: tc.id,

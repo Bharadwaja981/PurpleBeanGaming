@@ -10,11 +10,11 @@ export function matchesPlayerSearch(p: Player, rawQuery: string): boolean {
   const qNum = q.replace(/[^0-9]/g, '');
 
   // 1. Direct PBG / PGB ID matching (e.g. "PBG-000188", "PGB-000188", "188", "000188", "pbg-188", "pbg 188")
-  const pbgId = p.pbgId || (p.id?.startsWith('PBG-') ? p.id : undefined);
+  const pbgId = p.pbgId || (p.id && String(p.id).startsWith('PBG-') ? String(p.id) : undefined);
   if (pbgId) {
-    const pbgLower = pbgId.toLowerCase();
+    const pbgLower = String(pbgId).toLowerCase();
     const pbgAlphaNum = pbgLower.replace(/[^a-z0-9]/g, '');
-    const pbgNum = pbgId.replace(/[^0-9]/g, '');
+    const pbgNum = String(pbgId).replace(/[^0-9]/g, '');
 
     if (pbgLower.includes(q)) return true;
     if (qAlphaNum && pbgAlphaNum.includes(qAlphaNum)) return true;
@@ -27,9 +27,10 @@ export function matchesPlayerSearch(p: Player, rawQuery: string): boolean {
 
   // Also check if p.id has a numeric component (e.g. "p-1", "p-188")
   if (p.id) {
-    const idLower = p.id.toLowerCase();
+    const idStr = String(p.id);
+    const idLower = idStr.toLowerCase();
     const idAlphaNum = idLower.replace(/[^a-z0-9]/g, '');
-    const idNum = p.id.replace(/[^0-9]/g, '');
+    const idNum = idStr.replace(/[^0-9]/g, '');
 
     if (idLower.includes(q)) return true;
     if (qAlphaNum && idAlphaNum.includes(qAlphaNum)) return true;

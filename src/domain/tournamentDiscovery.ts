@@ -40,7 +40,7 @@ export const LEGACY_MOCK_TOURNAMENT_IDS = new Set([
 export function isTestTournament(tournament: any): boolean {
   if (!tournament) return false;
   const rawId = typeof tournament === 'string' ? tournament : (tournament.id || tournament.tournamentId || '');
-  const idLower = rawId.toLowerCase();
+  const idLower = String(rawId || '').toLowerCase();
 
   if (
     (typeof tournament === 'object' && tournament.testMode === true) ||
@@ -60,7 +60,7 @@ export function isTestTournament(tournament: any): boolean {
 
 export function isTestPlayer(player: any): boolean {
   if (!player) return false;
-  const idLower = (player.id || player.userId || player.pbgId || '').toLowerCase();
+  const idLower = String(player.id || player.userId || player.pbgId || '').toLowerCase();
 
   return (
     (player as any).isTestAccount === true ||
@@ -76,8 +76,8 @@ export function isTestPlayer(player: any): boolean {
 
 export function isTestTeam(team: any): boolean {
   if (!team) return false;
-  const idLower = (team.id || '').toLowerCase();
-  const tourneyIdLower = (team.tournamentId || '').toLowerCase();
+  const idLower = String(team.id || '').toLowerCase();
+  const tourneyIdLower = String(team.tournamentId || '').toLowerCase();
 
   return (
     idLower.startsWith('tc-team') ||
@@ -188,7 +188,7 @@ export function isPubliclyDiscoverable(tournament: Tournament): boolean {
   if ((tournament as any).deleted === true || (tournament.status as any) === 'DELETED') {
     return false;
   }
-  const rawId = (tournament.id || (tournament as any).tournamentId || '').toLowerCase();
+  const rawId = String(tournament.id || (tournament as any).tournamentId || '').toLowerCase();
   if (rawId === 'purple-bean-auction-test' || rawId === 'auction-test') {
     return true;
   }

@@ -40,7 +40,9 @@ class TournamentConfigRegistry {
   }
 
   public registerConfig(config: TournamentConfig) {
-    const id = config.identity.tournamentId;
+    if (!config?.identity?.tournamentId) return;
+    const rawId = config.identity.tournamentId;
+    const id = String(rawId);
     this.deletedIds.delete(id);
     this.deletedIds.delete(id.toLowerCase());
     this.configs.set(id, config);
@@ -49,20 +51,22 @@ class TournamentConfigRegistry {
 
   public removeConfig(tournamentId: string) {
     if (!tournamentId) return;
-    this.deletedIds.add(tournamentId);
-    this.deletedIds.add(tournamentId.toLowerCase());
-    this.configs.delete(tournamentId);
-    this.configs.delete(tournamentId.toLowerCase());
+    const id = String(tournamentId);
+    this.deletedIds.add(id);
+    this.deletedIds.add(id.toLowerCase());
+    this.configs.delete(id);
+    this.configs.delete(id.toLowerCase());
     this.notify();
   }
 
   public getConfig(tournamentId: string): TournamentConfig | undefined {
     if (!tournamentId) return undefined;
-    const tIdLower = tournamentId.toLowerCase();
-    if (this.deletedIds.has(tournamentId) || this.deletedIds.has(tIdLower)) {
+    const id = String(tournamentId);
+    const tIdLower = id.toLowerCase();
+    if (this.deletedIds.has(id) || this.deletedIds.has(tIdLower)) {
       return undefined;
     }
-    const found = this.configs.get(tournamentId) || this.configs.get(tIdLower);
+    const found = this.configs.get(id) || this.configs.get(tIdLower);
     if (found) return found;
 
     const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
@@ -72,8 +76,8 @@ class TournamentConfigRegistry {
         return TEST_CUP_GENERIC_CONFIG;
       }
       const seed = INITIAL_SEED_TOURNAMENTS.find(s => 
-        s.identity.tournamentId === tournamentId || 
-        s.identity.tournamentId.toLowerCase() === tIdLower
+        String(s.identity.tournamentId) === id || 
+        String(s.identity.tournamentId || '').toLowerCase() === tIdLower
       );
       if (seed) {
         this.configs.set(tournamentId, seed);
@@ -96,8 +100,8 @@ class TournamentConfigRegistry {
     const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
     if (isTest) {
       return Array.from(this.configs.values()).filter(c => {
-        const id = c.identity?.tournamentId;
-        return !this.deletedIds.has(id) && !this.deletedIds.has((id || '').toLowerCase());
+        const id = String(c.identity?.tournamentId || '');
+        return id && !this.deletedIds.has(id) && !this.deletedIds.has(id.toLowerCase());
       });
     }
     const LEGACY_MOCK_TOURNAMENT_IDS = new Set([
@@ -106,9 +110,9 @@ class TournamentConfigRegistry {
       'purple-bean-test-cup'
     ]);
     return Array.from(this.configs.values()).filter(c => {
-      const rawId = c.identity?.tournamentId || '';
+      const rawId = String(c.identity?.tournamentId || '');
       const id = rawId.toLowerCase();
-      return !LEGACY_MOCK_TOURNAMENT_IDS.has(id) && !this.deletedIds.has(rawId) && !this.deletedIds.has(id);
+      return id && !LEGACY_MOCK_TOURNAMENT_IDS.has(id) && !this.deletedIds.has(rawId) && !this.deletedIds.has(id);
     });
   }
 
@@ -120,7 +124,10 @@ class TournamentConfigRegistry {
   public isAuctionSupported(tournamentOrId: Tournament | string | undefined | null): boolean {
     if (!tournamentOrId) return false;
 
-    const tournamentId = typeof tournamentOrId === 'string' ? tournamentOrId : tournamentOrId.id;
+    const tournamentId = typeof tournamentOrId === 'string' 
+      ? tournamentOrId 
+      : String((tournamentOrId as any).id || (tournamentOrId as any).tournamentId || '');
+    if (!tournamentId) return false;
     const config = this.getConfig(tournamentId);
 
     if (config) {

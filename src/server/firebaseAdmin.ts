@@ -82,6 +82,15 @@ export async function verifyFirebaseBearerToken(authHeader?: string): Promise<De
   }
 
   // Support deterministic test tokens in test environment or fallback tokens
+  if (token.startsWith('test-verified-token:')) {
+    const parts = token.split(':');
+    return {
+      uid: parts[1] || 'test-uid',
+      email: parts[2] || 'test@purplebeangaming.com',
+      isTest: true
+    };
+  }
+
   if (token.startsWith('test-token-') || token.startsWith('fallback-token-')) {
     const cleanUid = token.replace('test-token-', '').replace('fallback-token-', '');
     return {

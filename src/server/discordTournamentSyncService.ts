@@ -24,6 +24,15 @@ import {
   DiscordSyncContext,
   DesiredDiscordRolesResult
 } from '../domain/discordTournamentRoleEngine';
+import {
+  classifyTournamentLifecycle,
+  shouldTournamentGrantTemporaryDiscordRoles,
+  getUserTournamentRoleEntitlementsFromContexts,
+  getDesiredGlobalDiscordRolesForUser,
+  type TournamentLifecycleContext,
+  type TournamentDiscordCleanupReport,
+  type UserTournamentRoleEntitlements
+} from '../domain/tournamentLifecycleEngine';
 import { getPrivateDiscordAccount } from './discordVerificationService';
 import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
 
@@ -58,6 +67,87 @@ function getBotConfig(customConfig?: TournamentDiscordConfig) {
   const pbgCaptainRoleId = customConfig?.roles?.captainRoleId || process.env.DISCORD_PBG_CAPTAIN_ROLE_ID || '1556338549807259658';
   return { botToken, guildId, pbgMemberRoleId, pbgPlayerRoleId, pbgCaptainRoleId };
 }
+
+/**
+ * Loads all tournament lifecycle contexts across Firestore and in-memory caches.
+ */
+export async function getAllTournamentLifecycleContexts(): Promise<TournamentLifecycleContext[]> {
+  const db = getAdminDb();
+  const contextMap = new Map<string, TournamentLifecycleContext>();
+
+  // 1. Load from Firestore
+  if (db) {
+    try {
+      const snap = await db.collection('tournaments').limit(50).get();
+      await Promise.all(
+        snap.docs.map(async (doc) => {
+          const data = doc.data();
+          let participants: TournamentParticipantRecord[] = Array.isArray(data.participants) ? data.participants : [];
+          let teams: TournamentTeamRecord[] = Array.isArray(data.teams) ? data.teams : [];
+
+          if (participants.length === 0 || teams.length === 0) {
+            try {
+              const [pSnap, tSnap] = await Promise.all([
+                participants.length === 0 ? db.collection(`tournaments/${doc.id}/participants`).get().catch(() => null) : null,
+                teams.length === 0 ? db.collection(`tournaments/${doc.id}/teams`).get().catch(() => null) : null
+              ]);
+              if (pSnap && !pSnap.empty) {
+                participants = pSnap.docs.map(d => d.data() as TournamentParticipantRecord);
+              }
+              if (tSnap && !tSnap.empty) {
+                teams = tSnap.docs.map(d => d.data() as TournamentTeamRecord);
+              }
+            } catch {}
+          }
+
+          contextMap.set(doc.id, {
+            id: doc.id,
+            name: data.name || data.title || doc.id,
+            status: data.status,
+            lifecycle: data.lifecycle,
+            deleted: data.deleted === true,
+            discordConfig: data.discordConfig,
+            participants,
+            teams
+          });
+        })
+      );
+    } catch (e) {
+      console.warn('[getAllTournamentLifecycleContexts] Firestore query warning:', e);
+    }
+  }
+
+  // 2. Merge in-memory participants and teams
+  for (const [tourneyId, pMap] of inMemoryParticipants.entries()) {
+    const existing = contextMap.get(tourneyId) || {
+      id: tourneyId,
+      name: tourneyId,
+      status: 'active',
+      lifecycle: 'ACTIVE_LIKE',
+      participants: [],
+      teams: []
+    };
+    if (!existing.participants || existing.participants.length === 0) {
+      existing.participants = Array.from(pMap.values());
+    }
+    const tMap = inMemoryTournamentTeams.get(tourneyId);
+    if (tMap && (!existing.teams || existing.teams.length === 0)) {
+      existing.teams = Array.from(tMap.values());
+    }
+    contextMap.set(tourneyId, existing);
+  }
+
+  return Array.from(contextMap.values());
+}
+
+/**
+ * Calculates user's authoritative tournament role entitlements across ALL tournaments.
+ */
+export async function getUserTournamentRoleEntitlements(userId: string): Promise<UserTournamentRoleEntitlements> {
+  const contexts = await getAllTournamentLifecycleContexts();
+  return getUserTournamentRoleEntitlementsFromContexts(userId, contexts);
+}
+
 
 /**
  * Fetches actual Discord roles currently assigned to a member in the guild.
@@ -532,7 +622,24 @@ export async function syncDiscordTournamentRoles(params: {
     };
   }
 
-  // 3. Compute Pure Desired Role State
+  // 3. Compute Global Entitlements & Desired Role State
+  if (!context.globalEntitlements) {
+    try {
+      const entitlements = await getUserTournamentRoleEntitlements(userId);
+      context.globalEntitlements = {
+        shouldHavePbgPlayer: entitlements.shouldHavePbgPlayer,
+        shouldHavePbgCaptain: entitlements.shouldHavePbgCaptain
+      };
+    } catch {
+      const isPlayer = participantData?.participantStatus === 'ACTIVE' || (participantData as any)?.status === 'APPROVED';
+      const isCaptain = participantData?.tournamentRole === 'CAPTAIN';
+      context.globalEntitlements = {
+        shouldHavePbgPlayer: Boolean(isPlayer && !participantData?.eliminated),
+        shouldHavePbgCaptain: Boolean(isCaptain && !participantData?.eliminated)
+      };
+    }
+  }
+
   const desiredResult = getDesiredTournamentDiscordRoles(context);
 
   if (!desiredResult.discordUserId) {
@@ -724,59 +831,416 @@ export async function cleanupEliminatedTeamDiscordRoles(params: {
 
 /**
  * -------------------------------------------------------------
- * TOURNAMENT COMPLETION CLEANUP
+ * CENTRAL AUTHORITATIVE CLEANUP ENGINE
  * -------------------------------------------------------------
- * When a tournament is completed, removes all temporary tournament and team roles
- * for every participant, preserves PBG Member, and archives/deletes dynamic team roles.
+ * Authoritative cleanup of all tournament Discord roles for terminal tournaments
+ * (COMPLETED, CANCELLED, ABANDONED, DELETED).
+ * 
+ * Rules:
+ * 1. Remove tournament-specific team roles from real Discord-linked members.
+ * 2. Recalculate each user's GLOBAL PBG Player entitlement across other tournaments.
+ * 3. Recalculate each user's GLOBAL PBG Captain entitlement across other tournaments.
+ * 4. Strictly PRESERVE PBG Member at all times.
+ * 5. Delete/archive tournament-created dynamic team roles.
+ * 6. Persist cleanup report & append immutable audit log.
+ * 7. 100% Idempotent.
  */
-export async function cleanupTournamentCompletionDiscordRoles(params: {
+export async function cleanupTournamentDiscordState(params: {
   tournamentId: string;
-  teams: TournamentTeamRecord[];
-  participants: TournamentParticipantRecord[];
+  teams?: TournamentTeamRecord[];
+  participants?: TournamentParticipantRecord[];
   discordConfig?: TournamentDiscordConfig;
   fetchFn?: typeof fetch;
-}): Promise<{ totalParticipantsCleaned: number; deletedTeamRoles: number }> {
-  const { tournamentId, teams, participants, discordConfig, fetchFn = fetch } = params;
-  let cleanedCount = 0;
-  let deletedRolesCount = 0;
+}): Promise<TournamentDiscordCleanupReport> {
+  const { tournamentId, fetchFn = fetch } = params;
+  const db = getAdminDb();
 
-  const { botToken, guildId } = getBotConfig(discordConfig);
+  const report: TournamentDiscordCleanupReport = {
+    tournamentId,
+    status: 'COMPLETED',
+    participantsProcessed: 0,
+    teamRolesRemoved: 0,
+    teamRolesDeleted: 0,
+    globalPlayerRolesKept: 0,
+    globalPlayerRolesRemoved: 0,
+    globalCaptainRolesKept: 0,
+    globalCaptainRolesRemoved: 0,
+    skippedTestIdentities: 0,
+    failures: []
+  };
 
-  // 1. Strip temporary roles for every participant
-  for (const participant of participants) {
-    const syncRes = await syncDiscordTournamentRoles({
-      userId: participant.userId,
-      tournamentId,
-      overrideContext: {
-        tournament: { id: tournamentId, status: 'COMPLETED', discordConfig }
-      },
-      fetchFn
-    });
-    if (syncRes.success || syncRes.error?.includes('DISCORD_NOT_LINKED')) {
-      cleanedCount++;
+  // 1. Load tournament
+  let tournamentData: any = null;
+  if (db) {
+    try {
+      const tDoc = await db.collection('tournaments').doc(tournamentId).get();
+      if (tDoc.exists) {
+        tournamentData = tDoc.data();
+      }
+    } catch {}
+  }
+  const currentStatus = tournamentData?.status || tournamentData?.lifecycle || 'COMPLETED';
+  report.status = currentStatus;
+
+  // 2. Load participants
+  let participants: TournamentParticipantRecord[] = params.participants || [];
+  if (participants.length === 0) {
+    if (db) {
+      try {
+        const pSnap = await db.collection(`tournaments/${tournamentId}/participants`).get();
+        participants = pSnap.docs.map(d => d.data() as TournamentParticipantRecord);
+      } catch {}
+    }
+    if (participants.length === 0) {
+      const pMap = inMemoryParticipants.get(tournamentId);
+      if (pMap) participants = Array.from(pMap.values());
     }
   }
 
-  // 2. Delete dynamic team roles created for this tournament
-  for (const team of teams) {
-    if (team.discord?.roleId) {
-      const delRes = await deleteDiscordTeamRoleAuthoritative({
+  // 3. Load teams
+  let teams: TournamentTeamRecord[] = params.teams || [];
+  if (teams.length === 0) {
+    if (db) {
+      try {
+        const tSnap = await db.collection(`tournaments/${tournamentId}/teams`).get();
+        teams = tSnap.docs.map(d => d.data() as TournamentTeamRecord);
+      } catch {}
+    }
+    if (teams.length === 0) {
+      const tMap = inMemoryTournamentTeams.get(tournamentId);
+      if (tMap) teams = Array.from(tMap.values());
+    }
+  }
+
+  // 4. Load all tournament contexts across system for global entitlement checks
+  const allContexts = await getAllTournamentLifecycleContexts();
+  // Ensure the current tournament in allContexts is marked TERMINAL so it does NOT grant entitlements
+  const contextsWithCurrentTerminal = allContexts.map(c => 
+    c.id === tournamentId 
+      ? { ...c, status: currentStatus, lifecycle: 'TERMINAL' }
+      : c
+  );
+
+  const discordConfig: TournamentDiscordConfig | undefined = 
+    params.discordConfig || tournamentData?.discordConfig || inMemoryTournamentDiscordConfigs.get(tournamentId);
+  const { botToken, guildId, pbgPlayerRoleId, pbgCaptainRoleId } = getBotConfig(discordConfig);
+
+  // Map of teamId -> team
+  const teamById = new Map<string, TournamentTeamRecord>();
+  for (const t of teams) {
+    teamById.set(t.id, t);
+  }
+
+  // 5. Process each participant
+  for (const participant of participants) {
+    report.participantsProcessed++;
+
+    const isTest = Boolean(
+      participant.isTestAccount ||
+      participant.source === 'TEST_SEED' ||
+      participant.userId.startsWith('pbg-test-') ||
+      participant.userId.startsWith('dummy-') ||
+      participant.userId.startsWith('p-user-')
+    );
+
+    if (isTest) {
+      report.skippedTestIdentities++;
+      continue;
+    }
+
+    const privateAccount = await getPrivateDiscordAccount(participant.userId);
+    const pbgAcc = !privateAccount?.discordUserId 
+      ? (pbgAccountRegistry.getAccountByUid(participant.userId) || pbgAccountRegistry.getAccountByPbgId(participant.userId))
+      : null;
+    const discordUserId = privateAccount?.discordUserId || pbgAcc?.discordUserId;
+
+    if (!discordUserId || !botToken || !guildId) {
+      continue;
+    }
+
+    try {
+      // Fetch actual member roles
+      const actualRes = await fetchActualMemberDiscordRoles({
         guildId,
-        roleId: team.discord.roleId,
+        discordUserId,
         botToken,
         fetchFn
       });
-      if (delRes.success) {
-        deletedRolesCount++;
-        // Idempotency: clear roleId after deletion so repeated cleanups don't duplicate calls
-        team.discord = undefined;
+
+      const actualRoles = actualRes.ok ? actualRes.roles : [];
+
+      // A. Remove tournament-specific team role from member
+      if (participant.teamId) {
+        const team = teamById.get(participant.teamId);
+        if (team?.discord?.roleId && actualRoles.includes(team.discord.roleId)) {
+          const remRes = await removeGuildMemberRole({
+            guildId,
+            discordUserId,
+            roleId: team.discord.roleId,
+            botToken,
+            fetchFn
+          });
+          if (remRes.success) {
+            report.teamRolesRemoved++;
+          } else {
+            report.failures.push({
+              userId: participant.userId,
+              roleId: team.discord.roleId,
+              error: remRes.error || 'FAILED_TO_REMOVE_TEAM_ROLE'
+            });
+          }
+        }
+      }
+
+      // Also check if user holds any other team role from this tournament
+      for (const t of teams) {
+        if (t.discord?.roleId && t.id !== participant.teamId && actualRoles.includes(t.discord.roleId)) {
+          await removeGuildMemberRole({
+            guildId,
+            discordUserId,
+            roleId: t.discord.roleId,
+            botToken,
+            fetchFn
+          });
+          report.teamRolesRemoved++;
+        }
+      }
+
+      // B. Recalculate global entitlements across remaining active tournaments
+      const entitlements = getUserTournamentRoleEntitlementsFromContexts(participant.userId, contextsWithCurrentTerminal);
+
+      // PBG Player
+      if (entitlements.shouldHavePbgPlayer) {
+        report.globalPlayerRolesKept++;
+      } else {
+        if (pbgPlayerRoleId && actualRoles.includes(pbgPlayerRoleId)) {
+          const remPlayerRes = await removeGuildMemberRole({
+            guildId,
+            discordUserId,
+            roleId: pbgPlayerRoleId,
+            botToken,
+            fetchFn
+          });
+          if (remPlayerRes.success) {
+            report.globalPlayerRolesRemoved++;
+          } else {
+            report.failures.push({
+              userId: participant.userId,
+              roleId: pbgPlayerRoleId,
+              error: remPlayerRes.error || 'FAILED_TO_REMOVE_PLAYER_ROLE'
+            });
+          }
+        }
+      }
+
+      // PBG Captain
+      if (entitlements.shouldHavePbgCaptain) {
+        report.globalCaptainRolesKept++;
+      } else {
+        if (pbgCaptainRoleId && actualRoles.includes(pbgCaptainRoleId)) {
+          const remCaptainRes = await removeGuildMemberRole({
+            guildId,
+            discordUserId,
+            roleId: pbgCaptainRoleId,
+            botToken,
+            fetchFn
+          });
+          if (remCaptainRes.success) {
+            report.globalCaptainRolesRemoved++;
+          } else {
+            report.failures.push({
+              userId: participant.userId,
+              roleId: pbgCaptainRoleId,
+              error: remCaptainRes.error || 'FAILED_TO_REMOVE_CAPTAIN_ROLE'
+            });
+          }
+        }
+      }
+
+      // PBG Member is strictly preserved!
+    } catch (partErr: any) {
+      report.failures.push({
+        userId: participant.userId,
+        error: partErr.message || 'UNKNOWN_CLEANUP_ERROR'
+      });
+    }
+  }
+
+  // 6. Delete/archive dynamic team roles created for this tournament
+  for (const team of teams) {
+    if (team.discord?.roleId) {
+      const roleIdToDelete = team.discord.roleId;
+      try {
+        const delRes = await deleteDiscordTeamRoleAuthoritative({
+          guildId,
+          roleId: roleIdToDelete,
+          botToken,
+          fetchFn
+        });
+        if (delRes.success) {
+          report.teamRolesDeleted++;
+          team.discord = undefined;
+          if (db) {
+            await db.collection(`tournaments/${tournamentId}/teams`).doc(team.id).set({
+              discord: null
+            }, { merge: true }).catch(() => {});
+          }
+        } else {
+          report.failures.push({
+            roleId: roleIdToDelete,
+            error: delRes.error || 'FAILED_TO_DELETE_TEAM_ROLE'
+          });
+        }
+      } catch (delErr: any) {
+        report.failures.push({
+          roleId: roleIdToDelete,
+          error: delErr.message || 'FAILED_TO_DELETE_TEAM_ROLE'
+        });
       }
     }
   }
 
+  // 7. Persist cleanup result
+  if (db) {
+    try {
+      await db.collection('tournaments').doc(tournamentId).set({
+        discordCleanupStatus: 'COMPLETED',
+        discordCleanedAt: new Date().toISOString(),
+        discordCleanupReport: report
+      }, { merge: true });
+    } catch (saveErr) {
+      console.warn('[cleanupTournamentDiscordState] Firestore report save warning:', saveErr);
+    }
+
+    // 8. Audit event
+    try {
+      await db.collection('audit_logs').add({
+        action: 'tournament_discord_cleanup',
+        tournamentId,
+        entityType: 'tournament',
+        entityId: tournamentId,
+        details: `Cleaned tournament Discord state. Participants: ${report.participantsProcessed}, Team roles removed: ${report.teamRolesRemoved}, Team roles deleted: ${report.teamRolesDeleted}`,
+        report,
+        timestamp: new Date().toISOString()
+      });
+    } catch {}
+  }
+
+  // If there were any failures, queue a retryable sync job
+  if (report.failures.length > 0) {
+    const jobId = `cleanup_${tournamentId}`;
+    const job: DiscordSyncJobRecord = {
+      id: jobId,
+      type: 'CLEANUP_TOURNAMENT_DISCORD',
+      tournamentId,
+      status: 'PENDING',
+      attempts: 1,
+      lastError: `Failed ${report.failures.length} operations during cleanup`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      metadata: { failures: report.failures }
+    };
+    await recordDiscordSyncJob(job);
+  }
+
+  return report;
+}
+
+/**
+ * Backward compatibility wrapper for completion cleanup
+ */
+export async function cleanupTournamentCompletionDiscordRoles(params: {
+  tournamentId: string;
+  teams?: TournamentTeamRecord[];
+  participants?: TournamentParticipantRecord[];
+  discordConfig?: TournamentDiscordConfig;
+  fetchFn?: typeof fetch;
+}): Promise<{ totalParticipantsCleaned: number; deletedTeamRoles: number }> {
+  const report = await cleanupTournamentDiscordState({
+    tournamentId: params.tournamentId,
+    teams: params.teams,
+    participants: params.participants,
+    discordConfig: params.discordConfig,
+    fetchFn: params.fetchFn
+  });
   return {
-    totalParticipantsCleaned: cleanedCount,
-    deletedTeamRoles: deletedRolesCount
+    totalParticipantsCleaned: report.participantsProcessed,
+    deletedTeamRoles: report.teamRolesDeleted
+  };
+}
+
+/**
+ * -------------------------------------------------------------
+ * SOFT DELETE TOURNAMENT (SECTION 9)
+ * -------------------------------------------------------------
+ * Flows: ACTIVE -> CANCELLED/ABANDONED -> Discord cleanup -> DELETED/SOFT_DELETED.
+ * Retains complete data for audit, history, and recovery.
+ */
+export async function softDeleteTournamentAuthoritative(params: {
+  tournamentId: string;
+  deletedBy: string;
+  deleteReason: string;
+  fetchFn?: typeof fetch;
+}): Promise<{
+  success: boolean;
+  tournamentId: string;
+  cleanupReport: TournamentDiscordCleanupReport;
+}> {
+  const { tournamentId, deletedBy, deleteReason, fetchFn = fetch } = params;
+  const db = getAdminDb();
+
+  // 1. Transition to CANCELLED state first if not already terminal
+  if (db) {
+    try {
+      await db.collection('tournaments').doc(tournamentId).set({
+        status: 'cancelled',
+        lifecycle: 'CANCELLED',
+        cancelledAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+    } catch {}
+  }
+
+  // 2. Perform authoritative Discord cleanup
+  const cleanupReport = await cleanupTournamentDiscordState({
+    tournamentId,
+    fetchFn
+  });
+
+  // 3. Persist soft-deletion metadata
+  const now = new Date().toISOString();
+  if (db) {
+    try {
+      await db.collection('tournaments').doc(tournamentId).set({
+        deleted: true,
+        deletedAt: now,
+        deletedBy,
+        deleteReason,
+        status: 'deleted',
+        lifecycle: 'DELETED',
+        updatedAt: now
+      }, { merge: true });
+    } catch {}
+
+    // Audit log
+    try {
+      await db.collection('audit_logs').add({
+        action: 'tournament_soft_delete',
+        tournamentId,
+        entityType: 'tournament',
+        entityId: tournamentId,
+        details: `Soft-deleted tournament by ${deletedBy}. Reason: ${deleteReason}`,
+        deletedBy,
+        deleteReason,
+        timestamp: now
+      });
+    } catch {}
+  }
+
+  return {
+    success: true,
+    tournamentId,
+    cleanupReport
   };
 }
 

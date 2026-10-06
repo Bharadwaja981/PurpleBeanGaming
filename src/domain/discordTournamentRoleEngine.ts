@@ -24,6 +24,10 @@ import {
   TournamentTeamRecord,
   TournamentDiscordConfig
 } from './tournamentRegistrationEngine';
+import {
+  shouldTournamentGrantTemporaryDiscordRoles,
+  classifyTournamentLifecycle
+} from './tournamentLifecycleEngine';
 
 /**
  * PurpleBeanGaming canonical Discord role IDs.
@@ -54,6 +58,10 @@ export interface DiscordSyncContext {
   pbgMemberRoleId?: string;
   pbgPlayerRoleId?: string;
   pbgCaptainRoleId?: string;
+  globalEntitlements?: {
+    shouldHavePbgPlayer: boolean;
+    shouldHavePbgCaptain: boolean;
+  };
 }
 
 export type RoleCategory = 'PERSISTENT' | 'TOURNAMENT' | 'TEAM';
@@ -227,18 +235,36 @@ export function getDesiredTournamentDiscordRoles(
 
   const teamRoleId = team?.discord?.roleId;
 
-  const isTournamentCompleted = 
-    tournament.status === 'COMPLETED' || 
-    tournament.status === 'ARCHIVED';
+  const grantsTemporaryRoles = shouldTournamentGrantTemporaryDiscordRoles(tournament);
+  const isTerminalTournament = !grantsTemporaryRoles;
 
   const isTeamEliminated = team?.status === 'ELIMINATED' || participant?.eliminated === true;
-  const isParticipantActive = participant && participant.participantStatus === 'ACTIVE';
+  const isParticipantActive = participant && (participant.participantStatus === 'ACTIVE' || (participant as any).status === 'ACTIVE' || (participant as any).status === 'APPROVED');
 
-  // If tournament is completed: ALL temporary tournament roles and team roles must be removed!
-  if (isTournamentCompleted) {
-    if (pbgPlayerRoleId) undesiredRoleIds.add(pbgPlayerRoleId);
-    if (pbgCaptainRoleId) undesiredRoleIds.add(pbgCaptainRoleId);
+  // If tournament is terminal (COMPLETED, CANCELLED, ABANDONED, DELETED):
+  // Tournament-specific team roles are always removed.
+  // Global PBG Player and PBG Captain roles are only removed if user is NOT entitled in other tournaments!
+  if (isTerminalTournament) {
     if (teamRoleId) undesiredRoleIds.add(teamRoleId);
+
+    if (context.globalEntitlements) {
+      if (context.globalEntitlements.shouldHavePbgPlayer && pbgPlayerRoleId) {
+        desiredRoleIds.add(pbgPlayerRoleId);
+        roleDetails.push({ roleId: pbgPlayerRoleId, roleName: 'PBG Player', category: 'TOURNAMENT' });
+      } else if (pbgPlayerRoleId) {
+        undesiredRoleIds.add(pbgPlayerRoleId);
+      }
+
+      if (context.globalEntitlements.shouldHavePbgCaptain && pbgCaptainRoleId) {
+        desiredRoleIds.add(pbgCaptainRoleId);
+        roleDetails.push({ roleId: pbgCaptainRoleId, roleName: 'PBG Captain', category: 'TOURNAMENT' });
+      } else if (pbgCaptainRoleId) {
+        undesiredRoleIds.add(pbgCaptainRoleId);
+      }
+    } else {
+      if (pbgPlayerRoleId) undesiredRoleIds.add(pbgPlayerRoleId);
+      if (pbgCaptainRoleId) undesiredRoleIds.add(pbgCaptainRoleId);
+    }
 
     return {
       userId: participant?.userId || 'unknown',
@@ -251,11 +277,29 @@ export function getDesiredTournamentDiscordRoles(
     };
   }
 
-  // If team is eliminated: temporary tournament roles (Player, Captain, Team Role) are removed!
+  // If team is eliminated: tournament-specific team role is removed.
+  // Global PBG Player and PBG Captain roles are preserved if user has active entitlements in other tournaments!
   if (isTeamEliminated) {
-    if (pbgPlayerRoleId) undesiredRoleIds.add(pbgPlayerRoleId);
-    if (pbgCaptainRoleId) undesiredRoleIds.add(pbgCaptainRoleId);
     if (teamRoleId) undesiredRoleIds.add(teamRoleId);
+
+    if (context.globalEntitlements) {
+      if (context.globalEntitlements.shouldHavePbgPlayer && pbgPlayerRoleId) {
+        desiredRoleIds.add(pbgPlayerRoleId);
+        roleDetails.push({ roleId: pbgPlayerRoleId, roleName: 'PBG Player', category: 'TOURNAMENT' });
+      } else if (pbgPlayerRoleId) {
+        undesiredRoleIds.add(pbgPlayerRoleId);
+      }
+
+      if (context.globalEntitlements.shouldHavePbgCaptain && pbgCaptainRoleId) {
+        desiredRoleIds.add(pbgCaptainRoleId);
+        roleDetails.push({ roleId: pbgCaptainRoleId, roleName: 'PBG Captain', category: 'TOURNAMENT' });
+      } else if (pbgCaptainRoleId) {
+        undesiredRoleIds.add(pbgCaptainRoleId);
+      }
+    } else {
+      if (pbgPlayerRoleId) undesiredRoleIds.add(pbgPlayerRoleId);
+      if (pbgCaptainRoleId) undesiredRoleIds.add(pbgCaptainRoleId);
+    }
 
     return {
       userId: participant?.userId || 'unknown',

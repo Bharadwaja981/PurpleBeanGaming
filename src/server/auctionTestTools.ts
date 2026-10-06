@@ -441,7 +441,7 @@ export function resetAuctionTestData(
           const delDoc = await delDocRef.get();
           if (delDoc.exists) {
             const ids: string[] = delDoc.data()?.ids || [];
-            const filtered = ids.filter(id => id.toLowerCase() !== tournamentId.toLowerCase());
+            const filtered = ids.filter(id => typeof id === 'string' && id.toLowerCase() !== String(tournamentId || '').toLowerCase());
             await delDocRef.set({ ids: filtered, updatedAt: new Date().toISOString() }, { merge: true });
           }
 

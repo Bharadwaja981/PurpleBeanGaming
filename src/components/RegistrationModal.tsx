@@ -219,6 +219,11 @@ export function RegistrationModal({
     e.preventDefault();
     setErrorMessage(null);
 
+    if (isGuest) {
+      setErrorMessage('Spectator Mode: You must be registered and signed in to join tournaments. Guests can only spectate.');
+      return;
+    }
+
     if (isRegistrationClosed) {
       setErrorMessage(`Registration is locked: '${effectiveTourneyName}' is currently in '${currentTourneyObj?.status || 'Locked'}' state.`);
       return;
@@ -512,6 +517,56 @@ export function RegistrationModal({
                     Close
                   </button>
                 </div>
+              </div>
+            </div>
+          ) : isGuest ? (
+            /* Guest / Spectator Restriction Mode */
+            <div className="space-y-6 text-center py-6">
+              <div className="w-16 h-16 bg-[#FFE600] border-[3.5px] border-black shadow-[4px_4px_0px_0px_#000] mx-auto flex items-center justify-center text-3xl">
+                👀
+              </div>
+              <div className="space-y-2 max-w-md mx-auto">
+                <span className="text-[10px] font-black uppercase text-[#7C3AED] bg-[#EDE9FE] px-2.5 py-1 border border-black font-mono inline-block">
+                  Spectator Mode Active
+                </span>
+                <h3 className="text-2xl font-black uppercase text-black font-sans">
+                  Sign In Required to Join
+                </h3>
+                <p className="font-mono text-xs text-stone-600 leading-relaxed">
+                  Anyone who is not registered or signed in <strong>cannot join</strong> tournaments. As a guest, you can <strong>only spectate</strong> live match broadcasts, double elimination brackets, and captain auction drafts.
+                </p>
+              </div>
+
+              <div className="bg-stone-50 border-2 border-black p-4 text-left max-w-md mx-auto space-y-2.5 font-mono text-xs shadow-[3px_3px_0px_0px_#000]">
+                <div className="font-black text-black uppercase flex items-center gap-1.5 border-b border-black pb-1.5">
+                  <Shield className="w-4 h-4 text-[#7C3AED]" />
+                  <span>Why Spectator Mode is Enforced</span>
+                </div>
+                <ul className="space-y-1.5 text-stone-700 text-[11px] list-disc list-inside">
+                  <li><strong>Verified Contenders Only:</strong> Prevents anonymous smurfs, unregistered accounts, and unverified players from entering brackets.</li>
+                  <li><strong>Persistent PBG Player ID:</strong> Every player receives a unique ID (e.g. PBG-000186) for rating and prize payouts.</li>
+                  <li><strong>Steam &amp; MMR Verification:</strong> Ensures 1:1 Valve OpenDota match linking and anti-cheat tracking.</li>
+                </ul>
+              </div>
+
+              <div className="space-y-2.5 max-w-md mx-auto pt-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await tournamentService.signInWithGoogle();
+                  }}
+                  className="w-full bg-[#7C3AED] hover:bg-[#6D28D9] text-white border-2 border-black font-mono text-xs font-black uppercase py-3 shadow-[4px_4px_0px_0px_#000] cursor-pointer flex items-center justify-center gap-2 transition-transform hover:-translate-y-0.5"
+                >
+                  <User className="w-4 h-4" />
+                  <span>Sign In with Google to Join</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-full bg-white hover:bg-stone-100 text-black border-2 border-black font-mono text-xs font-black uppercase py-2.5 shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                >
+                  Continue Spectating This Tournament →
+                </button>
               </div>
             </div>
           ) : (

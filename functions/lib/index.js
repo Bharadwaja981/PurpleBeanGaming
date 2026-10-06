@@ -65,7 +65,7 @@ async function verifyFirebaseBearerToken(authHeader) {
     const cleanUid = token.replace("test-token-", "").replace("fallback-token-", "");
     return {
       uid: cleanUid,
-      email: `${cleanUid}@local.purplebeangaming.com`,
+      email: cleanUid.includes("@") ? cleanUid : `${cleanUid}@local.purplebeangaming.com`,
       isTest: true
     };
   }
@@ -1489,10 +1489,77 @@ async function getPrivateDiscordAccount(userId) {
     const doc5 = await db2.collection("privatePlayerAccounts").doc(userId).get();
     if (doc5.exists) {
       const data = doc5.data();
-      if (data.discordLinked) return data;
+      if (data.discordLinked && data.discordUserId) return data;
     }
     const reconciled = await reconcilePendingDiscordFinalization(userId);
-    if (reconciled) return reconciled;
+    if (reconciled && reconciled.discordLinked && reconciled.discordUserId) return reconciled;
+    const pbgDoc = await db2.collection("pbgAccounts").doc(userId).get();
+    if (pbgDoc.exists) {
+      const pbgData = pbgDoc.data() || {};
+      const discUserId = pbgData.discordUserId || pbgData.discord?.userId;
+      if (discUserId) {
+        const linkDoc = await db2.collection("discord_links").doc(discUserId).get();
+        const linkData = linkDoc.exists ? linkDoc.data() : null;
+        const resolved = {
+          userId,
+          pbgId: pbgData.pbgId || linkData?.pbgId,
+          discord: {
+            userId: discUserId,
+            username: linkData?.discordUsername || pbgData.discordUsername || pbgData.discord?.username || "player",
+            globalName: linkData?.globalName || pbgData.discordDisplayName || pbgData.discord?.globalName || null,
+            avatarUrl: linkData?.avatarUrl || pbgData.discordAvatarUrl || pbgData.discordAvatar || null,
+            connectedAt: linkData?.linkedAt || pbgData.discordLinkedAt || Date.now(),
+            guildMember: linkData?.guildMember ?? pbgData.discord?.guildMember ?? true,
+            pbgMemberRole: linkData?.pbgMemberRole ?? pbgData.discord?.pbgMemberRole ?? true,
+            verified: true
+          },
+          discordUserId: discUserId,
+          discordUsername: linkData?.discordUsername || pbgData.discordUsername || pbgData.discord?.username || "player",
+          discordDisplayName: linkData?.globalName || pbgData.discordDisplayName || pbgData.discord?.globalName || null,
+          discordAvatarUrl: linkData?.avatarUrl || pbgData.discordAvatarUrl || pbgData.discordAvatar || null,
+          discordLinked: true,
+          discordVerified: true,
+          discordVerificationMethod: "discord_oauth_2",
+          discordLinkedAt: linkData?.linkedAt || Date.now(),
+          discordVerifiedAt: linkData?.linkedAt || Date.now(),
+          updatedAt: Date.now()
+        };
+        await db2.collection("privatePlayerAccounts").doc(userId).set(resolved, { merge: true }).catch(() => {
+        });
+        return resolved;
+      }
+    }
+    const linkQuery = await db2.collection("discord_links").where("pbgUserId", "==", userId).limit(1).get();
+    if (!linkQuery.empty) {
+      const linkData = linkQuery.docs[0].data();
+      const resolved = {
+        userId,
+        pbgId: linkData.pbgId || void 0,
+        discord: {
+          userId: linkData.discordUserId,
+          username: linkData.discordUsername || "player",
+          globalName: linkData.globalName || null,
+          avatarUrl: linkData.avatarUrl || null,
+          connectedAt: linkData.linkedAt || Date.now(),
+          guildMember: Boolean(linkData.guildMember),
+          pbgMemberRole: Boolean(linkData.pbgMemberRole),
+          verified: true
+        },
+        discordUserId: linkData.discordUserId,
+        discordUsername: linkData.discordUsername || null,
+        discordDisplayName: linkData.globalName || null,
+        discordAvatarUrl: linkData.avatarUrl || null,
+        discordLinked: true,
+        discordVerified: true,
+        discordVerificationMethod: "discord_oauth_2",
+        discordLinkedAt: linkData.linkedAt || Date.now(),
+        discordVerifiedAt: linkData.linkedAt || Date.now(),
+        updatedAt: Date.now()
+      };
+      await db2.collection("privatePlayerAccounts").doc(userId).set(resolved, { merge: true }).catch(() => {
+      });
+      return resolved;
+    }
     if (doc5.exists) {
       return doc5.data();
     }
@@ -4286,8 +4353,26 @@ async function createDiscordTeamRoleAuthoritative(params) {
     return { success: true, roleId: mockRoleId };
   }
   try {
-    const url = `https://discord.com/api/v10/guilds/${guildId}/roles`;
-    const res = await fetchFn(url, {
+    const rolesUrl = `https://discord.com/api/v10/guilds/${guildId}/roles`;
+    try {
+      const existingRes = await fetchFn(rolesUrl, {
+        headers: { Authorization: `Bot ${botToken}` }
+      });
+      if (existingRes.ok) {
+        const rolesList = await existingRes.json();
+        if (Array.isArray(rolesList)) {
+          const match = rolesList.find(
+            (r) => r.name.toLowerCase().trim() === teamName.toLowerCase().trim()
+          );
+          if (match) {
+            return { success: true, roleId: match.id };
+          }
+        }
+      }
+    } catch (checkErr) {
+      console.warn("[createDiscordTeamRoleAuthoritative] Existing roles check note:", checkErr);
+    }
+    const res = await fetchFn(rolesUrl, {
       method: "POST",
       headers: {
         Authorization: `Bot ${botToken}`,
@@ -4355,10 +4440,97 @@ async function syncDiscordTournamentRoles(params) {
   try {
     const db2 = getAdminDb();
     if (db2) {
+      if (!tournamentData) {
+        const tDoc = await db2.collection("tournaments").doc(tournamentId).get();
+        if (tDoc.exists) {
+          tournamentData = tDoc.data();
+        }
+      }
       if (!participantData) {
         const pSnap = await db2.collection(`tournaments/${tournamentId}/participants`).doc(userId).get();
         if (pSnap.exists) {
           participantData = pSnap.data();
+        } else {
+          const cap = tournamentData?.captains?.find((c) => c.userId === userId);
+          const tMember = tournamentData?.teams?.flatMap((t) => t.primaryRoster || []).find((p) => p.userId === userId || p.id === userId);
+          if (cap) {
+            participantData = {
+              userId,
+              tournamentId,
+              registrationId: userId,
+              pbgId: cap.pbgId || userId,
+              displayName: cap.displayName || cap.name || userId,
+              tournamentRole: "CAPTAIN",
+              captainSlotId: cap.slotId || `slot-${cap.teamId}`,
+              teamId: cap.teamId || null,
+              participantStatus: "ACTIVE",
+              auctionStatus: "NOT_IN_POOL",
+              eliminated: false,
+              source: "REGISTRATION",
+              joinedAt: cap.assignedAt || (/* @__PURE__ */ new Date()).toISOString(),
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            };
+          } else if (tMember) {
+            participantData = {
+              userId,
+              tournamentId,
+              registrationId: userId,
+              pbgId: tMember.pbgId || userId,
+              displayName: tMember.name || tMember.displayName || userId,
+              tournamentRole: tMember.isCaptain ? "CAPTAIN" : "PLAYER",
+              captainSlotId: tMember.isCaptain ? `slot-${tMember.teamId}` : null,
+              teamId: tMember.teamId || null,
+              participantStatus: "ACTIVE",
+              auctionStatus: "SOLD",
+              eliminated: false,
+              source: "REGISTRATION",
+              joinedAt: (/* @__PURE__ */ new Date()).toISOString(),
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            };
+          } else {
+            const mSnap = await db2.collection(`tournaments/${tournamentId}/memberships`).doc(userId).get();
+            if (mSnap.exists) {
+              const mData = mSnap.data();
+              participantData = {
+                userId,
+                tournamentId,
+                registrationId: userId,
+                pbgId: mData?.pbgId || userId,
+                displayName: mData?.displayName || mData?.name || userId,
+                tournamentRole: mData?.role === "captain" ? "CAPTAIN" : "PLAYER",
+                captainSlotId: mData?.role === "captain" ? `slot-${mData?.teamId}` : null,
+                teamId: mData?.teamId || null,
+                participantStatus: "ACTIVE",
+                auctionStatus: mData?.role === "captain" ? "NOT_IN_POOL" : "AVAILABLE",
+                eliminated: false,
+                source: "REGISTRATION",
+                joinedAt: mData?.assignedAt || (/* @__PURE__ */ new Date()).toISOString(),
+                updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+              };
+            } else {
+              const rSnap = await db2.collection(`tournaments/${tournamentId}/registrations`).doc(userId).get();
+              if (rSnap.exists) {
+                const rData = rSnap.data();
+                const isApproved = rData?.status === "verified" || rData?.status === "registered" || rData?.status === "APPROVED";
+                participantData = {
+                  userId,
+                  tournamentId,
+                  registrationId: rData?.id || userId,
+                  pbgId: rData?.pbgId || userId,
+                  displayName: rData?.ign || rData?.displayName || userId,
+                  tournamentRole: rData?.isCaptainApproved ? "CAPTAIN" : "PLAYER",
+                  captainSlotId: rData?.isCaptainApproved ? `slot-${rData?.teamId || "pending"}` : null,
+                  teamId: rData?.teamId || null,
+                  participantStatus: isApproved ? "ACTIVE" : "INACTIVE",
+                  auctionStatus: rData?.isCaptainApproved ? "NOT_IN_POOL" : "AVAILABLE",
+                  eliminated: false,
+                  source: "REGISTRATION",
+                  joinedAt: rData?.registeredAt || (/* @__PURE__ */ new Date()).toISOString(),
+                  updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+                };
+              }
+            }
+          }
         }
       }
       if (!discordConfig) {
@@ -4371,6 +4543,43 @@ async function syncDiscordTournamentRoles(params) {
         const tSnap = await db2.collection(`tournaments/${tournamentId}/teams`).doc(participantData.teamId).get();
         if (tSnap.exists) {
           teamData = tSnap.data();
+        } else {
+          const rawTeam = tournamentData?.teams?.find((t) => t.id === participantData?.teamId);
+          if (rawTeam) {
+            teamData = {
+              teamId: rawTeam.id,
+              tournamentId,
+              name: rawTeam.name,
+              captainUserId: rawTeam.captainId || rawTeam.captainUserId,
+              status: "ACTIVE",
+              discord: rawTeam.discord || null
+            };
+          }
+        }
+      }
+      if (teamData && !teamData.discord?.roleId) {
+        const botConfig = getBotConfig(discordConfig);
+        if (botConfig.botToken) {
+          const roleRes = await createDiscordTeamRoleAuthoritative({
+            guildId: botConfig.guildId,
+            teamName: teamData.name,
+            botToken: botConfig.botToken,
+            fetchFn
+          });
+          if (roleRes.success && roleRes.roleId) {
+            teamData.discord = {
+              roleId: roleRes.roleId,
+              roleName: teamData.name,
+              createdAt: (/* @__PURE__ */ new Date()).toISOString()
+            };
+            const targetTeamId = teamData.id || teamData.teamId;
+            if (targetTeamId) {
+              await db2.collection(`tournaments/${tournamentId}/teams`).doc(targetTeamId).set({
+                discord: teamData.discord
+              }, { merge: true }).catch(() => {
+              });
+            }
+          }
         }
       }
     }
@@ -4617,6 +4826,152 @@ async function retryPendingDiscordSyncJobs(params) {
     }
   }
   return { totalRetried, succeeded, failed, jobs: processedJobs };
+}
+async function syncTournamentDiscordRolesAll(params) {
+  const { tournamentId, fetchFn = fetch } = params;
+  const db2 = getAdminDb();
+  let participants = [];
+  if (db2) {
+    try {
+      const pSnap = await db2.collection(`tournaments/${tournamentId}/participants`).get();
+      participants = pSnap.docs.map((d) => d.data());
+    } catch {
+    }
+  }
+  if (participants.length === 0) {
+    const pMap = inMemoryParticipants.get(tournamentId);
+    if (pMap) participants = Array.from(pMap.values());
+  }
+  const report = {
+    processed: 0,
+    updated: 0,
+    alreadyCorrect: 0,
+    skippedTestIdentities: 0,
+    failed: 0,
+    failures: [],
+    results: []
+  };
+  for (const part of participants) {
+    report.processed++;
+    const isTest = Boolean(
+      part.isTestAccount || part.source === "TEST_SEED" || part.userId.startsWith("pbg-test-") || part.userId.startsWith("dummy-") || part.userId.startsWith("p-user-")
+    );
+    if (isTest) {
+      report.skippedTestIdentities++;
+      continue;
+    }
+    try {
+      const syncRes = await syncDiscordTournamentRoles({
+        userId: part.userId,
+        tournamentId,
+        fetchFn
+      });
+      report.results.push(syncRes);
+      if (syncRes.skipped) {
+        report.skippedTestIdentities++;
+      } else if (!syncRes.success) {
+        report.failed++;
+        report.failures.push({
+          userId: part.userId,
+          username: part.displayName || part.username || part.userId,
+          error: syncRes.error || "SYNC_FAILED"
+        });
+      } else if (syncRes.rolesAdded.length > 0 || syncRes.rolesRemoved.length > 0) {
+        report.updated++;
+      } else {
+        report.alreadyCorrect++;
+      }
+    } catch (err) {
+      report.failed++;
+      report.failures.push({
+        userId: part.userId,
+        username: part.displayName || part.username || part.userId,
+        error: err.message || "UNEXPECTED_ERROR"
+      });
+    }
+  }
+  return report;
+}
+async function getTournamentDiscordDiagnostics(tournamentId) {
+  const db2 = getAdminDb();
+  let participants = [];
+  if (db2) {
+    try {
+      const pSnap = await db2.collection(`tournaments/${tournamentId}/participants`).get();
+      participants = pSnap.docs.map((d) => d.data());
+    } catch {
+    }
+  }
+  if (participants.length === 0) {
+    const pMap = inMemoryParticipants.get(tournamentId);
+    if (pMap) participants = Array.from(pMap.values());
+  }
+  const { botToken, guildId, pbgMemberRoleId, pbgPlayerRoleId, pbgCaptainRoleId } = getBotConfig();
+  const diagnostics = [];
+  for (const p of participants) {
+    const isTest = Boolean(
+      p.isTestAccount || p.source === "TEST_SEED" || p.userId.startsWith("pbg-test-") || p.userId.startsWith("dummy-") || p.userId.startsWith("p-user-")
+    );
+    if (isTest) {
+      diagnostics.push({
+        userId: p.userId,
+        username: p.displayName || p.username || p.userId,
+        tournamentRole: p.tournamentRole,
+        captainSlotId: p.captainSlotId || null,
+        teamId: p.teamId || null,
+        teamName: p.teamName || null,
+        isTestAccount: true,
+        discordLinked: false,
+        discordUserId: null,
+        guildMemberVerified: false,
+        desiredRoles: [],
+        actualRoles: [],
+        syncStatus: "SKIPPED_TEST_IDENTITY"
+      });
+      continue;
+    }
+    const privateAccount = await getPrivateDiscordAccount(p.userId);
+    const discordUserId = privateAccount?.discordUserId || null;
+    const discordLinked = Boolean(privateAccount?.discordLinked && discordUserId);
+    let actualRoles = [];
+    let guildMemberVerified = false;
+    if (discordLinked && discordUserId && botToken && guildId) {
+      try {
+        const verifyRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${discordUserId}`, {
+          headers: { Authorization: `Bot ${botToken}` }
+        });
+        if (verifyRes.ok) {
+          guildMemberVerified = true;
+          const memberData = await verifyRes.json();
+          actualRoles = Array.isArray(memberData?.roles) ? memberData.roles : [];
+        }
+      } catch {
+      }
+    }
+    const desired = [pbgMemberRoleId, pbgPlayerRoleId];
+    if (p.tournamentRole === "CAPTAIN") desired.push(pbgCaptainRoleId);
+    let syncStatus = "NOT_LINKED";
+    if (discordLinked) {
+      const allPresent = desired.every((r) => actualRoles.includes(r));
+      syncStatus = allPresent ? "SYNCED" : "OUT_OF_SYNC";
+    }
+    diagnostics.push({
+      userId: p.userId,
+      username: p.displayName || p.username || p.userId,
+      tournamentRole: p.tournamentRole,
+      captainSlotId: p.captainSlotId || null,
+      teamId: p.teamId || null,
+      teamName: p.teamName || null,
+      isTestAccount: false,
+      discordLinked,
+      discordUserId,
+      guildMemberVerified,
+      desiredRoles: desired,
+      actualRoles,
+      syncStatus
+    });
+  }
+  return diagnostics;
 }
 
 // ../src/utils/sanitizeFirestore.ts
@@ -5262,6 +5617,38 @@ function validateAuctionRuntimeIntegrity(session) {
     warnings
   };
 }
+function canRecallUnsold(session, playerId, options) {
+  const player = session.players[playerId];
+  if (!player) {
+    return { allowed: false, reason: "PLAYER_NOT_FOUND: Player not found in auction pool." };
+  }
+  if (player.status !== "UNSOLD") {
+    return { allowed: false, reason: `INVALID_STATUS: Player status is ${player.status}, expected UNSOLD.` };
+  }
+  if (session.status === "COMPLETED" || session.status === "CANCELLED") {
+    return {
+      allowed: false,
+      reason: "AUCTION_COMPLETED: Auction is completed. Reopening the auction room is required to recall unsold players."
+    };
+  }
+  const availableRemaining = Object.values(session.players).filter((p) => p.status === "AVAILABLE");
+  if (availableRemaining.length > 0 && !options?.forceOverride) {
+    return {
+      allowed: false,
+      reason: `AVAILABLE_POOL_NOT_EXHAUSTED: ${availableRemaining.length} normal AVAILABLE player(s) remain in the pool. UNSOLD re-auction begins only after all regular players are resolved.`
+    };
+  }
+  const allPrimaryComplete = Object.values(session.teams).every(
+    (t) => t.primaryRosterUserIds.length >= (session.config.primaryRosterSize || 5)
+  );
+  if (allPrimaryComplete && session.status !== "STANDIN_PHASE" && !options?.forceOverride) {
+    return {
+      allowed: false,
+      reason: "PRIMARY_ROSTERS_COMPLETE: Primary rosters are full (5/5). Stand-In auction phase must be active to recall players."
+    };
+  }
+  return { allowed: true };
+}
 
 // ../src/domain/tournamentDiscovery.ts
 var LEGACY_MOCK_TOURNAMENT_IDS = /* @__PURE__ */ new Set([
@@ -5275,7 +5662,7 @@ var LEGACY_MOCK_TOURNAMENT_IDS = /* @__PURE__ */ new Set([
 function isTestTournament(tournament) {
   if (!tournament) return false;
   const rawId = typeof tournament === "string" ? tournament : tournament.id || tournament.tournamentId || "";
-  const idLower = rawId.toLowerCase();
+  const idLower = String(rawId || "").toLowerCase();
   if (typeof tournament === "object" && tournament.testMode === true || idLower === "purple-bean-auction-test" || typeof tournament === "object" && (tournament.isDevelopment === true || tournament.isSynthetic === true || tournament.isDummy === true) || typeof tournament === "object" && (tournament.deleted === true || tournament.status === "DELETED" || tournament.status === "deleted" || tournament.lifecycle === "CANCELLED_DELETED")) {
     return true;
   }
@@ -5286,13 +5673,13 @@ function isTestTournament(tournament) {
 }
 function isTestPlayer(player) {
   if (!player) return false;
-  const idLower = (player.id || player.userId || player.pbgId || "").toLowerCase();
+  const idLower = String(player.id || player.userId || player.pbgId || "").toLowerCase();
   return player.isTestAccount === true || player.source === "TEST_SEED" || idLower.startsWith("pbg-test-") || idLower.startsWith("dummy-") || idLower.startsWith("p-tc-") || idLower.startsWith("tc-") || player.isDummy === true || player.isSynthetic === true;
 }
 function isTestTeam(team) {
   if (!team) return false;
-  const idLower = (team.id || "").toLowerCase();
-  const tourneyIdLower = (team.tournamentId || "").toLowerCase();
+  const idLower = String(team.id || "").toLowerCase();
+  const tourneyIdLower = String(team.tournamentId || "").toLowerCase();
   return idLower.startsWith("tc-team") || LEGACY_MOCK_TOURNAMENT_IDS.has(tourneyIdLower) || idLower === "team-9s8uyzbbgxz5tfgyukaoangqjpo2-2177" || idLower === "team-s1syelw0xhwkgjenyaobvh7btjt2-197" || team.isDummy === true || team.isSynthetic === true;
 }
 function normalizeStatus(rawStatus) {
@@ -5363,7 +5750,7 @@ function normalizeVisibility(t) {
   return "PUBLIC";
 }
 function normalizeGameId(gameOrId) {
-  if (!gameOrId) return "dota2";
+  if (!gameOrId || typeof gameOrId !== "string") return "dota2";
   const clean = gameOrId.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
   if (clean === "dota2" || clean === "dota") return "dota2";
   if (clean === "cs2" || clean === "counterstrike2") return "cs2";
@@ -5377,7 +5764,7 @@ function isPubliclyDiscoverable(tournament) {
   if (tournament.deleted === true || tournament.status === "DELETED") {
     return false;
   }
-  const rawId = (tournament.id || tournament.tournamentId || "").toLowerCase();
+  const rawId = String(tournament.id || tournament.tournamentId || "").toLowerCase();
   if (rawId === "purple-bean-auction-test" || rawId === "auction-test") {
     return true;
   }
@@ -6108,11 +6495,9 @@ async function reintroduceUnsoldPlayerAuthoritative(params) {
     if (player.status !== "UNSOLD") {
       throw new Error(`INVALID_STATUS: Player status is ${player.status}, expected UNSOLD.`);
     }
-    const availableRemaining = Object.values(session.players).filter((p) => p.status === "AVAILABLE");
-    if (availableRemaining.length > 0 && !forceOverride) {
-      throw new Error(
-        `AVAILABLE_POOL_NOT_EXHAUSTED: ${availableRemaining.length} regular available player(s) remain in the pool. UNSOLD re-auction begins only after all regular players are resolved.`
-      );
+    const recallCheck = canRecallUnsold(session, playerId, { forceOverride });
+    if (!recallCheck.allowed && !forceOverride) {
+      throw new Error(recallCheck.reason || "RECALL_NOT_ALLOWED");
     }
     const now = (/* @__PURE__ */ new Date()).toISOString();
     player.status = "AVAILABLE";
@@ -7797,6 +8182,8 @@ var DotaAuctionEngine = class {
           } catch {
           }
         }
+        this.syncWithServer().catch(() => {
+        });
         this.ssePollInterval = setInterval(() => {
           if (this.isApplyingRemoteUpdate) return;
           fetch(`/api/auction/${encodeURIComponent(this.config.tournamentId)}`).then((res) => res.json()).then((data) => {
@@ -7805,7 +8192,7 @@ var DotaAuctionEngine = class {
               const localRev = this.state.revision || 0;
               const serverNominee = data.snapshot.state?.nominee?.id;
               const localNominee = this.state.nominee?.id;
-              if (serverRev > localRev || serverNominee !== localNominee || data.snapshot.state?.status === "LIVE" && this.state.status !== "LIVE") {
+              if (serverRev > localRev || serverNominee !== localNominee || data.snapshot.state?.status === "LIVE" && this.state.status !== "LIVE" || this.players.size !== (data.snapshot.players?.length || 0) || this.getUnsoldPlayers().length !== (data.snapshot.state?.unsoldCount || 0) || this.getSoldPlayers().length !== (data.snapshot.state?.soldCount || 0) || this.state.status !== data.snapshot.state?.status) {
                 this.importSnapshot(data.snapshot);
               }
             }
@@ -7901,6 +8288,24 @@ var DotaAuctionEngine = class {
       }
     }
   }
+  /**
+   * Fetches latest authoritative server snapshot and imports it immediately.
+   */
+  async syncWithServer() {
+    if (typeof window === "undefined" || typeof fetch === "undefined") return false;
+    try {
+      const res = await fetch(`/api/auction/${encodeURIComponent(this.config.tournamentId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.success && data?.snapshot) {
+          return this.importSnapshot(data.snapshot);
+        }
+      }
+    } catch (err) {
+      console.warn("[DotaAuctionEngine] syncWithServer warning:", err);
+    }
+    return false;
+  }
   broadcastUpdate(persist = true) {
     if (this.isApplyingRemoteUpdate) return;
     if (persist) {
@@ -7939,8 +8344,58 @@ var DotaAuctionEngine = class {
         this.teams = new Map(snapshot.teams.map((t) => [t.id, { ...t }]));
       }
       if (Array.isArray(snapshot.players)) {
-        this.players = new Map(snapshot.players.map((p) => [p.id, { ...p }]));
+        this.players = new Map(snapshot.players.map((p) => {
+          const clone = { ...p };
+          if (clone.auctionStatus && !clone.status) clone.status = clone.auctionStatus;
+          if (clone.status && !clone.auctionStatus) clone.auctionStatus = clone.status;
+          return [clone.id, clone];
+        }));
       }
+      for (const t of this.teams.values()) {
+        for (const rosterPlayer of t.primaryRoster || []) {
+          const p = this.players.get(rosterPlayer.id);
+          if (p) {
+            p.status = "SOLD";
+            p.auctionStatus = "SOLD";
+            p.teamId = t.id;
+            p.teamName = t.name;
+          }
+        }
+        for (const standIn of t.standIns || []) {
+          const p = this.players.get(standIn.id);
+          if (p) {
+            p.status = "SOLD";
+            p.auctionStatus = "SOLD";
+            p.teamId = t.id;
+            p.teamName = t.name;
+            p.isStandIn = true;
+          }
+        }
+      }
+      if (this.state.lastLotResult?.outcome === "UNSOLD" && this.state.lastLotResult.player?.id) {
+        const lastUnsold = this.players.get(this.state.lastLotResult.player.id);
+        if (lastUnsold && lastUnsold.status !== "SOLD") {
+          lastUnsold.status = "UNSOLD";
+          lastUnsold.auctionStatus = "UNSOLD";
+        }
+      }
+      if (Array.isArray(snapshot.nominationAudits)) {
+        for (const audit of snapshot.nominationAudits) {
+          if (audit.outcome === "UNSOLD" && audit.nomineeId) {
+            const p = this.players.get(audit.nomineeId);
+            if (p && p.status !== "SOLD") {
+              p.status = "UNSOLD";
+              p.auctionStatus = "UNSOLD";
+            }
+          }
+        }
+      }
+      const unsoldList = Array.from(this.players.values()).filter((p) => p.status === "UNSOLD" || p.auctionStatus === "UNSOLD");
+      this.state.unsoldCount = unsoldList.length;
+      const soldList = Array.from(this.players.values()).filter((p) => p.status === "SOLD" || p.auctionStatus === "SOLD");
+      this.state.soldCount = soldList.length;
+      const unselectedList = Array.from(this.players.values()).filter((p) => p.status === "UNSELECTED" || p.auctionStatus === "UNSELECTED");
+      this.state.unselectedCount = unselectedList.length;
       if (Array.isArray(snapshot.bidHistory)) {
         this.bidHistory = [...snapshot.bidHistory];
       }
@@ -8691,16 +9146,73 @@ var DotaAuctionEngine = class {
     return { success: true, reauctionCount: count };
   }
   /**
-   * Restores an individual UNSOLD or UNSELECTED contender back to AVAILABLE auction pool.
-   * If the auction was previously marked completed, reopens it.
+   * PurpleBeanGaming Authoritative Rule:
+   * UNSOLD players may be recalled only after all normal AVAILABLE players have been resolved to SOLD or UNSOLD.
    */
-  reauctionPlayer(playerId, staffActorId = "organizer") {
+  canRecallUnsold(playerId, options) {
+    const player = this.players.get(playerId);
+    if (!player) {
+      return { allowed: false, reason: "Player not found in auction pool." };
+    }
+    if (player.status !== "UNSOLD" && player.auctionStatus !== "UNSOLD") {
+      return { allowed: false, reason: `Player status is ${player.status}, expected UNSOLD.` };
+    }
+    if (this.state.isCompleted || this.state.status === "COMPLETED") {
+      return {
+        allowed: false,
+        reason: 'Auction is COMPLETED (Primary rosters complete). Reopening the auction room ("Reopen for Unsold") or initiating the Stand-In phase is required.'
+      };
+    }
+    const availableNormal = Array.from(this.players.values()).filter((p) => (p.status === "AVAILABLE" || p.auctionStatus === "AVAILABLE") && !p.isCaptain);
+    if (availableNormal.length > 0 && !options?.forceOverride) {
+      return {
+        allowed: false,
+        reason: `Recall not permitted: ${availableNormal.length} normal AVAILABLE player(s) remain in the pool. All regular players must be resolved to SOLD or UNSOLD first.`
+      };
+    }
+    const allPrimaryFilled = Array.from(this.teams.values()).length > 0 && Array.from(this.teams.values()).every(
+      (t) => t.primaryRoster.length >= this.config.primaryRosterSize
+    );
+    if (allPrimaryFilled && !this.state.standInRoundActive && !options?.forceOverride) {
+      return {
+        allowed: false,
+        reason: "Primary rosters are full (5/5). Stand-In auction phase must be active to purchase another contender."
+      };
+    }
+    return { allowed: true };
+  }
+  /**
+   * Explicit organizer reopening of completed auction room for unsold contender resolution.
+   */
+  reopenAuctionForUnsold(staffActorId = "organizer", reason = "Reopening room to resolve unsold contenders") {
+    this.state.isCompleted = false;
+    this.state.status = "PAUSED";
+    this.logAudit("AUCTION_REOPENED_FOR_UNSOLD", staffActorId, `Auction reopened: ${reason}`);
+    this.broadcastUpdate();
+    this.notify();
+    return { success: true };
+  }
+  /**
+   * Restores an individual UNSOLD or UNSELECTED contender back to AVAILABLE auction pool.
+   * Emits audited PLAYER_REINTRODUCED event.
+   */
+  reauctionPlayer(playerId, staffActorId = "organizer", options) {
+    if (this.state.isCompleted || this.state.status === "COMPLETED") {
+      return {
+        success: false,
+        error: 'AUCTION_LOCKED_COMPLETED: Auction is COMPLETED and locked. Reopen the auction room via "Reopen for Unsold" or initiate the Stand-In phase before recalling players.'
+      };
+    }
     const p = this.players.get(playerId);
     if (!p) return { success: false, error: `Player '${playerId}' not found.` };
-    if (p.status !== "UNSOLD" && p.status !== "UNSELECTED") {
+    if (p.status !== "UNSOLD" && p.status !== "UNSELECTED" && p.auctionStatus !== "UNSOLD" && p.auctionStatus !== "UNSELECTED") {
       return { success: false, error: `Player '${p.username}' is not UNSOLD or UNSELECTED (status: ${p.status}).` };
     }
     if (p.status === "UNSOLD") {
+      const check = this.canRecallUnsold(playerId, options);
+      if (!check.allowed && !options?.forceOverride) {
+        return { success: false, error: check.reason };
+      }
       this.state.unsoldCount = Math.max(0, this.state.unsoldCount - 1);
     }
     if (p.status === "UNSELECTED") {
@@ -8708,22 +9220,22 @@ var DotaAuctionEngine = class {
     }
     p.status = "AVAILABLE";
     this.unsoldQueue = this.unsoldQueue.filter((id) => id !== playerId);
-    if (this.state.isCompleted) {
-      this.state.isCompleted = false;
-      this.state.status = "READY";
-    }
-    this.logAudit("player_reauction_restored", staffActorId, `Restored ${p.username} back to available auction pool for re-auction.`);
+    this.logAudit(
+      "PLAYER_REINTRODUCED",
+      staffActorId,
+      `Player ${p.username} recalled from ${p.status} to AVAILABLE auction pool.${options?.forceOverride ? ` [ORGANIZER OVERRIDE: ${options.overrideReason || "Admin approved"}]` : ""}`
+    );
     this.notify();
     return { success: true, player: p };
   }
   /**
    * Re-auctions and immediately puts the UNSOLD or UNSELECTED contender on the live auction block.
    */
-  reauctionAndNominatePlayer(playerId, staffActorId = "organizer") {
+  reauctionAndNominatePlayer(playerId, staffActorId = "organizer", options) {
     const p = this.players.get(playerId);
     if (!p) return { success: false, error: `Player '${playerId}' not found.` };
     if (p.status === "UNSOLD" || p.status === "UNSELECTED") {
-      const rest = this.reauctionPlayer(playerId, staffActorId);
+      const rest = this.reauctionPlayer(playerId, staffActorId, options);
       if (!rest.success) return { success: false, error: rest.error };
     }
     return this.nominatePlayer(playerId, staffActorId);
@@ -9414,6 +9926,16 @@ var DotaAuctionEngine = class {
         `Player ${nominee.username} passed as UNSOLD.`
       );
     }
+    const existingPlayer = this.players.get(nominee.id);
+    if (existingPlayer) {
+      existingPlayer.status = nominee.status;
+      existingPlayer.teamId = nominee.teamId;
+      existingPlayer.teamName = nominee.teamName;
+      existingPlayer.soldAmount = nominee.soldAmount;
+      existingPlayer.isStandIn = nominee.isStandIn;
+    } else {
+      this.players.set(nominee.id, { ...nominee });
+    }
     this.stopTimer();
     this.state.timerEndsAt = void 0;
     this.state.pausedRemainingMs = void 0;
@@ -9587,16 +10109,16 @@ var DotaAuctionEngine = class {
     return this.players.get(playerId);
   }
   getAvailablePlayers() {
-    return Array.from(this.players.values()).filter((p) => p.status === "AVAILABLE");
+    return Array.from(this.players.values()).filter((p) => (p.status === "AVAILABLE" || p.auctionStatus === "AVAILABLE") && !p.isCaptain);
   }
   getSoldPlayers() {
-    return Array.from(this.players.values()).filter((p) => p.status === "SOLD");
+    return Array.from(this.players.values()).filter((p) => p.status === "SOLD" || p.auctionStatus === "SOLD");
   }
   getUnsoldPlayers() {
-    return Array.from(this.players.values()).filter((p) => p.status === "UNSOLD");
+    return Array.from(this.players.values()).filter((p) => p.status === "UNSOLD" || p.auctionStatus === "UNSOLD");
   }
   getUnselectedPlayers() {
-    return Array.from(this.players.values()).filter((p) => p.status === "UNSELECTED");
+    return Array.from(this.players.values()).filter((p) => p.status === "UNSELECTED" || p.auctionStatus === "UNSELECTED");
   }
   getBidHistory() {
     return [...this.bidHistory];
@@ -9733,13 +10255,16 @@ function formatINR(val) {
   if (val === void 0 || val === null || isNaN(val)) return "\u20B90";
   return "\u20B9" + Math.round(val).toLocaleString("en-IN");
 }
-function createDefaultTournamentConfig(gameId = "dota2") {
+function createDefaultTournamentConfig(gameIdOrTournament = "dota2") {
+  const rawGameId = typeof gameIdOrTournament === "string" ? gameIdOrTournament : gameIdOrTournament?.gameId || gameIdOrTournament?.game || "dota2";
+  const gameId = String(rawGameId || "dota2");
   const isDota = gameId.toLowerCase().includes("dota");
+  const cleanGameId = gameId.toLowerCase().replace(/[^a-z0-9]/g, "") || "dota2";
   return {
     identity: {
-      tournamentId: `pb-${gameId}-${Date.now()}`,
+      tournamentId: `pb-${cleanGameId}-${Date.now()}`,
       name: isDota ? "Dota 2 Championship" : "Esports Open Cup",
-      gameId: gameId.toLowerCase().replace(/[^a-z0-9]/g, "") || "dota2",
+      gameId: cleanGameId,
       gameName: isDota ? "Dota 2" : "Dota 2",
       description: "Official tournament powered by Purple Bean Gaming.",
       region: "Pan India",
@@ -10364,6 +10889,7 @@ var PurpleBeanTestCupEngine = class {
     return { success: true, status: p.registrationStatus };
   }
   confirmCaptainsAndTeams() {
+    this.status = "Drafting";
     this.teams = [
       {
         id: "tc-team-1",
@@ -10706,7 +11232,9 @@ var TournamentConfigRegistry = class {
     this.notify();
   }
   registerConfig(config) {
-    const id = config.identity.tournamentId;
+    if (!config?.identity?.tournamentId) return;
+    const rawId = config.identity.tournamentId;
+    const id = String(rawId);
     this.deletedIds.delete(id);
     this.deletedIds.delete(id.toLowerCase());
     this.configs.set(id, config);
@@ -10714,19 +11242,21 @@ var TournamentConfigRegistry = class {
   }
   removeConfig(tournamentId) {
     if (!tournamentId) return;
-    this.deletedIds.add(tournamentId);
-    this.deletedIds.add(tournamentId.toLowerCase());
-    this.configs.delete(tournamentId);
-    this.configs.delete(tournamentId.toLowerCase());
+    const id = String(tournamentId);
+    this.deletedIds.add(id);
+    this.deletedIds.add(id.toLowerCase());
+    this.configs.delete(id);
+    this.configs.delete(id.toLowerCase());
     this.notify();
   }
   getConfig(tournamentId) {
     if (!tournamentId) return void 0;
-    const tIdLower = tournamentId.toLowerCase();
-    if (this.deletedIds.has(tournamentId) || this.deletedIds.has(tIdLower)) {
+    const id = String(tournamentId);
+    const tIdLower = id.toLowerCase();
+    if (this.deletedIds.has(id) || this.deletedIds.has(tIdLower)) {
       return void 0;
     }
-    const found = this.configs.get(tournamentId) || this.configs.get(tIdLower);
+    const found = this.configs.get(id) || this.configs.get(tIdLower);
     if (found) return found;
     const isTest = typeof process !== "undefined" && (process.env?.NODE_ENV === "test" || Boolean(process.env?.VITEST));
     if (isTest) {
@@ -10735,7 +11265,7 @@ var TournamentConfigRegistry = class {
         return TEST_CUP_GENERIC_CONFIG;
       }
       const seed = INITIAL_SEED_TOURNAMENTS.find(
-        (s) => s.identity.tournamentId === tournamentId || s.identity.tournamentId.toLowerCase() === tIdLower
+        (s) => String(s.identity.tournamentId) === id || String(s.identity.tournamentId || "").toLowerCase() === tIdLower
       );
       if (seed) {
         this.configs.set(tournamentId, seed);
@@ -10756,8 +11286,8 @@ var TournamentConfigRegistry = class {
     const isTest = typeof process !== "undefined" && (process.env?.NODE_ENV === "test" || Boolean(process.env?.VITEST));
     if (isTest) {
       return Array.from(this.configs.values()).filter((c) => {
-        const id = c.identity?.tournamentId;
-        return !this.deletedIds.has(id) && !this.deletedIds.has((id || "").toLowerCase());
+        const id = String(c.identity?.tournamentId || "");
+        return id && !this.deletedIds.has(id) && !this.deletedIds.has(id.toLowerCase());
       });
     }
     const LEGACY_MOCK_TOURNAMENT_IDS2 = /* @__PURE__ */ new Set([
@@ -10766,9 +11296,9 @@ var TournamentConfigRegistry = class {
       "purple-bean-test-cup"
     ]);
     return Array.from(this.configs.values()).filter((c) => {
-      const rawId = c.identity?.tournamentId || "";
+      const rawId = String(c.identity?.tournamentId || "");
       const id = rawId.toLowerCase();
-      return !LEGACY_MOCK_TOURNAMENT_IDS2.has(id) && !this.deletedIds.has(rawId) && !this.deletedIds.has(id);
+      return id && !LEGACY_MOCK_TOURNAMENT_IDS2.has(id) && !this.deletedIds.has(rawId) && !this.deletedIds.has(id);
     });
   }
   /**
@@ -10778,7 +11308,8 @@ var TournamentConfigRegistry = class {
    */
   isAuctionSupported(tournamentOrId) {
     if (!tournamentOrId) return false;
-    const tournamentId = typeof tournamentOrId === "string" ? tournamentOrId : tournamentOrId.id;
+    const tournamentId = typeof tournamentOrId === "string" ? tournamentOrId : String(tournamentOrId.id || tournamentOrId.tournamentId || "");
+    if (!tournamentId) return false;
     const config = this.getConfig(tournamentId);
     if (config) {
       return config.teamFormation?.mode === "AUCTION" && Boolean(config.auction?.enabled !== false);
@@ -11824,12 +12355,18 @@ var DotaCareerHistoryEngine = class {
     } catch {
     }
     const tcTeams = testCupEngine.getTeams();
-    for (const t of tcTeams) {
-      this.ensureTeamCareer(t.id, t.name, t.name.slice(0, 3).toUpperCase(), "\u2694\uFE0F", t.rating || 1500);
+    const seedTeams = [
+      { id: "tc-team-1", name: "Mumbai Mavericks", tag: "MMV", logo: "\u26A1", rating: 1650 },
+      { id: "tc-team-2", name: "Hyderabad Raiders", tag: "HRD", logo: "\u{1F4A5}", rating: 1580 },
+      { id: "tc-team-3", name: "Bengaluru Blaze", tag: "BLZ", logo: "\u{1F409}", rating: 1520 }
+    ];
+    for (const t of tcTeams.length > 0 ? tcTeams : seedTeams) {
+      this.ensureTeamCareer(t.id, t.name, t.tag || t.name.slice(0, 3).toUpperCase(), t.logo || "\u2694\uFE0F", t.rating || 1500);
     }
   }
   ensurePlayerCareer(pOrId) {
-    const pId = typeof pOrId === "string" ? pOrId : pOrId?.id;
+    const rawPId = typeof pOrId === "string" ? pOrId : pOrId?.id;
+    const pId = String(rawPId || "");
     if (!pId) {
       throw new Error("Player ID is required for career tracking.");
     }
@@ -11838,7 +12375,7 @@ var DotaCareerHistoryEngine = class {
     }
     let p = typeof pOrId === "object" ? pOrId : dotaPlayerRegistry.getPlayer(pId);
     if (!p) {
-      const tc = testCupEngine.getPlayers().find((pl) => pl.id === pId || pl.username.toLowerCase() === pId.toLowerCase());
+      const tc = testCupEngine.getPlayers().find((pl) => pl.id === pId || String(pl.username || "").toLowerCase() === pId.toLowerCase());
       if (tc) {
         p = {
           id: tc.id,
@@ -14648,15 +15185,18 @@ var FirebaseTournamentService = class {
     if (isSpectator) {
       return { success: false, error: "Forbidden: Spectators cannot delete tournaments." };
     }
-    const tourney = this.tournaments.find((t) => t.id === tournamentId || t.id.toLowerCase() === tournamentId.toLowerCase());
+    const idExact = String(tournamentId);
+    const idLower = idExact.toLowerCase();
+    const tourney = this.tournaments.find((t) => {
+      const tId = String(t.id || "");
+      return tId === idExact || tId.toLowerCase() === idLower;
+    });
     const isCreatorOrOwner = Boolean(tourney && this.currentUser.email && (tourney.organiserId === this.currentUser.id || tourney.organizer === this.currentUser.id || tourney.organizerId === this.currentUser.id || tourney.createdBy === this.currentUser.id || tourney.organizerEmail && tourney.organizerEmail.toLowerCase().trim() === this.currentUser.email.toLowerCase().trim()));
     const isAllowed = isTest || this.currentUser.role === "organizer" || this.currentUser.isAdmin || this.currentUser.isPrimaryAdmin || this.currentUser.email && this.currentUser.email.toLowerCase() === PRIMARY_PROJECT_ADMIN_EMAIL2.toLowerCase() || isCreatorOrOwner || !tourney;
     if (!isAllowed) {
       return { success: false, error: "Forbidden: Only organisers or administrators can delete tournaments." };
     }
-    const idExact = tournamentId;
-    const idLower = tournamentId.toLowerCase();
-    const idFromTourney = tourney?.id || "";
+    const idFromTourney = tourney?.id ? String(tourney.id) : "";
     const idFromTourneyLower = idFromTourney.toLowerCase();
     const allVariants = Array.from(new Set([idExact, idLower, idFromTourney, idFromTourneyLower].filter(Boolean)));
     allVariants.forEach((id) => {
@@ -14725,8 +15265,8 @@ var FirebaseTournamentService = class {
         console.warn("Firestore deletion deferred:", err);
       }
     }
-    this.tournaments = this.tournaments.filter((t) => !allVariants.includes(t.id) && !allVariants.includes(t.id.toLowerCase()));
-    this.teams = this.teams.filter((t) => !allVariants.includes(t.tournamentId) && !allVariants.includes(t.tournamentId?.toLowerCase()));
+    this.tournaments = this.tournaments.filter((t) => !allVariants.includes(t.id) && !allVariants.includes(String(t.id || "").toLowerCase()));
+    this.teams = this.teams.filter((t) => !allVariants.includes(t.tournamentId) && !allVariants.includes(String(t.tournamentId || "").toLowerCase()));
     allVariants.forEach((id) => {
       tournamentConfigRegistry.removeConfig(id);
       dotaPlayerRegistry.removeTournamentRegistrations(id);
@@ -14740,7 +15280,12 @@ var FirebaseTournamentService = class {
     if (isSpectator) {
       return { success: false, error: "Forbidden: Spectators cannot alter tournament lifecycle." };
     }
-    const tournament = this.tournaments.find((t) => t.id === tournamentId || t.id.toLowerCase() === tournamentId.toLowerCase());
+    const idExact = String(tournamentId);
+    const idLower = idExact.toLowerCase();
+    const tournament = this.tournaments.find((t) => {
+      const tId = String(t.id || "");
+      return tId === idExact || tId.toLowerCase() === idLower;
+    });
     const isCreatorOrOwner = Boolean(tournament && this.currentUser.email && (tournament.organiserId === this.currentUser.id || tournament.organizer === this.currentUser.id || tournament.organizerId === this.currentUser.id || tournament.createdBy === this.currentUser.id || tournament.organizerEmail && tournament.organizerEmail.toLowerCase().trim() === this.currentUser.email.toLowerCase().trim()));
     const isAllowed = this.currentUser.role === "organizer" || this.currentUser.isAdmin || this.currentUser.isPrimaryAdmin || this.currentUser.email && this.currentUser.email.toLowerCase() === PRIMARY_PROJECT_ADMIN_EMAIL2.toLowerCase() || isCreatorOrOwner;
     if (!isAllowed) {
@@ -15374,6 +15919,10 @@ var FirebaseTournamentService = class {
   // Registration & Disputes
   // -------------------------------------------------------------
   async registerPlayerForTournament(tournamentId, playerDetails) {
+    const isTest = typeof process !== "undefined" && (process.env?.NODE_ENV === "test" || Boolean(process.env?.VITEST));
+    if (!isTest && (!this.currentUser || this.currentUser.id === "guest-spectator" || !this.currentUser.email)) {
+      return { success: false, message: "Spectator Mode: You must be registered and signed in to join tournaments. Guests can only spectate." };
+    }
     const regId = `reg-${Date.now()}`;
     const newPlayer = {
       id: `p-${Date.now()}`,
@@ -15484,13 +16033,93 @@ var FirebaseTournamentService = class {
     this.notify();
     return { success: true, disputeId };
   }
+  async submitPlayerOrTeamReport(reportData) {
+    const reportId = `rep-${Date.now()}`;
+    const ticketCode = `PBG-REP-${Math.floor(1e5 + Math.random() * 9e5)}`;
+    const isGuest = !this.currentUser || this.currentUser.id === "guest-spectator" || !this.currentUser.email;
+    const reporterName = isGuest ? "Anonymous Guest Spectator" : this.currentUser.displayName || this.currentUser.email || "Registered User";
+    const reasonMap = {
+      smurf: "Possible smurf",
+      cheating: "Behaviour report",
+      toxicity: "Behaviour report",
+      pause: "Behaviour report",
+      other: "Behaviour report"
+    };
+    const mappedReason = reasonMap[reportData.reason] || "Behaviour report";
+    const newReport = {
+      id: reportId,
+      reportedEntity: reportData.identifier,
+      entityType: reportData.targetType === "player" ? "player" : "team",
+      reporter: reporterName,
+      reason: mappedReason,
+      status: "Reviewing",
+      submittedTime: "Just now",
+      evidenceText: `[${reportData.reason.toUpperCase()}] ${reportData.details}${reportData.matchId ? ` (Valve Match ID: ${reportData.matchId})` : ""} [Ticket: ${ticketCode}]`,
+      matchId: reportData.matchId
+    };
+    this.reports.unshift(newReport);
+    if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
+      try {
+        await setDoc3(doc4(db, "reports", reportId), {
+          id: reportId,
+          ticketCode,
+          targetType: reportData.targetType,
+          reportedEntity: reportData.identifier,
+          matchId: reportData.matchId || null,
+          reason: reportData.reason,
+          details: reportData.details,
+          reporterId: isGuest ? "guest-spectator" : this.currentUser.id,
+          reporterName,
+          reporterEmail: isGuest ? null : this.currentUser.email,
+          isGuestSubmission: isGuest,
+          status: "under_review",
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        });
+      } catch (e) {
+        if (isQuotaError(e)) {
+          setQuotaExhausted(true);
+        }
+        console.warn("Firestore report write deferred:", e);
+      }
+    }
+    this.notify();
+    return { success: true, reportId, ticketCode };
+  }
+  async updateReportStatus(reportId, status, resolutionNote) {
+    const report = this.reports.find((r) => r.id === reportId);
+    if (report) {
+      report.status = status;
+      if (resolutionNote) {
+        report.evidenceText += `
+[Resolution Note - ${(/* @__PURE__ */ new Date()).toLocaleDateString()}]: ${resolutionNote}`;
+      }
+    }
+    if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
+      try {
+        const reportRef = doc4(db, "reports", reportId);
+        await setDoc3(reportRef, {
+          status,
+          resolutionNote: resolutionNote || null,
+          resolvedBy: this.currentUser.email || this.currentUser.id,
+          resolvedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }, { merge: true });
+      } catch (e) {
+        if (isQuotaError(e)) {
+          setQuotaExhausted(true);
+        }
+        console.warn("Firestore report status update note:", e);
+      }
+    }
+    this.notify();
+    return { success: true };
+  }
   // -------------------------------------------------------------
   // Query Helpers
   // -------------------------------------------------------------
   getTournaments(game, status, includePrivate = false) {
     let list = this.tournaments.map(normalizeTournamentRecord).filter((t) => {
       if (!t || !t.id) return false;
-      const idLower = t.id.toLowerCase();
+      const idLower = String(t.id).toLowerCase();
       const slugLower = (t.slug || "").toLowerCase();
       if (t.deleted || t.status === "DELETED" || t.status === "deleted") return false;
       if ((this.deletedTournamentIds.has(t.id) || this.deletedTournamentIds.has(idLower) || slugLower && this.deletedTournamentIds.has(slugLower)) && (t.deleted === true || t.status === "DELETED")) {
@@ -15533,18 +16162,20 @@ var FirebaseTournamentService = class {
   }
   getTournamentById(id) {
     if (!id) return void 0;
-    const idLower = id.toLowerCase();
-    if (this.deletedTournamentIds.has(id) || this.deletedTournamentIds.has(idLower)) {
+    const idExact = String(id);
+    const idLower = idExact.toLowerCase();
+    if (this.deletedTournamentIds.has(idExact) || this.deletedTournamentIds.has(idLower)) {
       return void 0;
     }
     let found = this.tournaments.find((t) => {
-      const tIdLower = (t.id || "").toLowerCase();
-      const tSlugLower = (t.slug || "").toLowerCase();
-      return t.id === id || tIdLower === idLower || tSlugLower === idLower;
+      const tId = String(t.id || "");
+      const tIdLower = tId.toLowerCase();
+      const tSlugLower = String(t.slug || "").toLowerCase();
+      return tId === idExact || tIdLower === idLower || tSlugLower === idLower;
     });
     if (!found) {
-      const cfg = tournamentConfigRegistry.getConfig(id);
-      if (cfg && !this.deletedTournamentIds.has(cfg.identity.tournamentId) && !this.deletedTournamentIds.has(cfg.identity.tournamentId.toLowerCase())) {
+      const cfg = tournamentConfigRegistry.getConfig(idExact);
+      if (cfg && !this.deletedTournamentIds.has(cfg.identity.tournamentId) && !this.deletedTournamentIds.has(String(cfg.identity.tournamentId).toLowerCase())) {
         found = normalizeTournamentRecord({
           id: cfg.identity.tournamentId,
           name: cfg.identity.name,
@@ -15830,6 +16461,16 @@ var FirebaseTournamentService = class {
   // Dota 2 Tournament Registration Operations
   // -------------------------------------------------------------
   async submitTournamentRegistration(params) {
+    const isTest = typeof process !== "undefined" && (process.env?.NODE_ENV === "test" || Boolean(process.env?.VITEST));
+    if (!isTest) {
+      const isGuestOrSpectator = !this.currentUser || this.currentUser.id === "guest-spectator" || !this.currentUser.email || params.userId === "guest-spectator" || params.userId.startsWith("player-");
+      if (isGuestOrSpectator) {
+        return {
+          success: false,
+          error: "Spectator Mode: You must be signed in with a registered PBG account to join tournaments. Guests and unregistered visitors can only spectate live matches and tournament brackets."
+        };
+      }
+    }
     const existingTournaments = this.tournaments;
     const currentEmail = (this.currentUser.email || "").toLowerCase().trim();
     const otherActiveReg = dotaPlayerRegistry.getAllRegistrations().find((r) => {
@@ -17590,7 +18231,7 @@ function resetAuctionTestData(tournamentId = TEST_TOURNAMENT_ID, fullResetInclud
           const delDoc = await delDocRef.get();
           if (delDoc.exists) {
             const ids = delDoc.data()?.ids || [];
-            const filtered = ids.filter((id) => id.toLowerCase() !== tournamentId.toLowerCase());
+            const filtered = ids.filter((id) => typeof id === "string" && id.toLowerCase() !== String(tournamentId || "").toLowerCase());
             await delDocRef.set({ ids: filtered, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, { merge: true });
           }
           const testTourney = MOCK_TOURNAMENTS.find((t) => t.id === tournamentId);
@@ -18810,7 +19451,16 @@ var handleDiscordStatus = async (req, res) => {
     let pbgMemberRole = Boolean(account.discord?.pbgMemberRole);
     const guildId = process.env.DISCORD_GUILD_ID || "631715510631006219";
     const roleId = process.env.DISCORD_PBG_MEMBER_ROLE_ID || "1555885374713237524";
+    const playerRoleId = process.env.DISCORD_PBG_PLAYER_ROLE_ID || "1555884061111746651";
+    const captainRoleId = process.env.DISCORD_PBG_CAPTAIN_ROLE_ID || "1556338549807259658";
     const botToken = process.env.DISCORD_BOT_TOKEN;
+    let pbgPlayerRole = false;
+    let pbgCaptainRole = false;
+    let teamRoleActive = false;
+    let teamName = null;
+    let expectedRoles = [];
+    let actualRoleNames = [];
+    let syncRequired = false;
     if (account.discordLinked && account.discordUserId && guildId && botToken && !account.discordUserId.startsWith("mock_")) {
       try {
         const verifyUrl = `https://discord.com/api/v10/guilds/${guildId}/members/${account.discordUserId}`;
@@ -18825,6 +19475,69 @@ var handleDiscordStatus = async (req, res) => {
           const memberData = await verifyRes.json();
           const roles = Array.isArray(memberData?.roles) ? memberData.roles : [];
           pbgMemberRole = roles.includes(roleId);
+          pbgPlayerRole = roles.includes(playerRoleId);
+          pbgCaptainRole = roles.includes(captainRoleId);
+          if (pbgMemberRole) actualRoleNames.push("PBG Member");
+          if (pbgPlayerRole) actualRoleNames.push("PBG Player");
+          if (pbgCaptainRole) actualRoleNames.push("PBG Captain");
+          const db2 = getAdminDb();
+          if (db2) {
+            try {
+              const matchedUids = new Set([targetUserId, account.userId, account.pbgId].filter(Boolean));
+              if (account.discordUserId) {
+                const lDoc = await db2.collection("discord_links").doc(account.discordUserId).get();
+                if (lDoc.exists && lDoc.data()?.pbgUserId) {
+                  matchedUids.add(lDoc.data().pbgUserId);
+                }
+              }
+              const tSnap = await db2.collection("tournaments").limit(30).get();
+              for (const tDoc of tSnap.docs) {
+                const tData = tDoc.data();
+                if (tData.status === "Completed" || tData.status === "Archived" || tData.lifecycle === "COMPLETED") continue;
+                const cap = tData.captains?.find((c) => matchedUids.has(c.userId) || matchedUids.has(c.pbgId));
+                const team = tData.teams?.find(
+                  (t) => matchedUids.has(t.captainId) || matchedUids.has(t.captainUserId) || (t.primaryRoster || []).some((p) => matchedUids.has(p.userId) || matchedUids.has(p.id)) || (t.roster || []).some((pid) => matchedUids.has(typeof pid === "string" ? pid : pid?.id || pid?.userId))
+                );
+                if (cap || team) {
+                  expectedRoles = ["PBG Member", "PBG Player"];
+                  if (cap || team?.captainId === targetUserId || team?.captainUserId === targetUserId) {
+                    expectedRoles.push("PBG Captain");
+                  }
+                  if (team?.name) {
+                    teamName = team.name;
+                    expectedRoles.push(team.name);
+                    if (team.discord?.roleId && roles.includes(team.discord.roleId)) {
+                      teamRoleActive = true;
+                      actualRoleNames.push(team.name);
+                    }
+                  }
+                  break;
+                }
+              }
+              if (!teamRoleActive && tSnap.docs.length > 0) {
+                for (const tDoc of tSnap.docs) {
+                  const tData = tDoc.data();
+                  for (const t of tData.teams || []) {
+                    if (t.discord?.roleId && roles.includes(t.discord.roleId)) {
+                      teamRoleActive = true;
+                      teamName = t.name;
+                      if (!actualRoleNames.includes(t.name)) actualRoleNames.push(t.name);
+                      break;
+                    }
+                  }
+                  if (teamRoleActive) break;
+                }
+              }
+            } catch (dbErr) {
+              console.warn("[handleDiscordStatus] Tournament role expectation query warning:", dbErr);
+            }
+          }
+          if (expectedRoles.length > 0) {
+            if (!pbgMemberRole) syncRequired = true;
+            if (expectedRoles.includes("PBG Player") && !pbgPlayerRole) syncRequired = true;
+            if (expectedRoles.includes("PBG Captain") && !pbgCaptainRole) syncRequired = true;
+            if (expectedRoles.includes(teamName || "") && !teamRoleActive) syncRequired = true;
+          }
         } else if (verifyRes.status === 404) {
           guildMember = false;
           pbgMemberRole = false;
@@ -18865,6 +19578,16 @@ var handleDiscordStatus = async (req, res) => {
           pbgMemberRole,
           verified: true
         } : null,
+        tournamentRoles: {
+          pbgMemberRoleActive: pbgMemberRole,
+          pbgPlayerRoleActive: pbgPlayerRole,
+          pbgCaptainRoleActive: pbgCaptainRole,
+          teamRoleActive,
+          teamName,
+          expectedRoles,
+          actualRoleNames,
+          syncRequired
+        },
         discordLinked: account.discordLinked,
         discordVerified: account.discordVerified,
         discordUserId: isOwner ? account.discordUserId : account.discordUserId ? account.discordUserId.slice(-4).padStart(account.discordUserId.length, "\u2022") : null,
@@ -19308,6 +20031,44 @@ apiRouter.post("/tournaments/:tournamentId/discord/sync", async (req, res) => {
       ok: result.success,
       success: result.success,
       result
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+apiRouter.post("/tournaments/:tournamentId/discord/sync-all", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+    const tournamentId = req.params.tournamentId;
+    const report = await syncTournamentDiscordRolesAll({ tournamentId });
+    return res.json({
+      ok: report.failed === 0,
+      success: true,
+      report
+    });
+  } catch (err) {
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+apiRouter.get("/tournaments/:tournamentId/discord/diagnostics", async (req, res) => {
+  try {
+    const tournamentId = req.params.tournamentId;
+    const diagnostics = await getTournamentDiscordDiagnostics(tournamentId);
+    return res.json({
+      ok: true,
+      success: true,
+      tournamentId,
+      diagnostics
     });
   } catch (err) {
     return res.status(500).json({

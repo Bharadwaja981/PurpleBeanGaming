@@ -171,10 +171,9 @@ function synthesizeAccountFromPlayer(p: any): PBGPlayerAccount {
   };
 }
 
-export function resolvePlayerAccount(playerId?: string): PBGPlayerAccount {
-  if (playerId && playerId.trim()) {
-    const cleanId = playerId.trim();
-
+export function resolvePlayerAccount(playerId?: any): PBGPlayerAccount {
+  const cleanId = (typeof playerId === 'string' ? playerId : (playerId?.id || playerId?.pbgId || playerId?.userId || '')).toString().trim();
+  if (cleanId) {
     // Specific canonical member resolution guarantees
     if (cleanId === 'dCZd7IjKpxYDBjTQe5FUhccuX583' || cleanId.toLowerCase() === 'myana.santhosh@gmail.com' || cleanId.toUpperCase() === 'PBG-000188' || cleanId.toLowerCase() === 'santhosh myana') {
       const santhosh = pbgAccountRegistry.getAccountByEmail('myana.santhosh@gmail.com') || pbgAccountRegistry.getAccountByUid('dCZd7IjKpxYDBjTQe5FUhccuX583');
@@ -207,10 +206,10 @@ export function resolvePlayerAccount(playerId?: string): PBGPlayerAccount {
     const allAccounts = pbgAccountRegistry.getAllAccounts();
     const byAccountField = allAccounts.find(
       (a) =>
-        a.pbgId.toLowerCase() === cleanId.toLowerCase() ||
-        a.googleUid.toLowerCase() === cleanId.toLowerCase() ||
-        a.displayName.toLowerCase() === cleanId.toLowerCase() ||
-        (a.discordUsername && a.discordUsername.toLowerCase() === cleanId.toLowerCase()) ||
+        (a.pbgId && String(a.pbgId).toLowerCase() === cleanId.toLowerCase()) ||
+        (a.googleUid && String(a.googleUid).toLowerCase() === cleanId.toLowerCase()) ||
+        (a.displayName && String(a.displayName).toLowerCase() === cleanId.toLowerCase()) ||
+        (a.discordUsername && String(a.discordUsername).toLowerCase() === cleanId.toLowerCase()) ||
         a.dotaAccountId === cleanId ||
         a.steamId === cleanId
     );
@@ -221,9 +220,9 @@ export function resolvePlayerAccount(playerId?: string): PBGPlayerAccount {
     const matchedPlayer = allPlayers.find(
       (p) =>
         p.id === cleanId ||
-        p.username.toLowerCase() === cleanId.toLowerCase() ||
-        (p.displayName && p.displayName.toLowerCase() === cleanId.toLowerCase()) ||
-        (p.realName && p.realName.toLowerCase() === cleanId.toLowerCase())
+        (p.username && String(p.username).toLowerCase() === cleanId.toLowerCase()) ||
+        (p.displayName && String(p.displayName).toLowerCase() === cleanId.toLowerCase()) ||
+        (p.realName && String(p.realName).toLowerCase() === cleanId.toLowerCase())
     );
     if (matchedPlayer) {
       return synthesizeAccountFromPlayer(matchedPlayer);
@@ -238,8 +237,8 @@ export function resolvePlayerAccount(playerId?: string): PBGPlayerAccount {
     const mockPlayer = MOCK_PLAYERS.find(
       (p) =>
         p.id === cleanId ||
-        p.username.toLowerCase() === cleanId.toLowerCase() ||
-        (p.displayName && p.displayName.toLowerCase() === cleanId.toLowerCase())
+        (p.username && String(p.username).toLowerCase() === cleanId.toLowerCase()) ||
+        (p.displayName && String(p.displayName).toLowerCase() === cleanId.toLowerCase())
     );
     if (mockPlayer) {
       return synthesizeAccountFromPlayer(mockPlayer);
@@ -250,7 +249,7 @@ export function resolvePlayerAccount(playerId?: string): PBGPlayerAccount {
       const reg = dotaPlayerRegistry.getAllRegistrations().find(
         (r) =>
           r.userId === cleanId ||
-          r.ign.toLowerCase() === cleanId.toLowerCase()
+          (r.ign && String(r.ign).toLowerCase() === cleanId.toLowerCase())
       );
       if (reg) {
         return synthesizeAccountFromPlayer({
@@ -276,7 +275,6 @@ export function resolvePlayerAccount(playerId?: string): PBGPlayerAccount {
     }
 
     // 9. If playerId was provided but not found anywhere, synthesize a clean profile for cleanId
-    // NEVER fall back to current user's profile when a specific target playerId was requested!
     return synthesizeAccountFromPlayer({
       id: cleanId,
       username: cleanId.startsWith('PBG-') ? cleanId : `Player_${cleanId.slice(0, 8)}`,

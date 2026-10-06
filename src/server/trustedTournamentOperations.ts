@@ -442,7 +442,13 @@ export class TrustedTournamentServer {
       throw new Error(check.reason || 'Invalid state transition.');
     }
 
-    tournament.status = nextStatus === 'competition' ? 'Live' : nextStatus === 'completed' ? 'Completed' : 'Drafting';
+    tournament.status = 
+      nextStatus === 'competition' || nextStatus === 'active' ? 'Live' : 
+      nextStatus === 'completed' ? 'Completed' : 
+      nextStatus === 'cancelled' ? 'Cancelled' as any :
+      nextStatus === 'abandoned' ? 'Abandoned' as any :
+      nextStatus === 'on_hold' || nextStatus === 'paused' ? 'On Hold' as any : 'Drafting';
+    (tournament as any).lifecycle = nextStatus;
 
     this.appendAuditLog({
       action: 'tournament_transition',

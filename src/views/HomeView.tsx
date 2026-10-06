@@ -83,7 +83,7 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
   const filteredTournaments = tournaments
     .map(normalizeTournamentRecord)
     .filter((t) => {
-      const idLower = (t.id || '').toLowerCase();
+      const idLower = String(t?.id || '').toLowerCase();
       const LEGACY_MOCK_TOURNAMENT_IDS = new Set([
         'purple-bean-test-cup',
         '2-team-auction-test',

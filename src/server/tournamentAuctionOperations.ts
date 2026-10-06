@@ -90,6 +90,11 @@ export function resolveCaptainAuthorization(params: {
 } {
   const { tournamentId, actorUserId, session } = params;
 
+  const lifecycle = inMemoryLifecycles.get(tournamentId);
+  if (lifecycle === 'ON_HOLD' as any) {
+    return { authorized: false, error: 'TOURNAMENT_ON_HOLD: Auction operations are currently paused while tournament is on hold.' };
+  }
+
   const pMap = inMemoryParticipants.get(tournamentId);
   const participant = pMap?.get(actorUserId);
 

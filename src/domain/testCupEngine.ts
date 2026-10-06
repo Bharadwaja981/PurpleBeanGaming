@@ -198,6 +198,7 @@ export class PurpleBeanTestCupEngine {
   }
 
   public confirmCaptainsAndTeams(): { success: boolean; captains: string[]; teams: any[] } {
+    this.status = 'Drafting';
     this.teams = [
       {
         id: 'tc-team-1',

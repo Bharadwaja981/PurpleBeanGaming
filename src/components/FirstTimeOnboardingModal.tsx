@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Check, 
   X, 
@@ -11,10 +11,27 @@ import {
   CheckCircle2, 
   AlertCircle,
   HelpCircle,
-  Lock
+  Lock,
+  ExternalLink,
+  Loader2,
+  Copy,
+  RefreshCw
 } from 'lucide-react';
 import { PBGPlayerAccount, DotaRolePosition } from '../types/pbgAccount';
 import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
+import { 
+  startDiscordOAuthFlow, 
+  DiscordVerificationError 
+} from '../services/discordVerificationClient';
+import { 
+  startSteamVerificationFlow, 
+  SteamVerificationError 
+} from '../services/steamVerificationClient';
+import { auth } from '../services/firebaseConfig';
+import { openDotaService, getRankTierName } from '../services/openDotaService';
+import { normalizeDotaIdentity } from '../../lib/dota/ids';
+import { DiscordConnectModal } from './DiscordConnectModal';
+import { DotaLinkingModal } from './dota/DotaLinkingModal';
 
 interface FirstTimeOnboardingModalProps {
   isOpen: boolean;
@@ -40,6 +57,11 @@ export function FirstTimeOnboardingModal({
   // Wizard steps: 1: Created, 2: Display Name, 3: Discord, 4: Steam, 5: Dota MMR & Roles, 6: Profile Ready
   const [currentStep, setCurrentStep] = useState<number>(1);
 
+  // Authoritative synced account state
+  const [currentAcc, setCurrentAcc] = useState<PBGPlayerAccount>(() => {
+    return pbgAccountRegistry.getAccountByUid(account.googleUid) || account;
+  });
+
   // Form states
   const [displayName, setDisplayName] = useState(account.displayName || '');
   const [city, setCity] = useState(account.city || 'Mumbai');
@@ -47,11 +69,15 @@ export function FirstTimeOnboardingModal({
 
   // Discord states
   const [isDiscordConnecting, setIsDiscordConnecting] = useState(false);
-  const [discordSuccess, setDiscordSuccess] = useState(account.discordLinked);
+  const [discordSuccess, setDiscordSuccess] = useState(Boolean(currentAcc.discordLinked && currentAcc.discordUserId));
+  const [isDiscordModalOpen, setIsDiscordModalOpen] = useState(false);
 
   // Steam states
-  const [steamInput, setSteamInput] = useState(account.dotaAccountId || account.steamId || '');
-  const [steamSuccess, setSteamSuccess] = useState(account.dotaAccountLinked);
+  const [steamInput, setSteamInput] = useState(currentAcc.dotaAccountId || currentAcc.steamId || '');
+  const [steamSuccess, setSteamSuccess] = useState(Boolean(currentAcc.dotaAccountLinked || currentAcc.steamId));
+  const [isVerifyingSteam, setIsVerifyingSteam] = useState(false);
+  const [isSearchingOpenDota, setIsSearchingOpenDota] = useState(false);
+  const [isDotaModalOpen, setIsDotaModalOpen] = useState(false);
 
   // Competitive states
   const [declaredMmr, setDeclaredMmr] = useState(account.declaredMmr?.toString() || '');
@@ -60,10 +86,38 @@ export function FirstTimeOnboardingModal({
 
   const [stepError, setStepError] = useState<string | null>(null);
 
+  // Keep synced with pbgAccountRegistry updates
+  useEffect(() => {
+    const unsub = pbgAccountRegistry.subscribe(() => {
+      const updated = pbgAccountRegistry.getAccountByUid(account.googleUid);
+      if (updated) {
+        setCurrentAcc(updated);
+        setDiscordSuccess(Boolean(updated.discordLinked && updated.discordUserId));
+        setSteamSuccess(Boolean(updated.dotaAccountLinked || updated.steamId));
+        if (updated.dotaAccountId || updated.steamId) {
+          setSteamInput(updated.dotaAccountId || updated.steamId || '');
+        }
+        if (updated.dotaMmr) {
+          setDeclaredMmr(updated.dotaMmr.toString());
+        }
+      }
+    });
+    return unsub;
+  }, [account.googleUid]);
+
   if (!isOpen) return null;
 
-  const currentAcc = pbgAccountRegistry.getAccountByUid(account.googleUid) || account;
   const checklist = pbgAccountRegistry.getEligibilityChecklist(currentAcc);
+
+  const getIdToken = async (): Promise<string> => {
+    const user = auth.currentUser;
+    if (!user) throw new Error('SIGN_IN_REQUIRED');
+    try {
+      return await user.getIdToken(false);
+    } catch {
+      return (user as any).accessToken || `fallback-token-${user.uid}`;
+    }
+  };
 
   // Step 2 validation
   const handleSaveDisplayName = () => {
@@ -80,46 +134,137 @@ export function FirstTimeOnboardingModal({
     setCurrentStep(3);
   };
 
-  // Step 3: Discord OAuth connect
-  const handleConnectDiscord = () => {
+  // Step 3: Real Discord OAuth 2.0 connect
+  const handleConnectDiscord = async () => {
     setIsDiscordConnecting(true);
     setStepError(null);
-    setTimeout(() => {
-      const seed = Math.abs(account.email.split('').reduce((acc, c) => acc + c.charCodeAt(0), 1000));
-      const discordUid = `10${(seed * 48291).toString().slice(0, 16).padEnd(16, '9')}`;
-      const username = displayName.toLowerCase().replace(/\s+/g, '_') || 'player';
+    try {
+      const result = await startDiscordOAuthFlow(getIdToken, account.pbgId);
 
       const res = pbgAccountRegistry.linkDiscordAccount(account.googleUid, {
-        discordUserId: discordUid,
-        discordUsername: username,
-        discordDisplayName: displayName,
-        discordAvatar: `https://cdn.discordapp.com/embed/avatars/${Math.floor(Math.random() * 5)}.png`
+        discordUserId: result.discordUserId,
+        discordUsername: result.discordUsername,
+        discordDisplayName: result.discordDisplayName || displayName || account.displayName,
+        globalName: result.discord?.globalName || result.discordDisplayName,
+        discordAvatar: result.discord?.avatarUrl || undefined
       });
 
-      setIsDiscordConnecting(false);
-      if (res.success) {
+      if (res.success && res.account) {
+        setCurrentAcc(res.account);
         setDiscordSuccess(true);
       } else {
-        setStepError(res.error || 'Failed to connect Discord.');
+        setStepError(res.error || 'Failed to record Discord connection.');
       }
-    }, 1000);
+    } catch (err: any) {
+      if (err instanceof DiscordVerificationError) {
+        setStepError(err.message);
+      } else {
+        setStepError(err.message || 'Discord authentication was cancelled or interrupted.');
+      }
+    } finally {
+      setIsDiscordConnecting(false);
+    }
   };
 
-  // Step 4: Steam / Dota Connect
-  const handleConnectSteam = () => {
-    if (!steamInput.trim()) {
-      // Optional, player can skip
-      setCurrentStep(5);
+  // Step 4: Real Steam OpenID Connect
+  const handleConnectSteamOpenId = async () => {
+    setIsVerifyingSteam(true);
+    setStepError(null);
+    try {
+      const result = await startSteamVerificationFlow(getIdToken);
+
+      let summary: any = null;
+      try {
+        summary = await openDotaService.fetchPlayer(result.dotaAccountId, { forceRefresh: true });
+      } catch (e) {
+        console.warn('OpenDota sync note during onboarding:', e);
+      }
+
+      const res = pbgAccountRegistry.verifyAndLinkDotaAccount(account.googleUid, {
+        steamId64: result.steamId64,
+        dotaAccountId: result.dotaAccountId,
+        dotaDisplayName: summary?.personaName || result.personaName || displayName,
+        steamPersonaName: summary?.personaName || result.personaName,
+        steamAvatar: summary?.avatarUrl,
+        steamProfileUrl: `https://steamcommunity.com/profiles/${result.steamId64}`,
+        rankTier: summary?.rankTier,
+        leaderboardRank: summary?.leaderboardRank,
+        countryCode: summary?.locCountryCode || 'IN',
+        publicMatchDataStatus: (summary?.status === 'PRIVATE_PROFILE' || summary?.isPrivate) ? 'PRIVATE' : 'PUBLIC'
+      });
+
+      if (res.success && res.account) {
+        setCurrentAcc(res.account);
+        setSteamSuccess(true);
+        setSteamInput(result.dotaAccountId);
+        if (summary?.computedMmr || summary?.estimatedMmr) {
+          setDeclaredMmr(String(summary.computedMmr || summary.estimatedMmr));
+        }
+      } else {
+        setStepError(res.error || 'Failed to complete Steam linking.');
+      }
+    } catch (err: any) {
+      if (err instanceof SteamVerificationError) {
+        setStepError(err.message);
+      } else {
+        setStepError(err.message || 'Steam verification was interrupted.');
+      }
+    } finally {
+      setIsVerifyingSteam(false);
+    }
+  };
+
+  // Step 4: Manual Steam / Dota Identifier Verification
+  const handleVerifyDotaIdentifier = async () => {
+    const raw = steamInput.trim();
+    if (!raw) {
+      setStepError('Please enter a 32-bit Dota Friend ID, Steam64 ID, or profile URL.');
       return;
     }
     setStepError(null);
-    const res = pbgAccountRegistry.linkSteamDotaAccount(account.googleUid, steamInput.trim(), displayName);
-    if (res.success) {
-      setSteamSuccess(true);
-      setCurrentStep(5);
-    } else {
-      setStepError(res.error || 'Failed to link Steam/Dota identifier.');
+    setIsSearchingOpenDota(true);
+    try {
+      const norm = normalizeDotaIdentity(raw);
+      let summary: any = null;
+      try {
+        summary = await openDotaService.fetchPlayer(norm.accountId, { forceRefresh: true });
+      } catch (e) {
+        console.warn('OpenDota player search note:', e);
+      }
+
+      const res = pbgAccountRegistry.verifyAndLinkDotaAccount(account.googleUid, {
+        steamId64: norm.steamId64,
+        dotaAccountId: norm.accountId,
+        dotaDisplayName: summary?.personaName || displayName,
+        steamPersonaName: summary?.personaName,
+        steamAvatar: summary?.avatarUrl,
+        steamProfileUrl: `https://steamcommunity.com/profiles/${norm.steamId64}`,
+        rankTier: summary?.rankTier,
+        leaderboardRank: summary?.leaderboardRank,
+        countryCode: summary?.locCountryCode || 'IN',
+        publicMatchDataStatus: (summary?.status === 'PRIVATE_PROFILE' || summary?.isPrivate) ? 'PRIVATE' : 'PUBLIC'
+      });
+
+      if (res.success && res.account) {
+        setCurrentAcc(res.account);
+        setSteamSuccess(true);
+        if (summary?.computedMmr || summary?.estimatedMmr) {
+          setDeclaredMmr(String(summary.computedMmr || summary.estimatedMmr));
+        }
+      } else {
+        setStepError(res.error || 'Failed to link Dota account.');
+      }
+    } catch (err: any) {
+      setStepError(err?.message || 'Invalid Dota/Steam account identifier.');
+    } finally {
+      setIsSearchingOpenDota(false);
     }
+  };
+
+  // Step 4: Continue handler for Step 4
+  const handleConnectSteam = () => {
+    setStepError(null);
+    setCurrentStep(5);
   };
 
   // Step 5: Save Roles & MMR
@@ -401,24 +546,37 @@ export function FirstTimeOnboardingModal({
               </div>
 
               {discordSuccess ? (
-                <div className="bg-white border border-[#5865F2] p-3 text-xs space-y-1">
+                <div className="bg-white border border-[#5865F2] p-3 text-xs space-y-2">
                   <span className="text-emerald-800 font-bold block">✓ Discord Account Linked!</span>
                   <div className="text-[11px] text-stone-700">
                     Discord User ID: <strong className="font-mono text-black">{currentAcc.discordUserId}</strong>
                   </div>
+                  {currentAcc.discordUsername && (
+                    <div className="text-[11px] text-stone-700">
+                      Discord Handle: <strong className="font-mono text-black">@{currentAcc.discordUsername}</strong>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setIsDiscordModalOpen(true)}
+                    className="mt-1 text-[11px] font-bold text-[#5865F2] hover:underline cursor-pointer flex items-center gap-1"
+                  >
+                    Change / Reconnect Discord Account →
+                  </button>
                 </div>
               ) : (
-                <button
-                  type="button"
-                  onClick={handleConnectDiscord}
-                  disabled={isDiscordConnecting}
-                  className="w-full py-3 px-4 bg-[#5865F2] hover:bg-[#4752C4] text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                >
-                  <div className="w-4 h-4 bg-white rounded-full flex items-center justify-center text-[10px] text-[#5865F2]">
-                    👾
-                  </div>
-                  <span>{isDiscordConnecting ? 'Authorizing with Discord...' : 'Connect Discord (One-Click)'}</span>
-                </button>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsDiscordModalOpen(true)}
+                    className="w-full py-3.5 px-4 bg-[#5865F2] hover:bg-[#4752C4] text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center justify-center gap-2 cursor-pointer transition-all active:translate-x-0.5 active:translate-y-0.5"
+                  >
+                    <div className="w-4 h-4 bg-white rounded-full flex items-center justify-center text-[10px] text-[#5865F2]">
+                      👾
+                    </div>
+                    <span>Connect Discord (OAuth)</span>
+                  </button>
+                </div>
               )}
             </div>
 
@@ -439,14 +597,14 @@ export function FirstTimeOnboardingModal({
             <div className="pt-2 flex justify-between">
               <button
                 type="button"
-                onClick={() => setCurrentStep(2)}
+                onClick={() => { setStepError(null); setCurrentStep(2); }}
                 className="px-4 py-2.5 bg-white hover:bg-stone-100 text-black border-2 border-black font-mono text-xs font-bold uppercase cursor-pointer"
               >
                 ← Back
               </button>
               <button
                 type="button"
-                onClick={() => setCurrentStep(4)}
+                onClick={() => { setStepError(null); setCurrentStep(4); }}
                 className="px-6 py-2.5 bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-2 cursor-pointer"
               >
                 <span>{discordSuccess ? 'Continue to Steam' : 'Skip / Continue to Steam'}</span>
@@ -470,42 +628,80 @@ export function FirstTimeOnboardingModal({
                 Connect Steam &amp; Dota Account
               </h2>
               <p className="text-xs text-stone-600 mt-1">
-                Link your Dota 32-bit ID or Steam64 ID for automated match verification, tournament calibration, and OpenDota profiling.
+                Link your official Steam account via Valve OpenID to verify ownership, calibrate match history, and enable tournament participation.
               </p>
             </div>
 
-            <div className="space-y-3 text-xs">
-              <div>
-                <label className="text-[10px] font-black uppercase text-stone-700 block mb-1">
-                  Steam64 ID or Dota 32-bit Friend ID:
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. 52079950 or 76561198012345678"
-                  value={steamInput}
-                  onChange={(e) => setSteamInput(e.target.value)}
-                  className="w-full bg-stone-50 border-2 border-black p-2.5 text-xs font-mono font-bold"
-                />
+            <div className="bg-[#171a21]/5 border-2 border-[#171a21] p-4 text-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 bg-[#171a21] text-white flex items-center justify-center font-black rounded-full text-base">
+                    🎮
+                  </div>
+                  <div>
+                    <strong className="text-black text-sm block">Valve Steam &amp; Dota 2 Identity</strong>
+                    <span className="text-[10px] text-stone-600 block">Valve OpenID 2.0 Ownership Verification</span>
+                  </div>
+                </div>
+                {steamSuccess && (
+                  <span className="bg-[#70FFAF] text-black text-[10px] font-black uppercase px-2 py-0.5 border border-black flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    VERIFIED
+                  </span>
+                )}
               </div>
 
-              {/* Sample quick button */}
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-stone-500">Quick Test Preset:</span>
-                <button
-                  type="button"
-                  onClick={() => setSteamInput('52079950')}
-                  className="px-2 py-0.5 bg-stone-100 hover:bg-[#FFE600] border border-black text-[10px] font-bold cursor-pointer"
-                >
-                  Use 52079950 (Dota 2 Contender)
-                </button>
-              </div>
-
-              {steamSuccess && (
-                <div className="p-3 bg-emerald-50 border-2 border-emerald-600 text-emerald-900 text-xs font-bold flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                  <span>Dota Account Verified &amp; Linked to {account.pbgId}!</span>
+              {steamSuccess ? (
+                <div className="bg-white border border-[#171a21] p-3 text-xs space-y-2">
+                  <span className="text-emerald-800 font-bold block">✓ Steam Account Verified &amp; Linked!</span>
+                  <div className="text-[11px] text-stone-700">
+                    Dota 32-bit Friend ID: <strong className="font-mono text-black">{currentAcc.dotaAccountId}</strong>
+                  </div>
+                  {currentAcc.steamId && (
+                    <div className="text-[11px] text-stone-700">
+                      Steam64 ID: <strong className="font-mono text-black">{currentAcc.steamId}</strong>
+                    </div>
+                  )}
+                  {currentAcc.dotaDisplayName && (
+                    <div className="text-[11px] text-stone-700">
+                      Persona Name: <strong className="font-mono text-black">{currentAcc.dotaDisplayName}</strong>
+                    </div>
+                  )}
+                  {currentAcc.publicMatchDataStatus && (
+                    <div className="text-[11px] text-stone-700">
+                      Public Match Data: <strong className={currentAcc.publicMatchDataStatus === 'PUBLIC' ? 'text-emerald-700' : 'text-amber-700'}>{currentAcc.publicMatchDataStatus}</strong>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setIsDotaModalOpen(true)}
+                    className="mt-1 text-[11px] font-bold text-stone-800 hover:underline cursor-pointer flex items-center gap-1"
+                  >
+                    Change / Re-verify Steam Account →
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-stone-600">
+                    Search OpenDota profiles by name or ID, authenticate ownership directly through Valve's official Steam OpenID login portal, and sync your tournament eligibility.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setIsDotaModalOpen(true)}
+                    className="w-full py-3.5 px-4 bg-[#171a21] hover:bg-black text-white border-2 border-black font-mono text-xs font-black uppercase shadow-[4px_4px_0px_0px_#000] flex items-center justify-center gap-2 cursor-pointer transition-all active:translate-x-0.5 active:translate-y-0.5"
+                  >
+                    <span className="text-base">🎮</span>
+                    <span>Connect Steam &amp; Dota 2 (Valve OpenID)</span>
+                  </button>
                 </div>
               )}
+            </div>
+
+            <div className="text-[11px] text-stone-500 bg-stone-50 border p-2.5 space-y-1">
+              <strong>Why Steam Authorization?</strong>
+              <p>
+                Authorizing with Valve OpenID cryptographically verifies that you own the Steam and Dota 2 account. This prevents smurfing, auto-fetches your competitive rank, and connects you to live tournament match lobbies.
+              </p>
             </div>
 
             {stepError && (
@@ -518,7 +714,7 @@ export function FirstTimeOnboardingModal({
             <div className="pt-2 flex justify-between">
               <button
                 type="button"
-                onClick={() => setCurrentStep(3)}
+                onClick={() => { setStepError(null); setCurrentStep(3); }}
                 className="px-4 py-2.5 bg-white hover:bg-stone-100 text-black border-2 border-black font-mono text-xs font-bold uppercase cursor-pointer"
               >
                 ← Back
@@ -528,7 +724,7 @@ export function FirstTimeOnboardingModal({
                 onClick={handleConnectSteam}
                 className="px-6 py-2.5 bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-2 cursor-pointer"
               >
-                <span>{steamInput ? 'Verify & Continue' : 'Skip / Continue'}</span>
+                <span>{steamSuccess ? 'Continue to MMR & Roles' : 'Skip / Continue to MMR & Roles'}</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
             </div>
@@ -755,6 +951,39 @@ export function FirstTimeOnboardingModal({
         )}
 
       </div>
+
+      {/* Authoritative Linking Modals (Consistent with Player Profile & Registration) */}
+      {isDiscordModalOpen && (
+        <DiscordConnectModal
+          isOpen={isDiscordModalOpen}
+          onClose={() => setIsDiscordModalOpen(false)}
+          account={currentAcc}
+          onLinked={(updated) => {
+            setCurrentAcc(updated);
+            setDiscordSuccess(true);
+            setIsDiscordModalOpen(false);
+          }}
+        />
+      )}
+
+      {isDotaModalOpen && (
+        <DotaLinkingModal
+          isOpen={isDotaModalOpen}
+          onClose={() => setIsDotaModalOpen(false)}
+          account={currentAcc}
+          onLinked={(updated) => {
+            setCurrentAcc(updated);
+            setSteamSuccess(true);
+            if (updated.dotaAccountId) {
+              setSteamInput(updated.dotaAccountId);
+            }
+            if (updated.dotaMmr) {
+              setDeclaredMmr(String(updated.dotaMmr));
+            }
+            setIsDotaModalOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }

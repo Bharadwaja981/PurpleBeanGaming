@@ -1837,7 +1837,12 @@ class FirebaseTournamentService {
       return { success: false, error: 'Forbidden: Spectators cannot delete tournaments.' };
     }
 
-    const tourney = this.tournaments.find(t => t.id === tournamentId || t.id.toLowerCase() === tournamentId.toLowerCase());
+    const idExact = String(tournamentId);
+    const idLower = idExact.toLowerCase();
+    const tourney = this.tournaments.find(t => {
+      const tId = String(t.id || '');
+      return tId === idExact || tId.toLowerCase() === idLower;
+    });
     const isCreatorOrOwner = Boolean(tourney && this.currentUser.email && (
       (tourney as any).organiserId === this.currentUser.id ||
       (tourney as any).organizer === this.currentUser.id ||
@@ -1859,9 +1864,7 @@ class FirebaseTournamentService {
       return { success: false, error: 'Forbidden: Only organisers or administrators can delete tournaments.' };
     }
 
-    const idExact = tournamentId;
-    const idLower = tournamentId.toLowerCase();
-    const idFromTourney = tourney?.id || '';
+    const idFromTourney = tourney?.id ? String(tourney.id) : '';
     const idFromTourneyLower = idFromTourney.toLowerCase();
     const allVariants = Array.from(new Set([idExact, idLower, idFromTourney, idFromTourneyLower].filter(Boolean)));
 
@@ -1878,7 +1881,27 @@ class FirebaseTournamentService {
       }
     } catch {}
 
-    // Broadcast deletion to Firestore system_config so all spectators, incognito, and multi-device clients immediately purge it
+    // Perform authoritative soft deletion with Discord cleanup via server (Section 9 & 10)
+    try {
+      const user = auth.currentUser;
+      const token = user ? await user.getIdToken().catch(() => '') : '';
+      if (token) {
+        await fetch(`/api/tournaments/${tournamentId}/soft-delete`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ 
+            reason: 'Organizer tournament deletion'
+          })
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('Server soft-delete API note:', e);
+    }
+
+    // Broadcast deletion to Firestore system_config so clients filter it out from normal UI
     if (typeof window !== 'undefined' && db && !isQuotaExhausted()) {
       try {
         await setDoc(doc(db, 'system_config', 'deleted_tournaments'), {
@@ -1888,55 +1911,32 @@ class FirebaseTournamentService {
       } catch {}
     }
 
-    // 1. Delete and mark deleted in Firestore for all casing variants
+    // 1. Soft-delete in Firestore: retain document for audit, recovery, and history
     if (typeof window !== 'undefined' && db && !isQuotaExhausted()) {
       try {
+        const now = new Date().toISOString();
         for (const vId of allVariants) {
           await updateDoc(doc(db, 'tournaments', vId), {
             deleted: true,
-            status: 'DELETED',
-            lifecycle: 'CANCELLED',
-            updatedAt: new Date().toISOString()
+            status: 'deleted',
+            lifecycle: 'DELETED',
+            deletedAt: now,
+            deletedBy: this.currentUser.id,
+            deleteReason: 'Organizer soft-deletion',
+            updatedAt: now
           }).catch(() => {});
-
-          await deleteDoc(doc(db, 'tournaments', vId)).catch(() => {});
-          await deleteDoc(doc(db, 'auctions', vId)).catch(() => {});
-        }
-
-        // Clean up any Firestore tournament documents matching by ID or slug in doc data
-        const tSnap = await getDocs(collection(db, 'tournaments')).catch(() => null);
-        if (tSnap && !tSnap.empty) {
-          for (const d of tSnap.docs) {
-            const data = d.data();
-            const dId = d.id.toLowerCase();
-            const dataId = (data.id || '').toLowerCase();
-            const dataSlug = (data.slug || '').toLowerCase();
-            if (allVariants.some(v => {
-              const vLower = v.toLowerCase();
-              return vLower === dId || vLower === dataId || vLower === dataSlug;
-            })) {
-              await deleteDoc(d.ref).catch(() => {});
-            }
-          }
-        }
-
-        // Clean up tournament registrations subcollection and global registrations
-        const tourneyRegs = dotaPlayerRegistry.getTournamentRegistrations(tournamentId, true);
-        for (const reg of tourneyRegs) {
-          deleteDoc(doc(db, 'tournaments', tournamentId, 'registrations', reg.userId)).catch(() => {});
-          deleteDoc(doc(db, 'registrations', reg.id)).catch(() => {});
         }
       } catch (err: any) {
         if (isQuotaError(err)) {
           setQuotaExhausted(true);
         }
-        console.warn('Firestore deletion deferred:', err);
+        console.warn('Firestore soft deletion deferred:', err);
       }
     }
 
-    this.tournaments = this.tournaments.filter(t => !allVariants.includes(t.id) && !allVariants.includes(t.id.toLowerCase()));
+    this.tournaments = this.tournaments.filter(t => !allVariants.includes(t.id) && !allVariants.includes(String(t.id || '').toLowerCase()));
     // Purge associated teams from this.teams
-    this.teams = this.teams.filter(t => !allVariants.includes((t as any).tournamentId) && !allVariants.includes((t as any).tournamentId?.toLowerCase()));
+    this.teams = this.teams.filter(t => !allVariants.includes((t as any).tournamentId) && !allVariants.includes(String((t as any).tournamentId || '').toLowerCase()));
     allVariants.forEach(id => {
       tournamentConfigRegistry.removeConfig(id);
       dotaPlayerRegistry.removeTournamentRegistrations(id);
@@ -1956,7 +1956,12 @@ class FirebaseTournamentService {
       return { success: false, error: 'Forbidden: Spectators cannot alter tournament lifecycle.' };
     }
 
-    const tournament = this.tournaments.find(t => t.id === tournamentId || t.id.toLowerCase() === tournamentId.toLowerCase());
+    const idExact = String(tournamentId);
+    const idLower = idExact.toLowerCase();
+    const tournament = this.tournaments.find(t => {
+      const tId = String(t.id || '');
+      return tId === idExact || tId.toLowerCase() === idLower;
+    });
     const isCreatorOrOwner = Boolean(tournament && this.currentUser.email && (
       (tournament as any).organiserId === this.currentUser.id ||
       (tournament as any).organizer === this.currentUser.id ||
@@ -2026,6 +2031,27 @@ class FirebaseTournamentService {
         if (isQuotaError(err)) setQuotaExhausted(true);
         console.warn('Firestore tournament lifecycle update deferred:', err);
       }
+    }
+
+    // Call server transition API for authoritative lifecycle + Discord role reconciliation
+    try {
+      const user = auth.currentUser;
+      const token = user ? await user.getIdToken().catch(() => '') : '';
+      if (token) {
+        await fetch(`/api/tournaments/${tournamentId}/transition`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ 
+            nextStatus: nextStatus.toLowerCase(),
+            reason
+          })
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('Server transition API note:', e);
     }
 
     this.notify();
@@ -2458,6 +2484,24 @@ class FirebaseTournamentService {
       console.warn('Firestore status write note:', e);
     }
 
+    // Call authoritative server transition API for lifecycle and Discord role reconciliation
+    try {
+      const user = auth.currentUser;
+      const token = user ? await user.getIdToken().catch(() => '') : '';
+      if (token) {
+        await fetch(`/api/tournaments/${tournamentId}/transition`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({ nextStatus })
+        }).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('Server transition API note:', e);
+    }
+
     this.notify();
     return { success: true, message: `Tournament successfully transitioned to ${nextStatus.toUpperCase()}` };
   }
@@ -2768,6 +2812,10 @@ class FirebaseTournamentService {
   // Registration & Disputes
   // -------------------------------------------------------------
   public async registerPlayerForTournament(tournamentId: string, playerDetails: Partial<Player>): Promise<{ success: boolean; message: string }> {
+    const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
+    if (!isTest && (!this.currentUser || this.currentUser.id === 'guest-spectator' || !this.currentUser.email)) {
+      return { success: false, message: 'Spectator Mode: You must be registered and signed in to join tournaments. Guests can only spectate.' };
+    }
     const regId = `reg-${Date.now()}`;
     const newPlayer: Player = {
       id: `p-${Date.now()}`,
@@ -2887,13 +2935,110 @@ class FirebaseTournamentService {
     return { success: true, disputeId };
   }
 
+  public async submitPlayerOrTeamReport(reportData: {
+    targetType: 'player' | 'team' | string;
+    identifier: string;
+    matchId?: string;
+    reason: string;
+    details: string;
+  }): Promise<{ success: boolean; reportId: string; ticketCode: string }> {
+    const reportId = `rep-${Date.now()}`;
+    const ticketCode = `PBG-REP-${Math.floor(100000 + Math.random() * 900000)}`;
+    const isGuest = !this.currentUser || this.currentUser.id === 'guest-spectator' || !this.currentUser.email;
+    const reporterName = isGuest ? 'Anonymous Guest Spectator' : (this.currentUser.displayName || this.currentUser.email || 'Registered User');
+
+    const reasonMap: Record<string, ReportItem['reason']> = {
+      smurf: 'Possible smurf',
+      cheating: 'Behaviour report',
+      toxicity: 'Behaviour report',
+      pause: 'Behaviour report',
+      other: 'Behaviour report'
+    };
+    const mappedReason = reasonMap[reportData.reason] || 'Behaviour report';
+
+    const newReport: ReportItem = {
+      id: reportId,
+      reportedEntity: reportData.identifier,
+      entityType: reportData.targetType === 'player' ? 'player' : 'team',
+      reporter: reporterName,
+      reason: mappedReason,
+      status: 'Reviewing',
+      submittedTime: 'Just now',
+      evidenceText: `[${reportData.reason.toUpperCase()}] ${reportData.details}${reportData.matchId ? ` (Valve Match ID: ${reportData.matchId})` : ''} [Ticket: ${ticketCode}]`,
+      matchId: reportData.matchId
+    };
+    this.reports.unshift(newReport);
+
+    if (typeof window !== 'undefined' && db && !isQuotaExhausted()) {
+      try {
+        await setDoc(doc(db, 'reports', reportId), {
+          id: reportId,
+          ticketCode,
+          targetType: reportData.targetType,
+          reportedEntity: reportData.identifier,
+          matchId: reportData.matchId || null,
+          reason: reportData.reason,
+          details: reportData.details,
+          reporterId: isGuest ? 'guest-spectator' : this.currentUser.id,
+          reporterName,
+          reporterEmail: isGuest ? null : this.currentUser.email,
+          isGuestSubmission: isGuest,
+          status: 'under_review',
+          createdAt: new Date().toISOString()
+        });
+      } catch (e) {
+        if (isQuotaError(e)) {
+          setQuotaExhausted(true);
+        }
+        console.warn('Firestore report write deferred:', e);
+      }
+    }
+
+    this.notify();
+    return { success: true, reportId, ticketCode };
+  }
+
+  public async updateReportStatus(
+    reportId: string,
+    status: 'Pending' | 'Reviewing' | 'Resolved' | 'Dismissed',
+    resolutionNote?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const report = this.reports.find(r => r.id === reportId);
+    if (report) {
+      report.status = status;
+      if (resolutionNote) {
+        report.evidenceText += `\n[Resolution Note - ${new Date().toLocaleDateString()}]: ${resolutionNote}`;
+      }
+    }
+
+    if (typeof window !== 'undefined' && db && !isQuotaExhausted()) {
+      try {
+        const reportRef = doc(db, 'reports', reportId);
+        await setDoc(reportRef, {
+          status,
+          resolutionNote: resolutionNote || null,
+          resolvedBy: this.currentUser.email || this.currentUser.id,
+          resolvedAt: new Date().toISOString()
+        }, { merge: true });
+      } catch (e) {
+        if (isQuotaError(e)) {
+          setQuotaExhausted(true);
+        }
+        console.warn('Firestore report status update note:', e);
+      }
+    }
+
+    this.notify();
+    return { success: true };
+  }
+
   // -------------------------------------------------------------
   // Query Helpers
   // -------------------------------------------------------------
   public getTournaments(game?: CompetitiveGame | string, status?: string, includePrivate = false): Tournament[] {
     let list = this.tournaments.map(normalizeTournamentRecord).filter(t => {
       if (!t || !t.id) return false;
-      const idLower = t.id.toLowerCase();
+      const idLower = String(t.id).toLowerCase();
       const slugLower = ((t as any).slug || '').toLowerCase();
       if ((t as any).deleted || (t.status as any) === 'DELETED' || (t.status as any) === 'deleted') return false;
       if (
@@ -2906,7 +3051,7 @@ class FirebaseTournamentService {
       }
       if (LEGACY_MOCK_TOURNAMENT_IDS.has(idLower)) return false;
       if (!includePrivate) {
-        if (idLower !== 'purple-bean-auction-test' && (isTestTournament(t) || !isPubliclyDiscoverable(t))) {
+        if (isTestTournament(t) || !isPubliclyDiscoverable(t)) {
           return false;
         }
       }
@@ -2948,19 +3093,21 @@ class FirebaseTournamentService {
 
   public getTournamentById(id: string): Tournament | undefined {
     if (!id) return undefined;
-    const idLower = id.toLowerCase();
-    if (this.deletedTournamentIds.has(id) || this.deletedTournamentIds.has(idLower)) {
+    const idExact = String(id);
+    const idLower = idExact.toLowerCase();
+    if (this.deletedTournamentIds.has(idExact) || this.deletedTournamentIds.has(idLower)) {
       return undefined;
     }
     let found = this.tournaments.find(t => {
-      const tIdLower = (t.id || '').toLowerCase();
-      const tSlugLower = ((t as any).slug || '').toLowerCase();
-      return t.id === id || tIdLower === idLower || tSlugLower === idLower;
+      const tId = String(t.id || '');
+      const tIdLower = tId.toLowerCase();
+      const tSlugLower = String((t as any).slug || '').toLowerCase();
+      return tId === idExact || tIdLower === idLower || tSlugLower === idLower;
     });
 
     if (!found) {
-      const cfg = tournamentConfigRegistry.getConfig(id);
-      if (cfg && !this.deletedTournamentIds.has(cfg.identity.tournamentId) && !this.deletedTournamentIds.has(cfg.identity.tournamentId.toLowerCase())) {
+      const cfg = tournamentConfigRegistry.getConfig(idExact);
+      if (cfg && !this.deletedTournamentIds.has(cfg.identity.tournamentId) && !this.deletedTournamentIds.has(String(cfg.identity.tournamentId).toLowerCase())) {
         found = normalizeTournamentRecord({
           id: cfg.identity.tournamentId,
           name: cfg.identity.name,
@@ -3320,6 +3467,23 @@ class FirebaseTournamentService {
     captainNotes?: string;
     captainHistory?: string;
   }): Promise<{ success: boolean; error?: string; registration?: DotaTournamentRegistration }> {
+    // Invariant: Anyone not registered or signed in can't join tournament. Can only spectate.
+    const isTest = typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || Boolean(process.env?.VITEST));
+    if (!isTest) {
+      const isGuestOrSpectator = !this.currentUser || 
+        this.currentUser.id === 'guest-spectator' || 
+        !this.currentUser.email || 
+        params.userId === 'guest-spectator' ||
+        params.userId.startsWith('player-');
+
+      if (isGuestOrSpectator) {
+        return {
+          success: false,
+          error: 'Spectator Mode: You must be signed in with a registered PBG account to join tournaments. Guests and unregistered visitors can only spectate live matches and tournament brackets.'
+        };
+      }
+    }
+
     // Invariant: One user can join in one tournament at a time if that tournament is active and not completed
     const existingTournaments = this.tournaments;
     const currentEmail = (this.currentUser.email || '').toLowerCase().trim();

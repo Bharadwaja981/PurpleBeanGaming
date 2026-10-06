@@ -118,6 +118,9 @@ export async function submitTournamentRegistrationAuthoritative(params: {
   return await withTournamentLock(tournamentId, async () => {
     // 1. Check lifecycle: must be open
     const lifecycle = inMemoryLifecycles.get(tournamentId) || 'REGISTRATION_OPEN';
+    if (lifecycle === 'ON_HOLD' as any) {
+      throw new Error('TOURNAMENT_ON_HOLD: Tournament registrations are paused while tournament is on hold.');
+    }
     if (lifecycle !== 'REGISTRATION_OPEN') {
       throw new Error('REGISTRATION_CLOSED: Tournament registration is currently closed.');
     }

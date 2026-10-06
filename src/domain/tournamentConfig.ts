@@ -112,13 +112,18 @@ export function formatINR(val?: number): string {
   return '₹' + Math.round(val).toLocaleString('en-IN');
 }
 
-export function createDefaultTournamentConfig(gameId = 'dota2'): TournamentConfig {
+export function createDefaultTournamentConfig(gameIdOrTournament: any = 'dota2'): TournamentConfig {
+  const rawGameId = typeof gameIdOrTournament === 'string' 
+    ? gameIdOrTournament 
+    : (gameIdOrTournament?.gameId || gameIdOrTournament?.game || 'dota2');
+  const gameId = String(rawGameId || 'dota2');
   const isDota = gameId.toLowerCase().includes('dota');
+  const cleanGameId = gameId.toLowerCase().replace(/[^a-z0-9]/g, '') || 'dota2';
   return {
     identity: {
-      tournamentId: `pb-${gameId}-${Date.now()}`,
+      tournamentId: `pb-${cleanGameId}-${Date.now()}`,
       name: isDota ? 'Dota 2 Championship' : 'Esports Open Cup',
-      gameId: gameId.toLowerCase().replace(/[^a-z0-9]/g, '') || 'dota2',
+      gameId: cleanGameId,
       gameName: isDota ? 'Dota 2' : 'Dota 2',
       description: 'Official tournament powered by Purple Bean Gaming.',
       region: 'Pan India',

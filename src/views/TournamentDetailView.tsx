@@ -25,7 +25,8 @@ import {
   StopCircle,
   RefreshCw,
   Check,
-  FlaskConical
+  FlaskConical,
+  Eye
 } from 'lucide-react';
 import { AdminTournamentPlayerManagerModal } from '../components/AdminTournamentPlayerManagerModal';
 import { DoubleEliminationBracket } from '../components/DoubleEliminationBracket';
@@ -293,7 +294,16 @@ export function TournamentDetailView({
               </button>
             )}
 
-            {userRegistration && userRegistration.status !== 'WITHDRAWN' ? (
+            {isSpectator ? (
+              <button
+                onClick={() => onOpenRegister(tournament.id)}
+                className="bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black px-4 py-2 font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
+                title="Guests can only spectate. Sign in to join tournament."
+              >
+                <Eye className="w-3.5 h-3.5 text-black" />
+                <span>Spectating (Sign In to Join)</span>
+              </button>
+            ) : userRegistration && userRegistration.status !== 'WITHDRAWN' ? (
               <button
                 onClick={() => onOpenRegister(tournament.id)}
                 className="bg-[#70FFAF] hover:bg-[#5ceba0] text-black border-2 border-black px-4 py-2 font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"

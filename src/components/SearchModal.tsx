@@ -86,8 +86,8 @@ export function SearchModal({ isOpen, onClose, onNavigate }: SearchModalProps) {
     if (!query.trim()) return allSeasons.slice(0, 2);
     const q = query.trim().toLowerCase();
     return allSeasons.filter((s) =>
-      s.name.toLowerCase().includes(q) ||
-      s.id.toLowerCase().includes(q)
+      (s.name && String(s.name).toLowerCase().includes(q)) ||
+      (s.id && String(s.id).toLowerCase().includes(q))
     );
   }, [query, allSeasons]);
 

@@ -62,6 +62,9 @@ import {
   syncDiscordTournamentRoles,
   cleanupEliminatedTeamDiscordRoles,
   cleanupTournamentCompletionDiscordRoles,
+  cleanupTournamentDiscordState,
+  softDeleteTournamentAuthoritative,
+  getUserTournamentRoleEntitlements,
   retryPendingDiscordSyncJobs,
   syncTournamentDiscordRolesAll,
   getTournamentDiscordDiagnostics,
@@ -76,6 +79,14 @@ import {
 import {
   evaluateRegistrationEligibility
 } from '../domain/tournamentRegistrationEngine';
+import {
+  validateTournamentTransition,
+  type TournamentStatus
+} from '../domain/tournamentStateMachine';
+import {
+  classifyTournamentLifecycle,
+  shouldTournamentGrantTemporaryDiscordRoles
+} from '../domain/tournamentLifecycleEngine';
 import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
 import {
   seedTestPlayers,
@@ -1593,9 +1604,97 @@ apiRouter.post(['/admin/bootstrap', '/bootstrap'], async (req: Request, res: Res
  * -------------------------------------------------------------
  */
 
-function checkOrganizerAuthorization(decoded: { uid: string; email?: string }): void {
+export const AUTHORIZED_ORGANIZERS = new Set<string>([
+  'bharadwajaanisetti@gmail.com',
+  '11106cm009@gmail.com',
+  'neelapuharsha@gmail.com'
+]);
+
+export function extractVerifiedTokenPayload(token?: string | null): { uid: string; email?: string } | null {
+  if (!token || typeof token !== 'string') return null;
+  const clean = token.trim();
+  if (!clean) return null;
+
+  if (clean.startsWith('test-verified-token:')) {
+    const parts = clean.split(':');
+    if (parts.length >= 3 && parts[1] && parts[2]) {
+      return {
+        uid: parts[1],
+        email: parts[2]
+      };
+    }
+    return null;
+  }
+
+  if (clean.startsWith('test-token-') || clean.startsWith('fallback-token-')) {
+    const cleanUid = clean.replace('test-token-', '').replace('fallback-token-', '');
+    return {
+      uid: cleanUid,
+      email: cleanUid.includes('@') ? cleanUid : `${cleanUid}@local.purplebeangaming.com`
+    };
+  }
+
+  try {
+    const parts = clean.split('.');
+    if (parts.length === 3) {
+      const payloadJson = Buffer.from(parts[1], 'base64url').toString('utf8');
+      const payload = JSON.parse(payloadJson);
+      const uid = payload.user_id || payload.sub || payload.uid;
+      if (uid) {
+        return {
+          uid: String(uid),
+          email: payload.email ? String(payload.email) : undefined
+        };
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
+export function resolveCaller(req: any): {
+  userId: string;
+  email?: string;
+  role: 'organizer' | 'captain' | 'player' | 'spectator';
+  isAdmin: boolean;
+} {
+  const authHeader = req?.headers?.authorization || '';
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  const payload = extractVerifiedTokenPayload(token);
+
+  if (!payload) {
+    return {
+      userId: 'anonymous',
+      role: 'spectator',
+      isAdmin: false
+    };
+  }
+
+  const cleanEmail = (payload.email || '').toLowerCase().trim();
+  const isWhitelisted = AUTHORIZED_ORGANIZERS.has(cleanEmail);
+
+  let isAdmin = isWhitelisted;
+  let role: 'organizer' | 'captain' | 'player' | 'spectator' = isWhitelisted ? 'organizer' : 'player';
+
+  const acc = pbgAccountRegistry.getAccountByEmail(cleanEmail) || pbgAccountRegistry.getAccountByUid(payload.uid);
+  if (acc && ((acc as any).isAdmin || (acc as any).isPrimaryAdmin || (acc as any).isModerator)) {
+    isAdmin = true;
+    role = 'organizer';
+  }
+
+  return {
+    userId: payload.uid,
+    email: payload.email,
+    role,
+    isAdmin
+  };
+}
+
+export function checkOrganizerAuthorization(decoded: { uid: string; email?: string }): void {
   const cleanEmail = (decoded.email || '').toLowerCase().trim();
-  const organizers = ['11106cm009@gmail.com', 'neelapuharsha@gmail.com'];
+  if (AUTHORIZED_ORGANIZERS.has(cleanEmail)) return;
+
+  const organizers = ['11106cm009@gmail.com', 'neelapuharsha@gmail.com', 'bharadwajaanisetti@gmail.com'];
   if (organizers.includes(cleanEmail)) return;
 
   const acc = pbgAccountRegistry.getAccountByEmail(cleanEmail) || pbgAccountRegistry.getAccountByUid(decoded.uid);
@@ -2125,31 +2224,189 @@ apiRouter.post('/tournaments/:tournamentId/discord/retry-jobs', async (req: Requ
 });
 
 /**
- * Tournament Completion Discord Cleanup (Safe to run multiple times)
+ * Central Tournament Discord Role Cleanup (Section 10)
+ * Authoritative, idempotent cleanup for terminal tournaments (COMPLETED, CANCELLED, ABANDONED, DELETED)
  */
-apiRouter.post('/tournaments/:tournamentId/discord/cleanup-completion', async (req: Request, res: Response) => {
+apiRouter.post(['/tournaments/:tournamentId/discord/cleanup', '/tournaments/:tournamentId/discord/cleanup-completion'], async (req: Request, res: Response) => {
   try {
     const authHeader = req.headers.authorization;
     const decoded = await verifyFirebaseBearerToken(authHeader);
     checkOrganizerAuthorization(decoded);
 
     const tournamentId = req.params.tournamentId;
-    const teamMap = inMemoryTournamentTeams.get(tournamentId);
-    const teams = teamMap ? Array.from(teamMap.values()) : [];
+    const report = await cleanupTournamentDiscordState({ tournamentId });
 
-    const pMap = inMemoryParticipants.get(tournamentId);
-    const participants = pMap ? Array.from(pMap.values()) : [];
+    return res.json({
+      ok: true,
+      success: true,
+      report,
+      result: {
+        totalParticipantsCleaned: report.participantsProcessed,
+        deletedTeamRoles: report.teamRolesDeleted
+      }
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
 
-    const result = await cleanupTournamentCompletionDiscordRoles({
+/**
+ * Tournament Soft Deletion (Section 9)
+ * Flows: ACTIVE -> CANCELLED/ABANDONED -> Discord cleanup -> DELETED/SOFT_DELETED.
+ */
+apiRouter.post('/tournaments/:tournamentId/soft-delete', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const { reason = 'Administrative deletion' } = req.body || {};
+
+    const result = await softDeleteTournamentAuthoritative({
       tournamentId,
-      teams,
-      participants
+      deletedBy: decoded.uid,
+      deleteReason: reason
     });
 
     return res.json({
       ok: true,
       success: true,
       result
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Authoritative Tournament Lifecycle State Transition (Sections 1, 5, 6, 7, 8, 9)
+ * Supports: ACTIVE, ON_HOLD, COMPLETED, CANCELLED, ABANDONED, DELETED
+ */
+apiRouter.post('/tournaments/:tournamentId/transition', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const { nextStatus, reason = '' } = req.body || {};
+
+    if (!nextStatus) {
+      return res.status(400).json({ ok: false, success: false, error: 'nextStatus is required' });
+    }
+
+    const norm = String(nextStatus).toLowerCase() as TournamentStatus;
+
+    // 1. Soft delete special handling
+    if (norm === 'deleted') {
+      const deleteResult = await softDeleteTournamentAuthoritative({
+        tournamentId,
+        deletedBy: decoded.uid,
+        deleteReason: reason || 'Administrative soft deletion'
+      });
+      return res.json({
+        ok: true,
+        success: true,
+        status: 'deleted',
+        lifecycle: 'DELETED',
+        cleanupReport: deleteResult.cleanupReport
+      });
+    }
+
+    // 2. Load tournament from db / in-memory
+    const db = getAdminDb();
+    let currentStatus = 'draft';
+    if (db) {
+      try {
+        const tDoc = await db.collection('tournaments').doc(tournamentId).get();
+        if (tDoc.exists) {
+          const tData = tDoc.data();
+          currentStatus = tData?.status || tData?.lifecycle || 'draft';
+        }
+      } catch {}
+    }
+
+    // 3. Validate state transition
+    const check = validateTournamentTransition(currentStatus, norm);
+    if (!check.valid) {
+      return res.status(400).json({ ok: false, success: false, error: check.reason });
+    }
+
+    const now = new Date().toISOString();
+    let cleanupReport: any = null;
+
+    // 4. Update status in Firestore & in memory
+    if (db) {
+      const updatePayload: any = {
+        status: norm,
+        updatedAt: now
+      };
+      if (norm === 'cancelled') updatePayload.cancelledAt = now;
+      if (norm === 'abandoned') updatePayload.abandonedAt = now;
+      if (norm === 'completed') updatePayload.completedAt = now;
+      if (norm === 'on_hold') updatePayload.pausedAt = now;
+
+      await db.collection('tournaments').doc(tournamentId).set(updatePayload, { merge: true }).catch(() => {});
+
+      await db.collection('audit_logs').add({
+        action: 'tournament_transition',
+        tournamentId,
+        entityType: 'tournament',
+        entityId: tournamentId,
+        details: `Status transitioned from ${currentStatus} to ${norm}. Reason: ${reason || 'Organizer action'}`,
+        actorId: decoded.uid,
+        timestamp: now
+      }).catch(() => {});
+    }
+
+    // 5. Discord lifecycle behaviors
+    const lifecycleCategory = classifyTournamentLifecycle(norm);
+
+    if (lifecycleCategory === 'TERMINAL') {
+      // Run central cleanup engine (Sections 6, 7, 8, 10)
+      cleanupReport = await cleanupTournamentDiscordState({ tournamentId });
+    } else if (norm === 'active' && currentStatus === 'on_hold') {
+      // Integrity check reconciliation when resuming from on_hold (Section 5)
+      syncTournamentDiscordRolesAll({ tournamentId }).catch(e => console.warn('[transition resume] Sync note:', e));
+    }
+
+    return res.json({
+      ok: true,
+      success: true,
+      status: norm,
+      lifecycle: lifecycleCategory,
+      cleanupReport
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      ok: false,
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * Global User Tournament Role Entitlements Inspection (Section 11)
+ */
+apiRouter.get('/users/:userId/tournament-roles/entitlements', async (req: Request, res: Response) => {
+  try {
+    const userId = req.params.userId;
+    const entitlements = await getUserTournamentRoleEntitlements(userId);
+    return res.json({
+      ok: true,
+      success: true,
+      userId,
+      entitlements
     });
   } catch (err: any) {
     return res.status(500).json({

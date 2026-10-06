@@ -36,7 +36,10 @@ import {
   Gavel,
   Trophy,
   Gamepad2,
-  Trash2
+  Trash2,
+  Flag,
+  Copy,
+  MessageSquare
 } from 'lucide-react';
 import { 
   tournamentService, 
@@ -49,7 +52,8 @@ import {
 } from '../services/firebaseService';
 import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
 import { PBGPlayerAccount } from '../types/pbgAccount';
-import { ViewType } from '../types/tournament';
+import { ViewType, ReportItem } from '../types/tournament';
+import { PromptModal } from '../components/ui/PromptModal';
 
 interface AdminDashboardViewProps {
   onNavigate: (view: ViewType, entityId?: string) => void;
@@ -59,8 +63,20 @@ export function AdminDashboardView({ onNavigate }: AdminDashboardViewProps) {
   const [currentUser, setCurrentUser] = useState(() => tournamentService.getCurrentUser());
   const [roleAssignments, setRoleAssignments] = useState<RoleAssignment[]>(() => tournamentService.getRoleAssignments());
   const [auditLogs, setAuditLogs] = useState<RoleAuditLog[]>(() => tournamentService.getRoleAuditLogs());
+  const [reports, setReports] = useState<ReportItem[]>(() => tournamentService.getReports());
 
-  // Search & Filters
+  // Navigation tab
+  const [activeTab, setActiveTab] = useState<'tickets' | 'roles' | 'audit'>('tickets');
+
+  // Tickets Search & Filter States
+  const [ticketSearchQuery, setTicketSearchQuery] = useState('');
+  const [ticketStatusFilter, setTicketStatusFilter] = useState<'all' | 'under_review' | 'resolved' | 'dismissed'>('all');
+  const [ticketTypeFilter, setTicketTypeFilter] = useState<'all' | 'player' | 'team'>('all');
+  const [resolvingTicketId, setResolvingTicketId] = useState<string | null>(null);
+  const [dismissingTicketId, setDismissingTicketId] = useState<string | null>(null);
+  const [copiedTicketId, setCopiedTicketId] = useState<string | null>(null);
+
+  // Search & Filters for Roles
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<'all' | 'admin' | 'organizer' | 'moderator'>('all');
 
@@ -88,6 +104,7 @@ export function AdminDashboardView({ onNavigate }: AdminDashboardViewProps) {
       setCurrentUser(tournamentService.getCurrentUser());
       setRoleAssignments(tournamentService.getRoleAssignments());
       setAuditLogs(tournamentService.getRoleAuditLogs());
+      setReports(tournamentService.getReports());
     });
     return unsub;
   }, []);
@@ -130,6 +147,89 @@ export function AdminDashboardView({ onNavigate }: AdminDashboardViewProps) {
     const moderators = roleAssignments.filter((r) => r.role === 'moderator').length;
     return { admins, organizers, moderators, total: roleAssignments.length };
   }, [roleAssignments]);
+
+  // Filtered tickets
+  const filteredTickets = useMemo(() => {
+    return reports.filter((ticket) => {
+      const q = ticketSearchQuery.toLowerCase().trim();
+      const matchesSearch = !q || (
+        ticket.id.toLowerCase().includes(q) ||
+        ticket.reportedEntity.toLowerCase().includes(q) ||
+        ticket.reporter.toLowerCase().includes(q) ||
+        ticket.reason.toLowerCase().includes(q) ||
+        ticket.evidenceText.toLowerCase().includes(q) ||
+        (ticket.matchId && ticket.matchId.toLowerCase().includes(q))
+      );
+
+      const statusNorm = (ticket.status || '').toLowerCase();
+      let matchesStatus = true;
+      if (ticketStatusFilter === 'under_review') {
+        matchesStatus = statusNorm === 'pending' || statusNorm === 'reviewing' || statusNorm === 'under_review';
+      } else if (ticketStatusFilter === 'resolved') {
+        matchesStatus = statusNorm === 'resolved';
+      } else if (ticketStatusFilter === 'dismissed') {
+        matchesStatus = statusNorm === 'dismissed';
+      }
+
+      const matchesType = ticketTypeFilter === 'all' || ticket.entityType === ticketTypeFilter;
+
+      return matchesSearch && matchesStatus && matchesType;
+    });
+  }, [reports, ticketSearchQuery, ticketStatusFilter, ticketTypeFilter]);
+
+  const ticketStats = useMemo(() => {
+    const total = reports.length;
+    const underReview = reports.filter(r => {
+      const s = (r.status || '').toLowerCase();
+      return s === 'pending' || s === 'reviewing' || s === 'under_review';
+    }).length;
+    const resolved = reports.filter(r => (r.status || '').toLowerCase() === 'resolved').length;
+    const dismissed = reports.filter(r => (r.status || '').toLowerCase() === 'dismissed').length;
+    return { total, underReview, resolved, dismissed };
+  }, [reports]);
+
+  const handleResolveTicket = async (note: string) => {
+    if (!resolvingTicketId) return;
+    setIsSubmitting(true);
+    const res = await tournamentService.updateReportStatus(resolvingTicketId, 'Resolved', note);
+    setIsSubmitting(false);
+    setResolvingTicketId(null);
+    if (res.success) {
+      setFeedback({ type: 'success', message: `Ticket ${resolvingTicketId} has been resolved successfully.` });
+    } else {
+      setFeedback({ type: 'error', message: res.error || 'Failed to update ticket.' });
+    }
+  };
+
+  const handleDismissTicket = async (reason: string) => {
+    if (!dismissingTicketId) return;
+    setIsSubmitting(true);
+    const res = await tournamentService.updateReportStatus(dismissingTicketId, 'Dismissed', reason);
+    setIsSubmitting(false);
+    setDismissingTicketId(null);
+    if (res.success) {
+      setFeedback({ type: 'success', message: `Ticket ${dismissingTicketId} has been dismissed.` });
+    } else {
+      setFeedback({ type: 'error', message: res.error || 'Failed to update ticket.' });
+    }
+  };
+
+  const handleReopenTicket = async (ticketId: string) => {
+    setIsSubmitting(true);
+    const res = await tournamentService.updateReportStatus(ticketId, 'Reviewing', 'Ticket reopened by administrator');
+    setIsSubmitting(false);
+    if (res.success) {
+      setFeedback({ type: 'success', message: `Ticket ${ticketId} status set to Reviewing.` });
+    } else {
+      setFeedback({ type: 'error', message: res.error || 'Failed to update ticket.' });
+    }
+  };
+
+  const handleCopyTicket = (id: string) => {
+    navigator.clipboard?.writeText(id);
+    setCopiedTicketId(id);
+    setTimeout(() => setCopiedTicketId(null), 2000);
+  };
 
   const handleOpenAssignModal = () => {
     setFormEmail('');
@@ -301,6 +401,350 @@ export function AdminDashboardView({ onNavigate }: AdminDashboardViewProps) {
         </div>
       )}
 
+      {/* Primary Dashboard Navigation Tabs */}
+      <div className="flex border-b-[3.5px] border-black gap-2 overflow-x-auto pt-2">
+        <button
+          type="button"
+          onClick={() => setActiveTab('tickets')}
+          className={`px-5 py-3 font-mono text-xs font-black uppercase border-t-[3.5px] border-x-[3.5px] border-black cursor-pointer flex items-center gap-2 transition-all shrink-0 ${
+            activeTab === 'tickets'
+              ? 'bg-[#FFE600] text-black shadow-[3px_-3px_0px_0px_#000] -mb-[3.5px] z-10'
+              : 'bg-stone-100 hover:bg-stone-200 text-stone-600'
+          }`}
+        >
+          <Flag className="w-4 h-4 text-black" />
+          <span>Incident Reports &amp; Tickets</span>
+          {ticketStats.underReview > 0 && (
+            <span className="bg-[#FF5757] text-white text-[10px] px-2 py-0.5 font-black border border-black animate-pulse">
+              {ticketStats.underReview} Open
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('roles')}
+          className={`px-5 py-3 font-mono text-xs font-black uppercase border-t-[3.5px] border-x-[3.5px] border-black cursor-pointer flex items-center gap-2 transition-all shrink-0 ${
+            activeTab === 'roles'
+              ? 'bg-[#FFE600] text-black shadow-[3px_-3px_0px_0px_#000] -mb-[3.5px] z-10'
+              : 'bg-stone-100 hover:bg-stone-200 text-stone-600'
+          }`}
+        >
+          <Users className="w-4 h-4 text-black" />
+          <span>Personnel Roles (RBAC)</span>
+          <span className="bg-black text-[#FFE600] text-[10px] px-1.5 py-0.5 font-black">
+            {stats.total}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('audit')}
+          className={`px-5 py-3 font-mono text-xs font-black uppercase border-t-[3.5px] border-x-[3.5px] border-black cursor-pointer flex items-center gap-2 transition-all shrink-0 ${
+            activeTab === 'audit'
+              ? 'bg-[#FFE600] text-black shadow-[3px_-3px_0px_0px_#000] -mb-[3.5px] z-10'
+              : 'bg-stone-100 hover:bg-stone-200 text-stone-600'
+          }`}
+        >
+          <Clock className="w-4 h-4 text-black" />
+          <span>Security Audit Trail</span>
+          <span className="bg-stone-200 text-stone-700 text-[10px] px-1.5 py-0.5 font-bold">
+            {auditLogs.length}
+          </span>
+        </button>
+      </div>
+
+      {/* ========================================================================= */}
+      {/* TAB 1: INCIDENT REPORTS & DISPUTE TICKETS                                 */}
+      {/* ========================================================================= */}
+      {activeTab === 'tickets' && (
+        <div className="space-y-6">
+          {/* Ticket Stats Metrics */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white border-[3px] border-black p-4 shadow-[4px_4px_0px_0px_#000] space-y-1">
+              <span className="text-[10px] font-black uppercase text-stone-500 block">TOTAL TICKETS FILED</span>
+              <div className="text-3xl font-black font-sans text-black">{ticketStats.total}</div>
+              <span className="text-[11px] text-stone-600 block">Player, team &amp; match reports</span>
+            </div>
+
+            <div className="bg-[#FFF9E6] border-[3px] border-black p-4 shadow-[4px_4px_0px_0px_#000] space-y-1">
+              <span className="text-[10px] font-black uppercase text-amber-900 block">UNDER INVESTIGATION</span>
+              <div className="text-3xl font-black font-sans text-amber-950 flex items-center gap-2">
+                <span>{ticketStats.underReview}</span>
+                {ticketStats.underReview > 0 && (
+                  <span className="w-3 h-3 rounded-full bg-amber-500 animate-ping inline-block" />
+                )}
+              </div>
+              <span className="text-[11px] text-amber-800 block">Awaiting referee audit</span>
+            </div>
+
+            <div className="bg-[#E8FFF3] border-[3px] border-black p-4 shadow-[4px_4px_0px_0px_#000] space-y-1">
+              <span className="text-[10px] font-black uppercase text-emerald-900 block">RESOLVED TICKETS</span>
+              <div className="text-3xl font-black font-sans text-emerald-950">{ticketStats.resolved}</div>
+              <span className="text-[11px] text-emerald-800 block">Sanctions or corrections applied</span>
+            </div>
+
+            <div className="bg-stone-50 border-[3px] border-black p-4 shadow-[4px_4px_0px_0px_#000] space-y-1">
+              <span className="text-[10px] font-black uppercase text-stone-500 block">DISMISSED</span>
+              <div className="text-3xl font-black font-sans text-stone-700">{ticketStats.dismissed}</div>
+              <span className="text-[11px] text-stone-500 block">Inconclusive / non-violations</span>
+            </div>
+          </div>
+
+          {/* Ticket Search & Filter Controls */}
+          <div className="bg-white border-[3.5px] border-black p-4 sm:p-5 shadow-[6px_6px_0px_0px_#000] space-y-4">
+            <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+              {/* Search */}
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+                <input
+                  type="text"
+                  value={ticketSearchQuery}
+                  onChange={(e) => setTicketSearchQuery(e.target.value)}
+                  placeholder="Search by Ticket ID (e.g. PBG-REP-), player handle, team, match ID, or keyword..."
+                  className="w-full pl-9 pr-4 py-2 bg-stone-50 border-2 border-black text-xs font-mono placeholder:text-stone-400 text-black focus:outline-none focus:bg-white"
+                />
+              </div>
+
+              {/* Status Filter */}
+              <div className="flex flex-wrap items-center gap-1.5 text-xs font-black uppercase">
+                <span className="text-stone-500 mr-1 text-[11px]">Status:</span>
+                {(['all', 'under_review', 'resolved', 'dismissed'] as const).map((status) => (
+                  <button
+                    key={status}
+                    type="button"
+                    onClick={() => setTicketStatusFilter(status)}
+                    className={`px-3 py-1.5 border-2 border-black cursor-pointer transition-all ${
+                      ticketStatusFilter === status
+                        ? 'bg-black text-[#FFE600] shadow-[2px_2px_0px_0px_#FFE600]'
+                        : 'bg-white hover:bg-stone-100 text-black'
+                    }`}
+                  >
+                    {status === 'all' && `All (${ticketStats.total})`}
+                    {status === 'under_review' && `Open (${ticketStats.underReview})`}
+                    {status === 'resolved' && `Resolved (${ticketStats.resolved})`}
+                    {status === 'dismissed' && `Dismissed (${ticketStats.dismissed})`}
+                  </button>
+                ))}
+              </div>
+
+              {/* Target Filter */}
+              <div className="flex items-center gap-1.5 text-xs font-black uppercase">
+                <span className="text-stone-500 mr-1 text-[11px]">Type:</span>
+                {(['all', 'player', 'team'] as const).map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => setTicketTypeFilter(type)}
+                    className={`px-2.5 py-1.5 border-2 border-black cursor-pointer transition-all ${
+                      ticketTypeFilter === type
+                        ? 'bg-[#7C3AED] text-white shadow-[2px_2px_0px_0px_#000]'
+                        : 'bg-white hover:bg-stone-100 text-black'
+                    }`}
+                  >
+                    {type === 'all' ? 'All' : type === 'player' ? 'Players' : 'Teams'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Ticket Cards Stream */}
+          <div className="space-y-4">
+            {filteredTickets.length === 0 ? (
+              <div className="bg-white border-[3.5px] border-black p-10 text-center shadow-[6px_6px_0px_0px_#000] space-y-3 font-mono">
+                <div className="w-12 h-12 bg-stone-100 border-2 border-black mx-auto flex items-center justify-center text-xl">
+                  📋
+                </div>
+                <h4 className="font-sans font-black text-lg uppercase text-black">
+                  No Incident Tickets Found
+                </h4>
+                <p className="text-xs text-stone-600 max-w-md mx-auto">
+                  {reports.length === 0 
+                    ? "No incident reports or disputes have been submitted on the platform yet. When users or guest whistleblowers submit reports via the Support Desk, they will stream directly into this queue."
+                    : "No tickets match your active filter or search query. Try clearing filters to see all incident logs."}
+                </p>
+              </div>
+            ) : (
+              filteredTickets.map((ticket) => {
+                const statusNorm = (ticket.status || '').toLowerCase();
+                const isUnderReview = statusNorm === 'pending' || statusNorm === 'reviewing' || statusNorm === 'under_review';
+                const isResolved = statusNorm === 'resolved';
+                const isDismissed = statusNorm === 'dismissed';
+
+                return (
+                  <div
+                    key={ticket.id}
+                    className="bg-white border-[3.5px] border-black p-5 sm:p-6 shadow-[6px_6px_0px_0px_#000] space-y-4 font-mono transition-transform hover:-translate-y-0.5"
+                  >
+                    {/* Header: Ticket Code, Target, Status */}
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b-2 border-black pb-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* Copyable Ticket ID */}
+                        <div className="flex items-center gap-1.5 bg-[#FFFBEB] border-2 border-black px-2.5 py-1 text-xs font-black shadow-[2px_2px_0px_0px_#000]">
+                          <span className="text-stone-500 font-bold">CODE:</span>
+                          <span className="text-[#7C3AED] select-all">{ticket.id}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleCopyTicket(ticket.id)}
+                            title="Copy Ticket Reference Code"
+                            className="p-1 hover:bg-stone-200 border border-black cursor-pointer text-[10px]"
+                          >
+                            {copiedTicketId === ticket.id ? (
+                              <span className="text-emerald-700 font-black">✓ Copied</span>
+                            ) : (
+                              <Copy className="w-3 h-3 text-black" />
+                            )}
+                          </button>
+                        </div>
+
+                        {/* Entity Type Badge */}
+                        <span className={`px-2 py-0.5 text-[10px] font-black uppercase border border-black ${
+                          ticket.entityType === 'player' ? 'bg-[#5CE1E6] text-black' : 'bg-[#F3E8FF] text-[#7C3AED]'
+                        }`}>
+                          {ticket.entityType === 'player' ? 'Individual Player' : 'Team Stack'}
+                        </span>
+
+                        {/* Violation Tag */}
+                        <span className="bg-stone-100 text-stone-800 border border-black px-2 py-0.5 text-[10px] font-black uppercase">
+                          {ticket.reason}
+                        </span>
+
+                        {ticket.matchId && (
+                          <span className="bg-[#FFE600] text-black border border-black px-2 py-0.5 text-[10px] font-black uppercase">
+                            Valve Match ID: {ticket.matchId}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Status Badge */}
+                      <div>
+                        {isUnderReview && (
+                          <span className="bg-[#FFDE59] text-black border-2 border-black px-3 py-1 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-amber-600 animate-ping inline-block" />
+                            <span>Under Investigation</span>
+                          </span>
+                        )}
+                        {isResolved && (
+                          <span className="bg-[#70FFAF] text-black border-2 border-black px-3 py-1 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5">
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Resolved &amp; Closed</span>
+                          </span>
+                        )}
+                        {isDismissed && (
+                          <span className="bg-stone-200 text-stone-700 border-2 border-black px-3 py-1 text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5">
+                            <X className="w-3.5 h-3.5" />
+                            <span>Dismissed</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Meta Info Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs bg-stone-50 border-2 border-black p-3.5">
+                      <div>
+                        <span className="text-[10px] font-black uppercase text-stone-500 block">REPORTED TARGET</span>
+                        <strong className="font-sans text-sm font-black uppercase text-black">
+                          {ticket.reportedEntity}
+                        </strong>
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] font-black uppercase text-stone-500 block">WHISTLEBLOWER IDENTITY</span>
+                        <div className="flex items-center gap-1.5 text-stone-800 font-bold">
+                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          <span>{ticket.reporter}</span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] font-black uppercase text-stone-500 block">LOGGED TIMESTAMP</span>
+                        <div className="text-stone-700 font-bold">
+                          {ticket.submittedTime}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Evidence & Description Quote Box */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-1.5 text-xs font-black uppercase text-stone-700">
+                        <FileText className="w-3.5 h-3.5 text-[#7C3AED]" />
+                        <span>Evidence &amp; Replay Description</span>
+                      </div>
+                      <div className="bg-white border-2 border-black p-3.5 text-xs text-stone-800 leading-relaxed font-mono whitespace-pre-wrap shadow-[2px_2px_0px_0px_#000]">
+                        {ticket.evidenceText || 'No description provided.'}
+                      </div>
+                    </div>
+
+                    {/* Admin Adjudication Action Toolbar */}
+                    <div className="pt-2 border-t-2 border-black flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isUnderReview && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setResolvingTicketId(ticket.id)}
+                              className="px-4 py-2 bg-[#70FFAF] hover:bg-emerald-300 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] cursor-pointer flex items-center gap-1.5"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5" />
+                              <span>Resolve &amp; Record Ruling</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => setDismissingTicketId(ticket.id)}
+                              className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] cursor-pointer flex items-center gap-1.5"
+                            >
+                              <XCircle className="w-3.5 h-3.5 text-stone-600" />
+                              <span>Dismiss Report</span>
+                            </button>
+                          </>
+                        )}
+
+                        {(isResolved || isDismissed) && (
+                          <button
+                            type="button"
+                            onClick={() => handleReopenTicket(ticket.id)}
+                            className="px-4 py-2 bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[3px_3px_0px_0px_#000] cursor-pointer flex items-center gap-1.5"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            <span>Reopen Investigation</span>
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (ticket.entityType === 'player') {
+                              onNavigate('player_profile', ticket.reportedEntity);
+                            } else {
+                              onNavigate('teams');
+                            }
+                          }}
+                          className="px-3.5 py-2 bg-white hover:bg-stone-100 text-black border-2 border-black font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer flex items-center gap-1.5"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5 text-[#7C3AED]" />
+                          <span>Inspect Profile</span>
+                        </button>
+                      </div>
+
+                      <div className="text-[11px] text-stone-500 font-bold">
+                        Authority: Administrator / Referee Adjudication Desk
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 2: PERSONNEL ROLES (RBAC)                                             */}
+      {/* ========================================================================= */}
+      {activeTab === 'roles' && (
+        <div className="space-y-8">
       {/* Operator Security Status Card */}
       <div className="bg-[#FFF9E6] border-[3.5px] border-black p-5 shadow-[6px_6px_0px_0px_#000] space-y-3">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-black/15 pb-3">
@@ -650,7 +1094,14 @@ export function AdminDashboardView({ onNavigate }: AdminDashboardViewProps) {
           </table>
         </div>
       </div>
+        </div>
+      )}
 
+      {/* ========================================================================= */}
+      {/* TAB 3: SECURITY AUDIT TRAIL                                              */}
+      {/* ========================================================================= */}
+      {activeTab === 'audit' && (
+        <div className="space-y-6">
       {/* Security Audit Trail Log Stream */}
       <div className="bg-white border-[3.5px] border-black shadow-[8px_8px_0px_0px_#000] p-6 space-y-4">
         <div className="flex items-center justify-between border-b-2 border-black pb-3">
@@ -705,6 +1156,8 @@ export function AdminDashboardView({ onNavigate }: AdminDashboardViewProps) {
           )}
         </div>
       </div>
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* MODAL: ASSIGN / GRANT ROLE                                                */}
@@ -1005,6 +1458,36 @@ export function AdminDashboardView({ onNavigate }: AdminDashboardViewProps) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* MODAL: RESOLVE TICKET */}
+      {resolvingTicketId && (
+        <PromptModal
+          isOpen={Boolean(resolvingTicketId)}
+          onClose={() => setResolvingTicketId(null)}
+          onSubmit={handleResolveTicket}
+          title="Resolve Incident Ticket"
+          subtitle={`Ticket Code: ${resolvingTicketId}`}
+          message="Enter referee audit findings and any corrective actions enforced (e.g. 'Calibrated MMR adjusted to 7,400 in anti-smurf ledger; formal warning issued'):"
+          placeholder="Referee audit findings and actions..."
+          submitLabel="CONFIRM RESOLUTION"
+          cancelLabel="CANCEL"
+        />
+      )}
+
+      {/* MODAL: DISMISS TICKET */}
+      {dismissingTicketId && (
+        <PromptModal
+          isOpen={Boolean(dismissingTicketId)}
+          onClose={() => setDismissingTicketId(null)}
+          onSubmit={handleDismissTicket}
+          title="Dismiss Incident Ticket"
+          subtitle={`Ticket Code: ${dismissingTicketId}`}
+          message="Enter justification for dismissal (e.g. 'Match replay telemetry verified; combat logs showed no anomalous APM or pause violations'):"
+          placeholder="Dismissal justification..."
+          submitLabel="DISMISS TICKET"
+          cancelLabel="CANCEL"
+        />
       )}
     </div>
   );

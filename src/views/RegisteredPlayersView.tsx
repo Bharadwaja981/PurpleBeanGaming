@@ -77,15 +77,15 @@ export function RegisteredPlayersView({ onNavigate, tournamentId }: RegisteredPl
       let matchesSearch = !q;
       if (q) {
         matchesSearch = Boolean(
-          r.ign.toLowerCase().includes(q) ||
-          r.userId.toLowerCase().includes(q) ||
-          (r.city && r.city.toLowerCase().includes(q)) ||
-          realName.toLowerCase().includes(q) ||
-          realName.toLowerCase().includes(qRaw) ||
+          String(r.ign || '').toLowerCase().includes(q) ||
+          String(r.userId || '').toLowerCase().includes(q) ||
+          (r.city && String(r.city).toLowerCase().includes(q)) ||
+          String(realName || '').toLowerCase().includes(q) ||
+          String(realName || '').toLowerCase().includes(qRaw) ||
           (pbgId ? (
-            pbgId.toLowerCase().includes(q) ||
-            (qNum && pbgId.replace(/[^0-9]/g, '').includes(qNum)) ||
-            (qNum && parseInt(pbgId.replace(/[^0-9]/g, ''), 10) === parseInt(qNum, 10))
+            String(pbgId).toLowerCase().includes(q) ||
+            (qNum && String(pbgId).replace(/[^0-9]/g, '').includes(qNum)) ||
+            (qNum && parseInt(String(pbgId).replace(/[^0-9]/g, ''), 10) === parseInt(qNum, 10))
           ) : false)
         );
       }
