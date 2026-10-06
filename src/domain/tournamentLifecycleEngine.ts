@@ -160,15 +160,30 @@ export function getUserTournamentRoleEntitlementsFromContexts(
     }
 
     // Must be ACTIVE_LIKE or ON_HOLD
-    const participant = tourney.participants?.find(p => p.userId === userId);
-    if (!participant) {
+    const participant = tourney.participants?.find(p => 
+      p.userId === userId || 
+      (p as any).pbgId === userId || 
+      (p as any).id === userId
+    );
+
+    const team = tourney.teams?.find(t => 
+      (participant?.teamId && (t.id === participant.teamId || (t as any).teamId === participant.teamId)) ||
+      t.captainUserId === userId || 
+      (t as any).captainId === userId || 
+      (participant?.pbgId && ((t as any).captainId === (participant as any).pbgId || t.captainUserId === (participant as any).pbgId)) ||
+      t.roster?.includes(userId) ||
+      (t as any).primaryRoster?.some((r: any) => r.userId === userId || r.id === userId || (r as any).pbgId === userId)
+    );
+
+    if (!participant && !team) {
       continue;
     }
 
     // Exclude disqualified, withdrawn, or inactive participants
-    const isDisqualified = (participant as any).status === 'DISQUALIFIED' || (participant as any).participantStatus === 'DISQUALIFIED';
-    const isWithdrawn = (participant as any).status === 'WITHDRAWN' || (participant as any).participantStatus === 'WITHDRAWN';
-    const isEliminated = participant.eliminated === true || (participant as any).status === 'ELIMINATED';
+    const isDisqualified = participant && ((participant as any).status === 'DISQUALIFIED' || (participant as any).participantStatus === 'DISQUALIFIED');
+    const isWithdrawn = participant && ((participant as any).status === 'WITHDRAWN' || (participant as any).participantStatus === 'WITHDRAWN');
+    const isEliminated = (participant && (participant.eliminated === true || (participant as any).status === 'ELIMINATED')) ||
+                         (team && team.status === 'ELIMINATED' && !participant);
 
     if (isDisqualified || isWithdrawn || isEliminated) {
       continue;
@@ -179,26 +194,20 @@ export function getUserTournamentRoleEntitlementsFromContexts(
     activeParticipantTournamentIds.add(tourney.id);
 
     const isCaptain = 
-      participant.tournamentRole === 'CAPTAIN' || 
-      Boolean((participant as any).isCaptain) ||
-      Boolean(tourney.teams?.some(t => (t.captainUserId === userId || (t as any).captainId === userId) && t.status !== 'ELIMINATED'));
+      participant?.tournamentRole === 'CAPTAIN' || 
+      Boolean((participant as any)?.isCaptain) ||
+      Boolean(team && (team.captainUserId === userId || (team as any).captainId === userId || (participant && ((team as any).captainId === participant.userId || (team as any).captainId === (participant as any).pbgId))));
 
     if (isCaptain) {
       activeCaptainTournamentIds.add(tourney.id);
     }
-
-    const team = tourney.teams?.find(t => 
-      t.id === participant.teamId || 
-      (t as any).teamId === participant.teamId || 
-      t.roster?.includes(userId)
-    );
 
     qualifyingTournaments.push({
       tournamentId: tourney.id,
       tournamentName: tourney.name || tourney.id,
       lifecycleCategory: category,
       isCaptain,
-      teamId: participant.teamId || team?.id || null,
+      teamId: participant?.teamId || team?.id || (team as any)?.teamId || null,
       teamName: team?.name || null,
       teamRoleId: team?.discord?.roleId || null
     });

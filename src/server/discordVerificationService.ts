@@ -13,6 +13,7 @@
 
 import { getAdminDb } from './firebaseAdmin';
 import { removeDiscordMemberRole } from './discordProvisioningService';
+import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
 
 export interface DiscordIdentityData {
   userId: string; // Discord Snowflake ID (permanent identifier)
@@ -824,6 +825,73 @@ export async function getPrivateDiscordAccount(userId: string): Promise<PrivateD
       return resolved;
     }
 
+    // Query pbgAccounts by pbgId if userId is a PBG ID or was not found by direct doc ID
+    const pbgQuery = await db.collection('pbgAccounts').where('pbgId', '==', userId).limit(1).get();
+    if (!pbgQuery.empty) {
+      const pbgDoc = pbgQuery.docs[0];
+      const pbgData = pbgDoc.data() || {};
+      const actualUid = pbgDoc.id;
+      const discUserId = pbgData.discordUserId || pbgData.discord?.userId;
+      if (discUserId) {
+        const linkDoc = await db.collection('discord_links').doc(discUserId).get();
+        const linkData = linkDoc.exists ? (linkDoc.data() as DiscordLinkDocument) : null;
+        return {
+          userId: actualUid,
+          pbgId: pbgData.pbgId || linkData?.pbgId,
+          discord: {
+            userId: discUserId,
+            username: linkData?.discordUsername || pbgData.discordUsername || pbgData.discord?.username || 'player',
+            globalName: linkData?.globalName || pbgData.discordDisplayName || pbgData.discord?.globalName || null,
+            avatarUrl: linkData?.avatarUrl || pbgData.discordAvatarUrl || pbgData.discordAvatar || null,
+            connectedAt: linkData?.linkedAt || pbgData.discordLinkedAt || Date.now(),
+            guildMember: linkData?.guildMember ?? pbgData.discord?.guildMember ?? true,
+            pbgMemberRole: linkData?.pbgMemberRole ?? pbgData.discord?.pbgMemberRole ?? true,
+            verified: true
+          },
+          discordUserId: discUserId,
+          discordUsername: linkData?.discordUsername || pbgData.discordUsername || pbgData.discord?.username || 'player',
+          discordDisplayName: linkData?.globalName || pbgData.discordDisplayName || pbgData.discord?.globalName || null,
+          discordAvatarUrl: linkData?.avatarUrl || pbgData.discordAvatarUrl || pbgData.discordAvatar || null,
+          discordLinked: true,
+          discordVerified: true,
+          discordVerificationMethod: 'discord_oauth_2',
+          discordLinkedAt: linkData?.linkedAt || Date.now(),
+          discordVerifiedAt: linkData?.linkedAt || Date.now(),
+          updatedAt: Date.now()
+        };
+      }
+    }
+
+    // Query discord_links by pbgId
+    const linkQueryByPbgId = await db.collection('discord_links').where('pbgId', '==', userId).limit(1).get();
+    if (!linkQueryByPbgId.empty) {
+      const linkData = linkQueryByPbgId.docs[0].data() as DiscordLinkDocument;
+      return {
+        userId: linkData.pbgUserId || userId,
+        pbgId: linkData.pbgId || undefined,
+        discord: {
+          userId: linkData.discordUserId,
+          username: linkData.discordUsername || 'player',
+          globalName: linkData.globalName || null,
+          avatarUrl: linkData.avatarUrl || null,
+          connectedAt: linkData.linkedAt || Date.now(),
+          guildMember: Boolean(linkData.guildMember),
+          pbgMemberRole: Boolean(linkData.pbgMemberRole),
+          verified: true
+        },
+        discordUserId: linkData.discordUserId,
+        discordUsername: linkData.discordUsername || null,
+        discordDisplayName: linkData.globalName || null,
+        discordAvatarUrl: linkData.avatarUrl || null,
+        discordLinked: true,
+        discordVerified: true,
+        discordVerificationMethod: 'discord_oauth_2',
+        discordLinkedAt: linkData.linkedAt || Date.now(),
+        discordVerifiedAt: linkData.linkedAt || Date.now(),
+        updatedAt: Date.now()
+      };
+    }
+
     if (doc.exists) {
       return doc.data() as PrivateDiscordAccount;
     }
@@ -842,6 +910,103 @@ export async function getPrivateDiscordAccount(userId: string): Promise<PrivateD
     discordVerified: false,
     updatedAt: Date.now()
   };
+}
+
+export interface AuthoritativeUserIdentity {
+  uid: string;
+  pbgId: string;
+  email?: string;
+  displayName?: string;
+  discordUserId?: string;
+  discordLinked: boolean;
+  pbgMemberRoleActive: boolean;
+}
+
+export async function resolveAuthoritativeUserIdentity(input: string): Promise<AuthoritativeUserIdentity | null> {
+  const clean = input.trim();
+  if (!clean) return null;
+
+  // 1. Check in-memory account registry
+  const memAcc = pbgAccountRegistry.getAccountByUid(clean) || pbgAccountRegistry.getAccountByPbgId(clean);
+  if (memAcc) {
+    return {
+      uid: memAcc.googleUid,
+      pbgId: memAcc.pbgId,
+      email: memAcc.email,
+      displayName: memAcc.displayName,
+      discordUserId: memAcc.discordUserId || undefined,
+      discordLinked: Boolean(memAcc.discordLinked && memAcc.discordUserId),
+      pbgMemberRoleActive: Boolean(memAcc.discordMemberVerified ?? true)
+    };
+  }
+
+  const db = getAdminDb();
+  if (!db) return null;
+
+  try {
+    // 2. Direct document lookup by UID in pbgAccounts
+    const directDoc = await db.collection('pbgAccounts').doc(clean).get();
+    if (directDoc.exists) {
+      const data = directDoc.data() || {};
+      return {
+        uid: directDoc.id,
+        pbgId: data.pbgId || clean,
+        email: data.email,
+        displayName: data.displayName,
+        discordUserId: data.discordUserId || data.discord?.userId,
+        discordLinked: Boolean((data.discordLinked || data.discord?.verified) && (data.discordUserId || data.discord?.userId)),
+        pbgMemberRoleActive: Boolean(data.discord?.pbgMemberRole ?? true)
+      };
+    }
+
+    // 3. Lookup by pbgId in pbgAccounts
+    const pbgSnap = await db.collection('pbgAccounts').where('pbgId', '==', clean).limit(1).get();
+    if (!pbgSnap.empty) {
+      const doc = pbgSnap.docs[0];
+      const data = doc.data() || {};
+      return {
+        uid: doc.id,
+        pbgId: data.pbgId || clean,
+        email: data.email,
+        displayName: data.displayName,
+        discordUserId: data.discordUserId || data.discord?.userId,
+        discordLinked: Boolean((data.discordLinked || data.discord?.verified) && (data.discordUserId || data.discord?.userId)),
+        pbgMemberRoleActive: Boolean(data.discord?.pbgMemberRole ?? true)
+      };
+    }
+
+    // 4. Lookup in discord_links by pbgId
+    const linkSnap = await db.collection('discord_links').where('pbgId', '==', clean).limit(1).get();
+    if (!linkSnap.empty) {
+      const data = linkSnap.docs[0].data() as DiscordLinkDocument;
+      return {
+        uid: data.pbgUserId || clean,
+        pbgId: data.pbgId || clean,
+        displayName: data.globalName || data.discordUsername || clean,
+        discordUserId: data.discordUserId,
+        discordLinked: true,
+        pbgMemberRoleActive: Boolean(data.pbgMemberRole)
+      };
+    }
+
+    // 5. Lookup in discord_links by pbgUserId
+    const linkSnap2 = await db.collection('discord_links').where('pbgUserId', '==', clean).limit(1).get();
+    if (!linkSnap2.empty) {
+      const data = linkSnap2.docs[0].data() as DiscordLinkDocument;
+      return {
+        uid: data.pbgUserId || clean,
+        pbgId: data.pbgId || clean,
+        displayName: data.globalName || data.discordUsername || clean,
+        discordUserId: data.discordUserId,
+        discordLinked: true,
+        pbgMemberRoleActive: Boolean(data.pbgMemberRole)
+      };
+    }
+  } catch (e) {
+    console.warn('[resolveAuthoritativeUserIdentity] Firestore lookup error:', e);
+  }
+
+  return null;
 }
 
 /**

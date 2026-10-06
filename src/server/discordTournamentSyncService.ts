@@ -33,7 +33,7 @@ import {
   type TournamentDiscordCleanupReport,
   type UserTournamentRoleEntitlements
 } from '../domain/tournamentLifecycleEngine';
-import { getPrivateDiscordAccount } from './discordVerificationService';
+import { getPrivateDiscordAccount, resolveAuthoritativeUserIdentity, type AuthoritativeUserIdentity } from './discordVerificationService';
 import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
 
 // In-memory fallback caches for local development and test environments
@@ -97,6 +97,77 @@ export async function getAllTournamentLifecycleContexts(): Promise<TournamentLif
               if (tSnap && !tSnap.empty) {
                 teams = tSnap.docs.map(d => d.data() as TournamentTeamRecord);
               }
+
+              // Fallback 1: check registrations if participants subcollection was empty
+              if (participants.length === 0) {
+                const rSnap = await db.collection(`tournaments/${doc.id}/registrations`).get().catch(() => null);
+                if (rSnap && !rSnap.empty) {
+                  rSnap.docs.forEach(rd => {
+                    const rData = rd.data();
+                    const isApproved = rData.status === 'verified' || rData.status === 'registered' || rData.status === 'APPROVED';
+                    if (isApproved && rData.status !== 'DISQUALIFIED' && rData.status !== 'WITHDRAWN') {
+                      participants.push({
+                        userId: rd.id,
+                        tournamentId: doc.id,
+                        registrationId: rData.id || rd.id,
+                        pbgId: rData.pbgId || rd.id,
+                        displayName: rData.ign || rData.playerName || rData.displayName || rd.id,
+                        tournamentRole: (rData.isCaptainApproved || rData.applyingAsCaptain) ? 'CAPTAIN' : 'PLAYER',
+                        captainSlotId: rData.teamId ? `slot-${rData.teamId}` : null,
+                        teamId: rData.teamId || null,
+                        participantStatus: 'ACTIVE',
+                        auctionStatus: rData.auctionStatus || 'AVAILABLE',
+                        eliminated: false,
+                        joinedAt: rData.registeredAt || new Date().toISOString(),
+                        updatedAt: rData.updatedAt || new Date().toISOString()
+                      });
+                    }
+                  });
+                }
+              }
+
+              // Fallback 2: ensure captains and team members are recognized in participants
+              teams.forEach(t => {
+                const capId = t.captainUserId || (t as any).captainId;
+                if (capId && !participants.some(p => p.userId === capId || p.pbgId === capId)) {
+                  participants.push({
+                    userId: capId,
+                    tournamentId: doc.id,
+                    registrationId: `cap-${capId}`,
+                    pbgId: capId,
+                    displayName: (t as any).captainIgn || (t as any).captainName || capId,
+                    tournamentRole: 'CAPTAIN',
+                    captainSlotId: `slot-${t.id}`,
+                    teamId: t.id,
+                    participantStatus: 'ACTIVE',
+                    auctionStatus: 'SOLD',
+                    eliminated: t.status === 'ELIMINATED',
+                    joinedAt: t.createdAt || new Date().toISOString(),
+                    updatedAt: t.updatedAt || new Date().toISOString()
+                  });
+                }
+                const roster = t.roster || (t as any).primaryRoster || [];
+                roster.forEach((mem: any) => {
+                  const mId = typeof mem === 'string' ? mem : (mem.userId || mem.id);
+                  if (mId && !participants.some(p => p.userId === mId || p.pbgId === mId)) {
+                    participants.push({
+                      userId: mId,
+                      tournamentId: doc.id,
+                      registrationId: `roster-${mId}`,
+                      pbgId: (mem as any).pbgId || mId,
+                      displayName: (mem as any).username || (mem as any).displayName || mId,
+                      tournamentRole: (mem as any).isCaptain ? 'CAPTAIN' : 'PLAYER',
+                      captainSlotId: (mem as any).isCaptain ? `slot-${t.id}` : null,
+                      teamId: t.id,
+                      participantStatus: 'ACTIVE',
+                      auctionStatus: 'SOLD',
+                      eliminated: t.status === 'ELIMINATED',
+                      joinedAt: t.createdAt || new Date().toISOString(),
+                      updatedAt: t.updatedAt || new Date().toISOString()
+                    });
+                  }
+                });
+              });
             } catch {}
           }
 
@@ -144,8 +215,15 @@ export async function getAllTournamentLifecycleContexts(): Promise<TournamentLif
  * Calculates user's authoritative tournament role entitlements across ALL tournaments.
  */
 export async function getUserTournamentRoleEntitlements(userId: string): Promise<UserTournamentRoleEntitlements> {
+  const identity = await resolveAuthoritativeUserIdentity(userId);
+  const targetId = identity?.uid || userId;
   const contexts = await getAllTournamentLifecycleContexts();
-  return getUserTournamentRoleEntitlementsFromContexts(userId, contexts);
+  const res = getUserTournamentRoleEntitlementsFromContexts(targetId, contexts);
+  if (!res.shouldHavePbgPlayer && identity?.pbgId && identity.pbgId !== targetId) {
+    const resPbg = getUserTournamentRoleEntitlementsFromContexts(identity.pbgId, contexts);
+    if (resPbg.shouldHavePbgPlayer) return resPbg;
+  }
+  return res;
 }
 
 
