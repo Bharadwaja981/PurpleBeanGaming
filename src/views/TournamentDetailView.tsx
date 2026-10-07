@@ -14,6 +14,7 @@ import {
   Flame,
   ArrowRight,
   TrendingUp,
+  BarChart3,
   Gavel,
   Gamepad2,
   Sparkles,
@@ -26,13 +27,15 @@ import {
   RefreshCw,
   Check,
   FlaskConical,
-  Eye
+  Eye,
+  Layers
 } from 'lucide-react';
 import { AdminTournamentPlayerManagerModal } from '../components/AdminTournamentPlayerManagerModal';
 import { DoubleEliminationBracket } from '../components/DoubleEliminationBracket';
 import { DraftReplayViewer } from '../components/DraftReplayViewer';
 import { PremadeTeamManagement } from '../components/PremadeTeamManagement';
 import { CompetitionStructureManager } from '../components/CompetitionStructureManager';
+import { GroupStageView } from '../components/GroupStageView';
 import { AuctionDraft } from '../components/AuctionDraft';
 import { AuctionReport } from '../components/AuctionReport';
 import { dotaCompetitionEngine } from '../domain/dotaCompetitionEngine';
@@ -58,9 +61,7 @@ export function TournamentDetailView({
   onNavigate,
   onOpenRegister
 }: TournamentDetailViewProps) {
-  const [activeTab, setActiveTab] = useState<
-    'overview' | 'matches' | 'bracket' | 'standings' | 'teams' | 'players' | 'stats' | 'rules' | 'announcements' | 'auction' | 'auction_replay' | 'structure' | 'auction_report'
-  >('overview');
+  const [activeTab, setActiveTab] = useState<string>('overview');
 
   const [allTournaments, setAllTournaments] = useState(() => tournamentService.getTournaments('All Games', 'All', true));
   const [allTeams, setAllTeams] = useState(() => tournamentService.getTeams());
@@ -206,18 +207,27 @@ export function TournamentDetailView({
 
   const isPremade = tournament?.id === 'india-dota-open-2026';
 
-  const tabs: Array<{ id: typeof activeTab; label: string }> = [
+  const compStructure = tournament?.id ? dotaCompetitionEngine.getStructure(tournament.id) : undefined;
+  const stageTabs = (compStructure?.stages || []).map(stg => ({
+    id: `stage_${stg.id}`,
+    label: `${stg.name}${stg.status === 'LIVE' ? ' · LIVE' : stg.status === 'FINISHED' ? ' · FINISHED' : ''}`
+  }));
+
+  const tabs: Array<{ id: string; label: string }> = [
     { id: 'overview', label: 'Overview' },
-    { id: 'matches', label: 'Matches' },
-    { id: 'bracket', label: 'Bracket' },
-    { id: 'standings', label: 'Standings' },
+    ...stageTabs,
+    ...(stageTabs.length === 0 ? [
+      { id: 'matches', label: 'Matches' },
+      { id: 'bracket', label: 'Bracket' },
+      { id: 'standings', label: 'Standings' }
+    ] : []),
     { id: 'teams', label: isPremade ? 'Squads & Rosters' : 'Teams' },
     { id: 'players', label: 'Players' },
     ...(isAuctionSupported || Boolean((tournament as any)?.auction?.enabled || (tournament as any)?.teamFormation?.mode === 'AUCTION') ? [
-      { id: 'auction' as const, label: auctionLifecycle.label },
-      { id: 'auction_report' as const, label: 'Auction Report' }
+      { id: 'auction', label: auctionLifecycle.label },
+      { id: 'auction_report', label: 'Auction Report' }
     ] : []),
-    ...(isOrganiser ? [{ id: 'structure' as const, label: 'Structure & Seeding' }] : []),
+    { id: 'structure', label: 'Structure & Seeding' },
     { id: 'stats', label: 'Stats' },
     { id: 'rules', label: 'Rules' },
     { id: 'announcements', label: 'Announcements' }
@@ -692,6 +702,13 @@ export function TournamentDetailView({
                 >
                   <BarChart3 className="w-4 h-4 text-[#7C3AED]" />
                   <span>View Auction Report</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('structure')}
+                  className="bg-[#FFE600] hover:bg-yellow-400 text-black px-4 py-2.5 text-xs font-black uppercase border-2 border-black shadow-[3px_3px_0px_0px_#000] flex items-center gap-2 cursor-pointer transition-all active:translate-x-0.5 active:translate-y-0.5"
+                >
+                  <Layers className="w-4 h-4 text-black" />
+                  <span>Configure Stage Structure & Seeding →</span>
                 </button>
               </div>
             </div>
@@ -1663,6 +1680,83 @@ export function TournamentDetailView({
       {activeTab === 'structure' && (
         <CompetitionStructureManager tournamentId={tournament.id} />
       )}
+
+      {/* DYNAMIC TOURNAMENT STAGE TABS */}
+      {activeTab.startsWith('stage_') && (() => {
+        const stageId = activeTab.replace('stage_', '');
+        const currentStage = compStructure?.stages.find(s => s.id === stageId);
+        if (!currentStage) return null;
+
+        return (
+          <div className="space-y-6 font-mono">
+            {/* Stage Hero Banner */}
+            <div className="bg-[#19162D] text-white border-[3.5px] border-black p-6 shadow-[6px_6px_0px_0px_#000] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <span className="text-[10px] font-black uppercase text-[#FFE600] tracking-wider block">
+                  TOURNAMENT STAGE {currentStage.sequence} OF {compStructure?.stages.length}
+                </span>
+                <h2 className="text-2xl font-black uppercase text-white font-sans">
+                  {currentStage.name}
+                </h2>
+                <p className="text-xs text-stone-300 mt-1">
+                  Format: {currentStage.type.replace('_', ' ')} · {currentStage.defaultSeriesFormat || 'BO3'} Series
+                </p>
+              </div>
+
+              <span className={`px-3 py-1 border-2 border-black text-xs font-black uppercase ${
+                currentStage.status === 'LIVE' ? 'bg-[#FF5757] text-white animate-pulse' :
+                currentStage.status === 'FINISHED' ? 'bg-[#70FFAF] text-black' :
+                'bg-[#FFE600] text-black'
+              }`}>
+                {currentStage.status}
+              </span>
+            </div>
+
+            {/* Stage Body */}
+            {currentStage.type === 'GROUP_STAGE' || currentStage.type === 'ROUND_ROBIN' ? (
+              <GroupStageView 
+                stage={currentStage} 
+                tournamentId={tournament.id} 
+                onSelectMatch={(mId) => onNavigate('match_detail', mId)} 
+              />
+            ) : (currentStage.type === 'DOUBLE_ELIMINATION' || currentStage.type === 'SINGLE_ELIMINATION') ? (
+              <DoubleEliminationBracket 
+                tournamentId={tournament.id} 
+                stageConfig={currentStage} 
+                onSelectMatch={(mId) => onNavigate('match_detail', mId)} 
+              />
+            ) : (
+              <div className="bg-white border-[3.5px] border-black p-6 shadow-[6px_6px_0px_0px_#000] text-center space-y-2">
+                <p className="text-xs text-stone-600">
+                  Matches for this stage will activate once previous qualification rounds conclude.
+                </p>
+              </div>
+            )}
+
+            {/* Stage Matches List if any generated */}
+            {currentStage.matches && currentStage.matches.length > 0 && (
+              <div className="bg-white border-[3.5px] border-black p-6 shadow-[6px_6px_0px_0px_#000] space-y-4">
+                <h3 className="font-sans font-black text-lg uppercase text-black border-b-2 border-black pb-2">
+                  Scheduled Matchups ({currentStage.matches.length})
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                  {currentStage.matches.map(m => (
+                    <div key={m.id} className="border-2 border-black p-3 bg-stone-50 flex items-center justify-between">
+                      <div>
+                        <div className="text-[10px] text-stone-500 uppercase font-bold">{m.round}</div>
+                        <div className="font-black text-black mt-0.5">{m.teamA?.name || 'TBD'} vs {m.teamB?.name || 'TBD'}</div>
+                      </div>
+                      <span className="bg-[#FFE600] text-black text-[10px] font-bold px-2 py-0.5 border border-black uppercase">
+                        {m.seriesFormat}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* 10. ANNOUNCEMENTS TAB */}
       {activeTab === 'announcements' && (

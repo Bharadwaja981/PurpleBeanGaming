@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Trophy, Search, Filter, Calendar, Users, ArrowRight, Radio, MapPin, Gamepad2, Plus, Shield, Play, Pause, StopCircle, Trash2, Gavel, FlaskConical } from 'lucide-react';
+import { Trophy, Search, Filter, Calendar, Users, ArrowRight, Radio, MapPin, Gamepad2, Plus, Shield, Play, Pause, StopCircle, Trash2, Gavel, FlaskConical, Layers } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
 import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
 import { Tournament, ViewType } from '../types/tournament';
@@ -405,6 +405,20 @@ export function TournamentsView({ onNavigate, onOpenRegister, onOpenCreateTourna
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5 flex-wrap">
+                    {/* Stage Builder direct quick action */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onNavigate('tournament_detail', tourney.id);
+                      }}
+                      className="px-2 py-1 bg-[#FFE600] hover:bg-yellow-400 text-black border border-black text-[10px] font-black uppercase shadow-[1px_1px_0px_0px_#000] flex items-center gap-1 cursor-pointer"
+                      title="Open Multi-Stage Competition Builder & Bracket Seeding"
+                    >
+                      <Layers className="w-3 h-3 text-black" />
+                      <span>Stage Builder</span>
+                    </button>
+
                     {/* Advance */}
                     {(tourney.status === 'Registration Open' || tourney.lifecycle === 'REGISTRATION_OPEN') && (
                       <button
