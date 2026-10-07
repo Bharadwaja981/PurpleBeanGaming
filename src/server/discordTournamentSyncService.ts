@@ -461,6 +461,11 @@ export async function syncDiscordTournamentRoles(params: {
 }): Promise<DiscordSyncResult> {
   const { userId, tournamentId, overrideContext, fetchFn = fetch } = params;
 
+  // Resolve Authoritative Identity to normalize Firebase Auth UID vs PBG ID (e.g. PBG-000201)
+  const authIdentity = await resolveAuthoritativeUserIdentity(userId);
+  const resolvedUid = authIdentity?.uid || userId;
+  const resolvedPbgId = authIdentity?.pbgId || userId;
+
   // 1. Resolve Tournament State & Discord Configuration
   let tournamentData: any = overrideContext?.tournament || null;
   let participantData: TournamentParticipantRecord | null = overrideContext?.participant || null;
@@ -470,7 +475,9 @@ export async function syncDiscordTournamentRoles(params: {
   // Check in-memory maps or Firestore for participant and tournament
   if (!participantData) {
     const tourneyParticipants = inMemoryParticipants.get(tournamentId);
-    participantData = tourneyParticipants?.get(userId) || null;
+    participantData = tourneyParticipants?.get(resolvedUid) || 
+      tourneyParticipants?.get(resolvedPbgId) || 
+      tourneyParticipants?.get(userId) || null;
   }
   if (!discordConfig) {
     discordConfig = inMemoryTournamentDiscordConfigs.get(tournamentId);
@@ -488,21 +495,38 @@ export async function syncDiscordTournamentRoles(params: {
       }
 
       if (!participantData) {
-        const pSnap = await db.collection(`tournaments/${tournamentId}/participants`).doc(userId).get();
+        let pSnap = await db.collection(`tournaments/${tournamentId}/participants`).doc(resolvedUid).get();
+        if (!pSnap.exists && resolvedPbgId !== resolvedUid) {
+          pSnap = await db.collection(`tournaments/${tournamentId}/participants`).doc(resolvedPbgId).get();
+        }
+        if (!pSnap.exists && userId !== resolvedUid && userId !== resolvedPbgId) {
+          pSnap = await db.collection(`tournaments/${tournamentId}/participants`).doc(userId).get();
+        }
+        if (!pSnap.exists) {
+          const qSnap = await db.collection(`tournaments/${tournamentId}/participants`).where('pbgId', '==', resolvedPbgId).limit(1).get();
+          if (!qSnap.empty) {
+            pSnap = qSnap.docs[0];
+          }
+        }
+
         if (pSnap.exists) {
           participantData = pSnap.data() as TournamentParticipantRecord;
         } else {
           // Fallback 1: Check tournament document captains / teams
-          const cap = tournamentData?.captains?.find((c: any) => c.userId === userId);
-          const tMember = tournamentData?.teams?.flatMap((t: any) => t.primaryRoster || []).find((p: any) => p.userId === userId || p.id === userId);
+          const cap = tournamentData?.captains?.find((c: any) => 
+            c.userId === resolvedUid || c.userId === userId || c.pbgId === resolvedPbgId || (c.userId && c.userId.toLowerCase() === resolvedPbgId.toLowerCase())
+          );
+          const tMember = tournamentData?.teams?.flatMap((t: any) => t.primaryRoster || []).find((p: any) => 
+            p.userId === resolvedUid || p.userId === userId || p.pbgId === resolvedPbgId || p.id === resolvedUid || p.id === resolvedPbgId
+          );
           
           if (cap) {
             participantData = {
-              userId,
+              userId: resolvedUid,
               tournamentId,
-              registrationId: userId,
-              pbgId: cap.pbgId || userId,
-              displayName: cap.displayName || cap.name || userId,
+              registrationId: resolvedUid,
+              pbgId: cap.pbgId || resolvedPbgId,
+              displayName: cap.displayName || cap.name || resolvedUid,
               tournamentRole: 'CAPTAIN',
               captainSlotId: cap.slotId || `slot-${cap.teamId}`,
               teamId: cap.teamId || null,
@@ -515,11 +539,11 @@ export async function syncDiscordTournamentRoles(params: {
             };
           } else if (tMember) {
             participantData = {
-              userId,
+              userId: resolvedUid,
               tournamentId,
-              registrationId: userId,
-              pbgId: tMember.pbgId || userId,
-              displayName: tMember.name || tMember.displayName || userId,
+              registrationId: resolvedUid,
+              pbgId: tMember.pbgId || resolvedPbgId,
+              displayName: tMember.name || tMember.displayName || resolvedUid,
               tournamentRole: tMember.isCaptain ? 'CAPTAIN' : 'PLAYER',
               captainSlotId: tMember.isCaptain ? `slot-${tMember.teamId}` : null,
               teamId: tMember.teamId || null,

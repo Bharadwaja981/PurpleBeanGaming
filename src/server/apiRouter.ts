@@ -16,7 +16,8 @@ import {
   reserveDiscordIdentityClaim,
   rollbackDiscordIdentityReservation,
   finalizeDiscordAccountAuthoritative,
-  updateDiscordAuthoritativeMembership
+  updateDiscordAuthoritativeMembership,
+  resolveAuthoritativeUserIdentity
 } from './discordVerificationService';
 import {
   generateSignedDiscordOAuthState,
@@ -2114,35 +2115,73 @@ apiRouter.get('/tournaments/:tournamentId/auction-readiness', async (req: Reques
 });
 
 /**
- * Discord Tournament Role Sync Trigger
+ * Discord Tournament Role Sync Trigger (Manual & Automated)
  */
-apiRouter.post('/tournaments/:tournamentId/discord/sync', async (req: Request, res: Response) => {
+apiRouter.post([
+  '/tournaments/:tournamentId/discord/sync',
+  '/tournaments/:tournamentId/discord/roles/sync',
+  '/discord/sync',
+  '/discord/sync-tournament-roles',
+  '/users/:userId/discord/sync'
+], async (req: Request, res: Response) => {
   try {
     const authHeader = req.headers.authorization;
     const decoded = await verifyFirebaseBearerToken(authHeader);
-    const tournamentId = req.params.tournamentId;
-    const { userId = decoded.uid } = req.body || {};
+    const tournamentId = req.params.tournamentId || req.body?.tournamentId || 'purple-bean-test-cup';
+    const targetUserId = req.body?.userId || req.params?.userId || decoded.uid;
+    const targetPbgId = req.body?.pbgId;
 
-    // Only self or organizer can trigger
-    if (userId !== decoded.uid) {
+    // Authoritative identity resolution
+    const authoritative = await resolveAuthoritativeUserIdentity(targetUserId) || 
+      (targetPbgId ? await resolveAuthoritativeUserIdentity(targetPbgId) : null);
+    
+    const resolvedUid = authoritative?.uid || targetUserId;
+    const resolvedPbgId = authoritative?.pbgId || targetPbgId;
+
+    // Self check: Allow user to sync their own account (whether by Firebase UID, PBG ID, or email)
+    const isSelf = decoded.uid === resolvedUid || 
+      decoded.uid === targetUserId || 
+      (authoritative?.pbgId && decoded.uid === authoritative.pbgId) ||
+      (decoded.email && authoritative?.email && decoded.email.toLowerCase() === authoritative.email.toLowerCase());
+
+    if (!isSelf) {
       checkOrganizerAuthorization(decoded);
     }
 
     const result = await syncDiscordTournamentRoles({
-      userId,
+      userId: resolvedUid,
       tournamentId
     });
 
+    if (!result.success) {
+      const statusCode = result.error === 'DISCORD_LINK_NOT_FOUND' || result.error === 'PLAYER_NOT_FOUND' ? 404 : 400;
+      return res.status(statusCode).json({
+        ok: false,
+        success: false,
+        error: result.error || 'SYNC_FAILED',
+        stage: (result as any).stage || 'CALCULATE_ENTITLEMENTS',
+        message: (result as any).message || result.error || 'Failed to synchronize tournament Discord roles',
+        details: result
+      });
+    }
+
     return res.json({
-      ok: result.success,
-      success: result.success,
+      ok: true,
+      success: true,
+      stage: 'VERIFY_MEMBER_ROLES',
       result
     });
   } catch (err: any) {
-    return res.status(500).json({
+    const isAuthErr = err.code === 'UNAUTHENTICATED' || err.message === 'SIGN_IN_REQUIRED';
+    const isForbidden = err.code === 'ORGANIZER_FORBIDDEN' || err.message?.includes('Unauthorized');
+    const statusCode = isAuthErr ? 401 : (isForbidden ? 403 : 500);
+
+    return res.status(statusCode).json({
       ok: false,
       success: false,
-      error: err.message
+      error: err.code || 'INTERNAL_ERROR',
+      stage: 'LOAD_USER',
+      message: err.message || 'An unexpected error occurred during role sync'
     });
   }
 });

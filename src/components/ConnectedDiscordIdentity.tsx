@@ -73,20 +73,78 @@ export function ConnectedDiscordIdentity({
       try {
         token = await getIdToken();
       } catch {}
-      const res = await fetch(`/api/tournaments/purple-bean-auction-test/discord/sync`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        },
-        body: JSON.stringify({ userId: targetUserId || account.googleUid })
-      });
-      const data = await res.json().catch(() => ({}));
-      if (data.ok || data.success) {
+
+      // Authoritative effective user ID & PBG ID
+      const effectiveUserId = targetUserId || account.googleUid || auth.currentUser?.uid;
+      const effectivePbgId = account.pbgId;
+
+      // Determine active target tournament for this player
+      const activeTourneyId = 'purple-bean-test-cup';
+
+      // Candidate API endpoints in order
+      const endpoints = [
+        `/api/tournaments/${activeTourneyId}/discord/sync`,
+        `/api/discord/sync`,
+        `/api/discord/sync-tournament-roles`,
+        `/api/tournaments/purple-bean-auction-test/discord/sync`
+      ];
+
+      let lastResponse: any = null;
+      let lastData: any = null;
+      let syncSucceeded = false;
+
+      for (const endpoint of endpoints) {
+        try {
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+            },
+            body: JSON.stringify({ 
+              userId: effectiveUserId,
+              pbgId: effectivePbgId,
+              tournamentId: activeTourneyId
+            })
+          });
+
+          lastResponse = res;
+          if (res.status === 404) {
+            // Try next candidate endpoint
+            continue;
+          }
+
+          const data = await res.json().catch(() => ({}));
+          lastData = data;
+
+          if (data.ok || data.success) {
+            syncSucceeded = true;
+            break;
+          } else {
+            // Endpoint exists and returned structured error
+            break;
+          }
+        } catch (fetchErr) {
+          console.warn(`[DiscordSync] Error trying ${endpoint}:`, fetchErr);
+        }
+      }
+
+      if (syncSucceeded) {
         setSuccessNotice('✓ Tournament Discord roles synchronized successfully!');
         await loadStatus();
       } else {
-        setErrorMessage(data.error || 'Failed to sync Discord roles.');
+        // Construct unmasked diagnostic error message
+        if (lastResponse && lastResponse.status === 404) {
+          setErrorMessage('Discord sync failed: [ROUTE_NOT_FOUND] Backend sync route returned HTTP 404.');
+        } else if (lastData) {
+          const errCode = lastData.error || 'SYNC_FAILED';
+          const stage = lastData.stage ? `[${lastData.stage}] ` : '';
+          const msg = lastData.message || (typeof lastData.error === 'string' ? lastData.error : 'Unknown synchronization error');
+          setErrorMessage(`Discord sync failed: ${stage}${errCode} — ${msg}`);
+          console.error('[DiscordSync] Structured backend error:', lastData);
+        } else {
+          setErrorMessage('Failed to connect to Discord sync service.');
+        }
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'Error syncing Discord roles.');

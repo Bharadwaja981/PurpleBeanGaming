@@ -323,6 +323,26 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
     return engine.subscribe(handleSync);
   }, [selectedTournamentId]);
 
+  // Environment check: Perspective switcher is development/testing functionality ONLY
+  const isDevMode = Boolean(import.meta.env?.DEV);
+
+  // In production, perspective switching is completely disabled and excluded
+  const effectiveSimulatedCaptainTeamId = isDevMode ? simulatedCaptainTeamId : '';
+
+  // Role authority checks
+  const canOperateThisAuction = selectedTournamentId 
+    ? tournamentConfigRegistry.canUserManageTournamentAuction(currentUser, selectedTournamentId) 
+    : false;
+  const isOrganiserDeskActive = Boolean(isOrganiserUser && canOperateThisAuction && !effectiveSimulatedCaptainTeamId);
+
+  // Inform engine whether this client acts as authoritative organiser host (MUST be before any early returns)
+  useEffect(() => {
+    if (selectedTournamentId && isAuctionSupported) {
+      const engine = getAuctionEngine(selectedTournamentId);
+      engine.setOrganiserHost(Boolean(isOrganiserDeskActive));
+    }
+  }, [isOrganiserDeskActive, selectedTournamentId, isAuctionSupported]);
+
   // Direct URL Security Check 0: Tournament ID not provided (global access attempt)
   if (!selectedTournamentId) {
     const auctionTourneys = tournaments.filter(t => tournamentConfigRegistry.isAuctionSupported(t.id));
@@ -403,12 +423,6 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
     );
   }
 
-  // Environment check: Perspective switcher is development/testing functionality ONLY
-  const isDevMode = Boolean(import.meta.env?.DEV);
-
-  // In production, perspective switching is completely disabled and excluded
-  const effectiveSimulatedCaptainTeamId = isDevMode ? simulatedCaptainTeamId : '';
-
   // Determine active captain team based on authenticated identity, email, or appointed registration in THIS tournament
   const matchedUserCaptainTeam = teams.find(t => 
     t.captainId === currentUser.id ||
@@ -434,15 +448,7 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
     return undefined;
   })();
 
-  // Role authority checks
-  const canOperateThisAuction = tournamentConfigRegistry.canUserManageTournamentAuction(currentUser, selectedTournamentId);
   const isCaptainViewActive = Boolean(effectiveCaptainTeam && (!isOrganiserUser || effectiveSimulatedCaptainTeamId));
-  const isOrganiserDeskActive = isOrganiserUser && canOperateThisAuction && !effectiveSimulatedCaptainTeamId;
-
-  // Inform engine whether this client acts as authoritative organiser host
-  useEffect(() => {
-    activeEngine.setOrganiserHost(Boolean(isOrganiserDeskActive));
-  }, [isOrganiserDeskActive, activeEngine]);
 
   // Active nominee & configuration from tournament engine
   const currentNominee = auctionState.nominee;

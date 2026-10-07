@@ -71,27 +71,27 @@
 /* Global Neo-Brutalist Dark Theme Transformations */
 .dark .bg-white:not([data-keep-light="true"]) {
   background-color: #171527 !important;
-  color: #F4F4F5;
+  color: #F8FAFC;
 }
 
 .dark .bg-stone-50:not([data-keep-light="true"]) {
   background-color: #121020 !important;
-  color: #E4E4E7;
+  color: #F8FAFC;
 }
 
 .dark .bg-stone-100:not([data-keep-light="true"]) {
   background-color: #201C36 !important;
-  color: #E4E4E7;
+  color: #F8FAFC;
 }
 
 .dark .bg-stone-200:not([data-keep-light="true"]) {
   background-color: #2B2648 !important;
-  color: #E4E4E7;
+  color: #F8FAFC;
 }
 
 .dark .bg-stone-300:not([data-keep-light="true"]) {
   background-color: #363056 !important;
-  color: #E4E4E7;
+  color: #F8FAFC;
 }
 
 /* Hover States for Dark Mode — Prevents Light Flash on Hover */
@@ -119,13 +119,10 @@
 .dark .hover\:bg-\[\#FFFBEB\]:hover,
 .dark .hover\:bg-\[\#FFFDE8\]:hover,
 .dark .hover\:bg-\[\#FFFDEB\]:hover,
-.dark .hover\:bg-\[\#FFF4E5\]:hover {
-  background-color: #282244 !important;
-}
-
+.dark .hover\:bg-\[\#FFF4E5\]:hover,
 .dark .hover\:bg-\[\#F3E8FF\]:hover,
 .dark .hover\:bg-purple-50:hover {
-  background-color: #2C234C !important;
+  background-color: #282246 !important;
 }
 
 .dark .hover\:bg-emerald-50:hover {
@@ -145,17 +142,18 @@
   background-color: rgba(59, 130, 246, 0.2) !important;
 }
 
-/* Pale Tint Surfaces -> Deep Violet-Slate in Dark Mode */
+/* Pale Tint Surfaces -> Deep Neo-Brutalist Violet-Slate in Dark Mode */
 .dark .bg-\[\#FFFBEB\],
 .dark .bg-\[\#FFF9E6\],
 .dark .bg-\[\#FFFDE8\],
 .dark .bg-\[\#FFFDEB\],
-.dark .bg-\[\#FFF4E5\] {
-  background-color: #19162B !important;
-}
-
+.dark .bg-\[\#FFF4E5\],
+.dark .bg-\[\#FFFDF5\],
+.dark .bg-\[\#F1F5F9\],
+.dark .bg-\[\#F0FDF4\],
 .dark .bg-\[\#E2E8F0\] {
-  background-color: #201C38 !important;
+  background-color: #19162D !important;
+  color: #F8FAFC;
 }
 
 /* Colored Tint Containers -> Subtle Translucent Glows in Dark Mode */
@@ -172,13 +170,13 @@
 .dark .bg-amber-50,
 .dark .bg-yellow-50 {
   background-color: rgba(245, 158, 11, 0.12) !important;
-  color: #FCD34D;
+  color: #FDE047;
 }
 
 .dark .bg-amber-100,
 .dark .bg-yellow-100 {
   background-color: rgba(245, 158, 11, 0.18) !important;
-  color: #FCD34D !important;
+  color: #FDE047 !important;
 }
 
 .dark .bg-red-50 {
@@ -220,101 +218,248 @@
 
 /* Tables & Modals Dark Mode Support */
 .dark table th {
-  background-color: #1D1934 !important;
-  color: #E4E4E7 !important;
+  background-color: #1E1A36 !important;
+  color: #F8FAFC !important;
 }
 
 .dark table td {
   border-color: #2E294B !important;
+  color: #E2E8F0;
 }
 
 .dark table tr.hover\:bg-stone-50:hover,
 .dark table tr:hover {
-  background-color: #221D3D !important;
+  background-color: #241E42 !important;
 }
 
-/* Text Adaptations for Dark Mode (Preserves Vibrant Neo-Brutalist Accent Badges) */
-.dark .text-black:not(.bg-\[\#FFE600\]):not(.bg-\[\#70FFAF\]):not(.bg-\[\#5CE1E6\]):not(.bg-\[\#FFDE59\]):not(.bg-\[\#FF90E8\]):not(.bg-yellow-400):not(.bg-emerald-400):not([data-keep-color="true"]) {
-  color: #F4F4F5;
+/* ========================================================================== */
+/* DARK MODE TYPOGRAPHY SYSTEM: CRYSTAL-CLEAR CONTRAST ACROSS ALL PAGES       */
+/* ========================================================================== */
+
+/* 1. Primary Text (Headings, Big Numbers, Primary Labels) 
+   Applies only when element does NOT have an explicit dark:text- class,
+   and is not on a vibrant yellow/neon element */
+.dark .text-black:not([class*="dark:text-"]):not(.bg-\[\#FFE600\]):not(.bg-\[\#70FFAF\]):not(.bg-\[\#5CE1E6\]):not(.bg-\[\#FFDE59\]):not(.bg-\[\#FF90E8\]):not(.bg-\[\#FF70A6\]):not(.bg-yellow-400):not(.bg-emerald-400),
+.dark .text-stone-900:not([class*="dark:text-"]):not(.bg-\[\#FFE600\]):not(.bg-\[\#70FFAF\]):not(.bg-\[\#5CE1E6\]):not(.bg-\[\#FFDE59\]):not(.bg-\[\#FF90E8\]):not(.bg-\[\#FF70A6\]):not(.bg-yellow-400):not(.bg-emerald-400),
+.dark .text-stone-800:not([class*="dark:text-"]):not(.bg-\[\#FFE600\]):not(.bg-\[\#70FFAF\]):not(.bg-\[\#5CE1E6\]):not(.bg-\[\#FFDE59\]):not(.bg-\[\#FF90E8\]):not(.bg-\[\#FF70A6\]):not(.bg-yellow-400):not(.bg-emerald-400),
+.dark .text-gray-900:not([class*="dark:text-"]),
+.dark .text-gray-800:not([class*="dark:text-"]),
+.dark .text-slate-900:not([class*="dark:text-"]),
+.dark .text-slate-800:not([class*="dark:text-"]),
+.dark .text-zinc-900:not([class*="dark:text-"]),
+.dark .text-zinc-800:not([class*="dark:text-"]) {
+  color: #F8FAFC !important;
 }
 
-.dark .text-stone-900,
-.dark .text-stone-800 {
-  color: #E4E4E7 !important;
+/* 2. Secondary Text (Body Prose, Subtitles, Descriptions, Table Cells, Nav Links) */
+.dark .text-stone-700:not([class*="dark:text-"]),
+.dark .text-stone-600:not([class*="dark:text-"]),
+.dark .text-gray-700:not([class*="dark:text-"]),
+.dark .text-gray-600:not([class*="dark:text-"]),
+.dark .text-slate-700:not([class*="dark:text-"]),
+.dark .text-slate-600:not([class*="dark:text-"]),
+.dark .text-zinc-700:not([class*="dark:text-"]),
+.dark .text-zinc-600:not([class*="dark:text-"]) {
+  color: #E2E8F0 !important;
 }
 
-.dark .text-stone-700,
-.dark .text-stone-600 {
-  color: #B4B4C0 !important;
+/* 3. Tertiary & Muted Text (Labels, Timestamps, Captions, Micro-copy, Hints, Metas) */
+.dark .text-stone-500:not([class*="dark:text-"]),
+.dark .text-stone-400:not([class*="dark:text-"]),
+.dark .text-gray-500:not([class*="dark:text-"]),
+.dark .text-gray-400:not([class*="dark:text-"]),
+.dark .text-slate-500:not([class*="dark:text-"]),
+.dark .text-slate-400:not([class*="dark:text-"]),
+.dark .text-zinc-500:not([class*="dark:text-"]),
+.dark .text-zinc-400:not([class*="dark:text-"]) {
+  color: #CBD5E1 !important;
 }
 
-.dark .text-stone-500 {
-  color: #9494A4 !important;
+/* 4. Subtle Dividers / Placeholders / Inactive Elements */
+.dark .text-stone-300:not([class*="dark:text-"]),
+.dark .text-gray-300:not([class*="dark:text-"]),
+.dark .text-slate-300:not([class*="dark:text-"]),
+.dark .text-zinc-300:not([class*="dark:text-"]) {
+  color: #94A3B8 !important;
 }
 
-.dark .text-stone-400 {
-  color: #A1A1B2 !important;
+.dark .text-stone-200:not([class*="dark:text-"]),
+.dark .text-gray-200:not([class*="dark:text-"]),
+.dark .text-slate-200:not([class*="dark:text-"]) {
+  color: #CBD5E1 !important;
 }
 
-/* High Contrast Colored Text Adaptations for Dark Mode */
-.dark .text-purple-700,
-.dark .text-purple-800 {
+.dark .text-stone-100:not([class*="dark:text-"]) {
+  color: #E2E8F0 !important;
+}
+
+/* 5. Hover States for Text in Dark Mode — Prevents Text Invisibility */
+.dark .hover\:text-black:hover:not([class*="hover:bg-\[\#FFE600\]"]):not([class*="hover:bg-yellow"]),
+.dark [class*="hover:text-black"]:hover:not([class*="hover:bg-\[\#FFE600\]"]):not([class*="hover:bg-yellow"]),
+.dark .hover\:text-stone-900:hover,
+.dark [class*="hover:text-stone-900"]:hover,
+.dark .hover\:text-stone-800:hover,
+.dark [class*="hover:text-stone-800"]:hover,
+.dark .hover\:text-stone-700:hover,
+.dark [class*="hover:text-stone-700"]:hover,
+.dark .group:hover .group-hover\:text-black,
+.dark .group:hover .group-hover\:text-stone-900,
+.dark .group:hover .group-hover\:text-stone-800 {
+  color: #FFFFFF !important;
+}
+
+.dark .hover\:text-\[\#7C3AED\]:hover,
+.dark [class*="hover:text-[#7C3AED]"]:hover,
+.dark .group:hover .group-hover\:text-\[\#7C3AED\] {
+  color: #DDD6FE !important;
+}
+
+/* 6. High-Contrast Colored Accents & Status Text in Dark Mode */
+.dark .text-\[\#7C3AED\]:not([class*="dark:text-"]),
+.dark [class*="text-[#7C3AED]"]:not([class*="dark:text-"]),
+.dark .text-purple-600:not([class*="dark:text-"]),
+.dark .text-purple-700:not([class*="dark:text-"]),
+.dark .text-purple-800:not([class*="dark:text-"]),
+.dark .text-purple-900:not([class*="dark:text-"]),
+.dark .text-purple-950:not([class*="dark:text-"]),
+.dark .text-violet-600:not([class*="dark:text-"]),
+.dark .text-violet-700:not([class*="dark:text-"]),
+.dark .text-violet-800:not([class*="dark:text-"]) {
   color: #C4B5FD !important;
 }
 
-.dark .text-\[\#7C3AED\] {
-  color: #A78BFA !important;
-}
-
-.dark .text-emerald-600,
-.dark .text-emerald-700,
-.dark .text-emerald-800,
-.dark .text-emerald-900,
-.dark .text-emerald-950 {
+.dark .text-emerald-500:not([class*="dark:text-"]),
+.dark .text-emerald-600:not([class*="dark:text-"]),
+.dark .text-emerald-700:not([class*="dark:text-"]),
+.dark .text-emerald-800:not([class*="dark:text-"]),
+.dark .text-emerald-900:not([class*="dark:text-"]),
+.dark .text-emerald-950:not([class*="dark:text-"]),
+.dark .text-green-500:not([class*="dark:text-"]),
+.dark .text-green-600:not([class*="dark:text-"]),
+.dark .text-green-700:not([class*="dark:text-"]),
+.dark .text-green-800:not([class*="dark:text-"]),
+.dark .text-green-900:not([class*="dark:text-"]) {
   color: #6EE7B7 !important;
 }
 
-.dark .text-amber-700,
-.dark .text-amber-800,
-.dark .text-amber-900,
-.dark .text-amber-950 {
-  color: #FCD34D !important;
+.dark .text-amber-500:not([class*="dark:text-"]),
+.dark .text-amber-600:not([class*="dark:text-"]),
+.dark .text-amber-700:not([class*="dark:text-"]),
+.dark .text-amber-800:not([class*="dark:text-"]),
+.dark .text-amber-900:not([class*="dark:text-"]),
+.dark .text-amber-950:not([class*="dark:text-"]),
+.dark .text-yellow-600:not([class*="dark:text-"]),
+.dark .text-yellow-700:not([class*="dark:text-"]),
+.dark .text-yellow-800:not([class*="dark:text-"]),
+.dark .text-yellow-900:not([class*="dark:text-"]) {
+  color: #FDE047 !important;
 }
 
-.dark .text-red-600,
-.dark .text-red-700,
-.dark .text-red-800,
-.dark .text-red-900,
-.dark .text-red-950 {
+.dark .text-\[\#D90429\]:not([class*="dark:text-"]),
+.dark [class*="text-[#D90429]"]:not([class*="dark:text-"]),
+.dark .text-\[\#FF5757\]:not([class*="dark:text-"]),
+.dark [class*="text-[#FF5757]"]:not([class*="dark:text-"]),
+.dark .text-red-500:not([class*="dark:text-"]),
+.dark .text-red-600:not([class*="dark:text-"]),
+.dark .text-red-700:not([class*="dark:text-"]),
+.dark .text-red-800:not([class*="dark:text-"]),
+.dark .text-red-900:not([class*="dark:text-"]),
+.dark .text-red-950:not([class*="dark:text-"]),
+.dark .text-rose-600:not([class*="dark:text-"]),
+.dark .text-rose-700:not([class*="dark:text-"]),
+.dark .text-rose-800:not([class*="dark:text-"]) {
   color: #FCA5A5 !important;
 }
 
-.dark .text-blue-600,
-.dark .text-blue-700,
-.dark .text-blue-800,
-.dark .text-blue-900 {
+.dark .text-\[\#5865F2\]:not([class*="dark:text-"]),
+.dark [class*="text-[#5865F2]"]:not([class*="dark:text-"]),
+.dark .text-blue-500:not([class*="dark:text-"]),
+.dark .text-blue-600:not([class*="dark:text-"]),
+.dark .text-blue-700:not([class*="dark:text-"]),
+.dark .text-blue-800:not([class*="dark:text-"]),
+.dark .text-blue-900:not([class*="dark:text-"]),
+.dark .text-sky-500:not([class*="dark:text-"]),
+.dark .text-sky-600:not([class*="dark:text-"]),
+.dark .text-sky-700:not([class*="dark:text-"]),
+.dark .text-sky-800:not([class*="dark:text-"]) {
   color: #93C5FD !important;
 }
 
-/* Maintain Jet-Black High Contrast Text on Vibrant Cyber Badges in Both Modes */
-.dark .bg-\[\#FFE600\], .dark .bg-\[\#FFE600\] *,
-.dark .bg-\[\#70FFAF\], .dark .bg-\[\#70FFAF\] *,
-.dark .bg-\[\#5CE1E6\], .dark .bg-\[\#5CE1E6\] *,
-.dark .bg-\[\#FFDE59\], .dark .bg-\[\#FFDE59\] *,
-.dark .bg-\[\#FF90E8\], .dark .bg-\[\#FF90E8\] *,
-.dark .bg-yellow-400, .dark .bg-yellow-400 *,
-.dark .bg-emerald-400, .dark .bg-emerald-400 * {
+.dark .text-cyan-500:not([class*="dark:text-"]),
+.dark .text-cyan-600:not([class*="dark:text-"]),
+.dark .text-cyan-700:not([class*="dark:text-"]) {
+  color: #67E8F9 !important;
+}
+
+/* ========================================================================== */
+/* VIBRANT CYBER BADGES & ALWAYS-YELLOW BANNERS: SOLID JET-BLACK TEXT         */
+/* ========================================================================== */
+
+/* Direct yellow/neon badges or tags */
+.dark span.bg-\[\#FFE600\],
+.dark span.bg-\[\#70FFAF\],
+.dark span.bg-\[\#5CE1E6\],
+.dark span.bg-\[\#FFDE59\],
+.dark span.bg-\[\#FF90E8\],
+.dark span.bg-\[\#FF70A6\],
+.dark span.bg-yellow-400,
+.dark button.bg-\[\#FFE600\],
+.dark button.bg-\[\#70FFAF\],
+.dark button.bg-\[\#5CE1E6\],
+.dark button.bg-\[\#FFDE59\],
+.dark button.bg-\[\#FF90E8\],
+.dark button.bg-\[\#FF70A6\],
+.dark button.bg-yellow-400 {
   color: #000000 !important;
 }
 
-.dark .bg-\[\#FFE600\] svg,
-.dark .bg-\[\#70FFAF\] svg,
-.dark .bg-\[\#5CE1E6\] svg,
-.dark .bg-\[\#FFDE59\] svg,
-.dark .bg-\[\#FF90E8\] svg,
-.dark .bg-yellow-400 svg,
-.dark .bg-emerald-400 svg {
+.dark span.bg-\[\#FFE600\] > *,
+.dark span.bg-\[\#70FFAF\] > *,
+.dark span.bg-\[\#5CE1E6\] > *,
+.dark span.bg-\[\#FFDE59\] > *,
+.dark span.bg-\[\#FF90E8\] > *,
+.dark span.bg-\[\#FF70A6\] > *,
+.dark button.bg-\[\#FFE600\] > *,
+.dark button.bg-\[\#70FFAF\] > *,
+.dark button.bg-\[\#5CE1E6\] > *,
+.dark button.bg-\[\#FFDE59\] > *,
+.dark button.bg-\[\#FF90E8\] > *,
+.dark button.bg-\[\#FF70A6\] > * {
+  color: #000000 !important;
+}
+
+/* Header banners that remain 100% yellow in dark mode (e.g. RankingsView, FairPlayView) */
+.dark div.bg-\[\#FFE600\]:not([class*="dark:bg-"]) h1,
+.dark div.bg-\[\#FFE600\]:not([class*="dark:bg-"]) h2,
+.dark div.bg-\[\#FFE600\]:not([class*="dark:bg-"]) h3,
+.dark div.bg-\[\#FFE600\]:not([class*="dark:bg-"]) p,
+.dark div.bg-\[\#FFE600\]:not([class*="dark:bg-"]) span:not([class*="bg-black"]),
+.dark section.bg-\[\#FFE600\]:not([class*="dark:bg-"]) h1,
+.dark section.bg-\[\#FFE600\]:not([class*="dark:bg-"]) h2,
+.dark section.bg-\[\#FFE600\]:not([class*="dark:bg-"]) h3,
+.dark section.bg-\[\#FFE600\]:not([class*="dark:bg-"]) p,
+.dark section.bg-\[\#FFE600\]:not([class*="dark:bg-"]) span:not([class*="bg-black"]) {
+  color: #000000 !important;
+}
+
+.dark span.bg-\[\#FFE600\] svg,
+.dark span.bg-\[\#70FFAF\] svg,
+.dark button.bg-\[\#FFE600\] svg,
+.dark button.bg-\[\#70FFAF\] svg,
+.dark section.bg-\[\#FFE600\]:not([class*="dark:bg-"]) svg {
   stroke: #000000 !important;
+}
+
+/* Hover States for Vibrant Buttons: Maintain black text when hovered */
+.dark .hover\:bg-\[\#FFE600\]:hover,
+.dark .hover\:bg-\[\#FFE600\]:hover > *,
+.dark .hover\:bg-yellow-400:hover,
+.dark .hover\:bg-yellow-400:hover > *,
+.dark .hover\:bg-\[\#FFDE59\]:hover,
+.dark .hover\:bg-\[\#FFDE59\]:hover > *,
+.dark .hover\:bg-\[\#70FFAF\]:hover,
+.dark .hover\:bg-\[\#70FFAF\]:hover > * {
+  color: #000000 !important;
 }
 
 /* Dark Mode Borders & Dividers */

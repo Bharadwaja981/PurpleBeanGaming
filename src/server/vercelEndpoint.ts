@@ -95,3 +95,6 @@ export function handleRoute(defaultPath: string) {
     });
   };
 }
+
+export { app };
+export default app;

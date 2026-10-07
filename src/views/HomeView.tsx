@@ -130,7 +130,7 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
       {/* ============================================================ */}
       {/* WELCOME INTRODUCTION: PURPLE BEAN GAMING INTRODUCTION */}
       {/* ============================================================ */}
-      <section className="w-full bg-[#FFE600] border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-6 sm:p-8 lg:p-10 relative overflow-hidden">
+      <section className="w-full bg-[#FFE600] dark:bg-[#161327] border-[3.5px] border-black dark:border-[#FFE600] shadow-[6px_6px_0px_0px_#000] dark:shadow-[6px_6px_0px_0px_#FFE600] p-6 sm:p-8 lg:p-10 relative overflow-hidden transition-colors">
         {/* Subtle decorative background pattern */}
         <div className="absolute -right-10 -bottom-10 opacity-15 pointer-events-none hidden sm:block">
           <PurpleBeanLogo size="xl" />
@@ -138,11 +138,11 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
 
         <div className="relative z-10 max-w-4xl space-y-4">
           <div className="flex flex-wrap items-center gap-2 font-mono text-xs font-black">
-            <span className="bg-black text-[#FFE600] px-2.5 py-0.5 uppercase tracking-wide border border-black shadow-[1px_1px_0px_0px_#000]">
+            <span className="bg-black text-[#FFE600] dark:bg-[#FFE600] dark:text-black px-2.5 py-0.5 uppercase tracking-wide border border-black shadow-[1px_1px_0px_0px_#000]">
               WELCOME TO PURPLE BEAN GAMING
             </span>
-            <span className="bg-white text-black px-2.5 py-0.5 uppercase tracking-wide border border-black shadow-[1px_1px_0px_0px_#000] flex items-center gap-1">
-              <Zap className="w-3.5 h-3.5 text-[#7C3AED]" />
+            <span className="bg-white text-black dark:bg-[#252044] dark:text-white px-2.5 py-0.5 uppercase tracking-wide border border-black dark:border-[#7C3AED] shadow-[1px_1px_0px_0px_#000] flex items-center gap-1">
+              <Zap className="w-3.5 h-3.5 text-[#7C3AED] dark:text-[#A78BFA]" />
               INDIA'S DOTA 2 COMPETITIVE CIRCUIT
             </span>
             <span className="bg-[#70FFAF] text-black px-2 py-0.5 uppercase border border-black text-[11px] font-bold">
@@ -150,46 +150,46 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
             </span>
           </div>
 
-          <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black text-black uppercase font-sans tracking-tight leading-[0.95]">
+          <h1 className="text-3xl sm:text-5xl lg:text-6xl font-black text-black dark:text-white uppercase font-sans tracking-tight leading-[0.95]">
             COMPETE. GET DRAFTED. <br className="hidden sm:inline" />
-            <span className="bg-white px-2 py-0.5 border-2 border-black inline-block mt-1 shadow-[3px_3px_0px_0px_#000]">
+            <span className="bg-white dark:bg-[#FFE600] text-black dark:text-black px-2 py-0.5 border-2 border-black inline-block mt-1 shadow-[3px_3px_0px_0px_#000]">
               BUILD YOUR DOTA 2 CAREER.
             </span>
           </h1>
 
-          <p className="font-mono text-xs sm:text-sm font-bold text-stone-900 max-w-3xl leading-relaxed">
+          <p className="font-mono text-xs sm:text-sm font-bold text-stone-900 dark:text-stone-200 max-w-3xl leading-relaxed">
             PurpleBeanGaming is India’s dedicated esports platform for Dota 2 competitors. Link your Steam profile, receive an automated PBG ID &amp; MMR tier calibration, enter real-time captain purse auctions, and compete in organized brackets with verified ₹ INR payouts.
           </p>
 
           {/* Quick Intro Feature Badges */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-xs">
-            <div className="bg-white border-2 border-black p-2.5 shadow-[2px_2px_0px_0px_#000]">
-              <div className="font-black text-black uppercase flex items-center gap-1.5 text-xs">
-                <Gavel className="w-3.5 h-3.5 text-[#7C3AED]" />
+            <div className="bg-white dark:bg-[#1E1A34] border-2 border-black dark:border-white/20 p-2.5 shadow-[2px_2px_0px_0px_#000] dark:shadow-[2px_2px_0px_0px_#FFE600]/30">
+              <div className="font-black text-black dark:text-white uppercase flex items-center gap-1.5 text-xs">
+                <Gavel className="w-3.5 h-3.5 text-[#7C3AED] dark:text-[#A78BFA]" />
                 Auction Drafts
               </div>
-              <p className="text-[10px] text-stone-600 mt-0.5 leading-tight">Solo players bid on by captains</p>
+              <p className="text-[10px] text-stone-600 dark:text-stone-300 mt-0.5 leading-tight">Solo players bid on by captains</p>
             </div>
-            <div className="bg-white border-2 border-black p-2.5 shadow-[2px_2px_0px_0px_#000]">
-              <div className="font-black text-black uppercase flex items-center gap-1.5 text-xs">
-                <Users className="w-3.5 h-3.5 text-[#7C3AED]" />
+            <div className="bg-white dark:bg-[#1E1A34] border-2 border-black dark:border-white/20 p-2.5 shadow-[2px_2px_0px_0px_#000] dark:shadow-[2px_2px_0px_0px_#FFE600]/30">
+              <div className="font-black text-black dark:text-white uppercase flex items-center gap-1.5 text-xs">
+                <Users className="w-3.5 h-3.5 text-[#7C3AED] dark:text-[#A78BFA]" />
                 Premade 5v5
               </div>
-              <p className="text-[10px] text-stone-600 mt-0.5 leading-tight">Bring your campus or friend stack</p>
+              <p className="text-[10px] text-stone-600 dark:text-stone-300 mt-0.5 leading-tight">Bring your campus or friend stack</p>
             </div>
-            <div className="bg-white border-2 border-black p-2.5 shadow-[2px_2px_0px_0px_#000]">
-              <div className="font-black text-black uppercase flex items-center gap-1.5 text-xs">
-                <Shield className="w-3.5 h-3.5 text-[#7C3AED]" />
+            <div className="bg-white dark:bg-[#1E1A34] border-2 border-black dark:border-white/20 p-2.5 shadow-[2px_2px_0px_0px_#000] dark:shadow-[2px_2px_0px_0px_#FFE600]/30">
+              <div className="font-black text-black dark:text-white uppercase flex items-center gap-1.5 text-xs">
+                <Shield className="w-3.5 h-3.5 text-[#7C3AED] dark:text-[#A78BFA]" />
                 Anti-Smurf
               </div>
-              <p className="text-[10px] text-stone-600 mt-0.5 leading-tight">Steam 64 &amp; OpenDota audit</p>
+              <p className="text-[10px] text-stone-600 dark:text-stone-300 mt-0.5 leading-tight">Steam 64 &amp; OpenDota audit</p>
             </div>
-            <div className="bg-white border-2 border-black p-2.5 shadow-[2px_2px_0px_0px_#000]">
-              <div className="font-black text-black uppercase flex items-center gap-1.5 text-xs">
-                <Coins className="w-3.5 h-3.5 text-[#7C3AED]" />
+            <div className="bg-white dark:bg-[#1E1A34] border-2 border-black dark:border-white/20 p-2.5 shadow-[2px_2px_0px_0px_#000] dark:shadow-[2px_2px_0px_0px_#FFE600]/30">
+              <div className="font-black text-black dark:text-white uppercase flex items-center gap-1.5 text-xs">
+                <Coins className="w-3.5 h-3.5 text-[#7C3AED] dark:text-[#A78BFA]" />
                 Verified INR
               </div>
-              <p className="text-[10px] text-stone-600 mt-0.5 leading-tight">Fast UPI &amp; IMPS prize payouts</p>
+              <p className="text-[10px] text-stone-600 dark:text-stone-300 mt-0.5 leading-tight">Fast UPI &amp; IMPS prize payouts</p>
             </div>
           </div>
 
@@ -198,7 +198,7 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
             {!isAuthenticated ? (
               <button
                 onClick={onOpenRegister}
-                className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white border-2 border-black px-5 py-3 font-mono text-xs sm:text-sm font-black uppercase tracking-tight shadow-[3px_3px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer flex items-center gap-2"
+                className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white border-2 border-black px-5 py-3 font-mono text-xs sm:text-sm font-black uppercase tracking-tight shadow-[3px_3px_0px_0px_#000] dark:shadow-[3px_3px_0px_0px_#FFE600] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer flex items-center gap-2"
               >
                 <Flame className="w-4 h-4 text-[#FFE600]" />
                 <span>Join PBG — Create Profile</span>
@@ -206,7 +206,7 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
             ) : (
               <button
                 onClick={onOpenRegister}
-                className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white border-2 border-black px-5 py-3 font-mono text-xs sm:text-sm font-black uppercase tracking-tight shadow-[3px_3px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer flex items-center gap-2"
+                className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white border-2 border-black px-5 py-3 font-mono text-xs sm:text-sm font-black uppercase tracking-tight shadow-[3px_3px_0px_0px_#000] dark:shadow-[3px_3px_0px_0px_#FFE600] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer flex items-center gap-2"
               >
                 <Flame className="w-4 h-4 text-[#FFE600]" />
                 <span>Register for Next Tournament</span>
@@ -215,15 +215,15 @@ export function HomeView({ onNavigate, onOpenRegister, onOpenBrandKit }: HomeVie
 
             <button
               onClick={() => onNavigate('tournaments')}
-              className="bg-black hover:bg-stone-900 text-white border-2 border-black px-5 py-3 font-mono text-xs sm:text-sm font-black uppercase tracking-tight shadow-[3px_3px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer flex items-center gap-2"
+              className="bg-black hover:bg-stone-900 text-white dark:bg-[#FFE600] dark:hover:bg-yellow-400 dark:text-black border-2 border-black px-5 py-3 font-mono text-xs sm:text-sm font-black uppercase tracking-tight shadow-[3px_3px_0px_0px_#000] dark:shadow-[3px_3px_0px_0px_#FFE600] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer flex items-center gap-2"
             >
-              <Trophy className="w-4 h-4 text-[#FFE600]" />
+              <Trophy className="w-4 h-4 text-[#FFE600] dark:text-black" />
               <span>Explore Tournaments</span>
             </button>
 
             <button
               onClick={() => onNavigate('how_it_works')}
-              className="bg-white hover:bg-stone-100 text-black border-2 border-black px-4 py-3 font-mono text-xs sm:text-sm font-black uppercase tracking-tight shadow-[3px_3px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer flex items-center gap-1.5"
+              className="bg-white hover:bg-stone-100 text-black dark:bg-[#201C38] dark:hover:bg-[#282444] dark:text-white border-2 border-black dark:border-white/30 px-4 py-3 font-mono text-xs sm:text-sm font-black uppercase tracking-tight shadow-[3px_3px_0px_0px_#000] active:translate-x-0.5 active:translate-y-0.5 cursor-pointer flex items-center gap-1.5"
             >
               <span>How It Works</span>
               <ArrowRight className="w-3.5 h-3.5" />
