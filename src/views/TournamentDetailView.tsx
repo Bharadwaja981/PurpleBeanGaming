@@ -34,6 +34,7 @@ import { DraftReplayViewer } from '../components/DraftReplayViewer';
 import { PremadeTeamManagement } from '../components/PremadeTeamManagement';
 import { CompetitionStructureManager } from '../components/CompetitionStructureManager';
 import { AuctionDraft } from '../components/AuctionDraft';
+import { AuctionReport } from '../components/AuctionReport';
 import { dotaCompetitionEngine } from '../domain/dotaCompetitionEngine';
 import { testCupEngine } from '../domain/testCupEngine';
 import { tournamentService } from '../services/firebaseService';
@@ -58,7 +59,7 @@ export function TournamentDetailView({
   onOpenRegister
 }: TournamentDetailViewProps) {
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'matches' | 'bracket' | 'standings' | 'teams' | 'players' | 'stats' | 'rules' | 'announcements' | 'auction' | 'auction_replay' | 'structure'
+    'overview' | 'matches' | 'bracket' | 'standings' | 'teams' | 'players' | 'stats' | 'rules' | 'announcements' | 'auction' | 'auction_replay' | 'structure' | 'auction_report'
   >('overview');
 
   const [allTournaments, setAllTournaments] = useState(() => tournamentService.getTournaments('All Games', 'All', true));
@@ -212,7 +213,10 @@ export function TournamentDetailView({
     { id: 'standings', label: 'Standings' },
     { id: 'teams', label: isPremade ? 'Squads & Rosters' : 'Teams' },
     { id: 'players', label: 'Players' },
-    ...(isAuctionSupported ? [{ id: 'auction' as const, label: auctionLifecycle.label }] : []),
+    ...(isAuctionSupported || Boolean((tournament as any)?.auction?.enabled || (tournament as any)?.teamFormation?.mode === 'AUCTION') ? [
+      { id: 'auction' as const, label: auctionLifecycle.label },
+      { id: 'auction_report' as const, label: 'Auction Report' }
+    ] : []),
     ...(isOrganiser ? [{ id: 'structure' as const, label: 'Structure & Seeding' }] : []),
     { id: 'stats', label: 'Stats' },
     { id: 'rules', label: 'Rules' },
@@ -681,6 +685,13 @@ export function TournamentDetailView({
                   <Gavel className="w-4 h-4" />
                   <span>{(auctionLifecycle.status === 'READY' || effectiveTeams.length >= 2 || auctionEngineTeams.length >= 2) ? 'ENTER AUCTION LOBBY' : auctionLifecycle.ctaText}</span>
                   <ArrowRight className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setActiveTab('auction_report')}
+                  className="bg-white hover:bg-stone-100 text-black px-4 py-2.5 text-xs font-black uppercase border-2 border-black shadow-[3px_3px_0px_0px_#000] flex items-center gap-2 cursor-pointer transition-all active:translate-x-0.5 active:translate-y-0.5"
+                >
+                  <BarChart3 className="w-4 h-4 text-[#7C3AED]" />
+                  <span>View Auction Report</span>
                 </button>
               </div>
             </div>
@@ -1599,6 +1610,11 @@ export function TournamentDetailView({
       {/* AUCTION & DRAFT TAB */}
       {(activeTab === 'auction' || activeTab === 'auction_replay') && isAuctionSupported && (
         <AuctionDraft onNavigate={onNavigate} tournamentId={tournament.id} />
+      )}
+
+      {/* AUCTION REPORT TAB */}
+      {activeTab === 'auction_report' && (
+        <AuctionReport tournamentId={tournament.id} onNavigate={onNavigate} />
       )}
 
       {/* 8. RULES TAB */}

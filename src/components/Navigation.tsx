@@ -30,7 +30,8 @@ import {
   MessageSquare,
   HelpCircle,
   ShieldCheck,
-  Wrench
+  Wrench,
+  BarChart3
 } from 'lucide-react';
 import { ViewType, CompetitiveGame, Match, Tournament } from '../types/tournament';
 import { PurpleBeanLogo } from './PurpleBeanLogo';
@@ -729,6 +730,14 @@ export function Navigation({
               />
 
               <MenuItem
+                icon={BarChart3}
+                label="Auction Report & Draft Logs"
+                badge="Public"
+                badgeColor="bg-[#70FFAF] text-black"
+                onClick={() => onNavigate('auction_report', 'pb-game-dota2-1791361091142')}
+              />
+
+              <MenuItem
                 icon={Users}
                 label="Player Directory"
                 onClick={() => onNavigate('players')}
@@ -825,6 +834,7 @@ export function Navigation({
                 {[
                   ...primaryNavItems, 
                   ...secondaryNavItems,
+                  { view: 'auction_report' as ViewType, label: 'Auction Report', icon: BarChart3 },
                   { view: 'rankings' as ViewType, label: 'Rankings', icon: Award },
                   { view: 'how_it_works' as ViewType, label: 'How It Works', icon: Zap },
                   { view: 'fair_play' as ViewType, label: 'Fair Play', icon: ShieldCheck },

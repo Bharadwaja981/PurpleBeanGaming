@@ -463,6 +463,7 @@ export type ViewType =
   | 'captain_selection'
   | 'auction'
   | 'live_auction'
+  | 'auction_report'
   | 'draft'
   | 'draft_results'
   | 'organiser_dashboard'

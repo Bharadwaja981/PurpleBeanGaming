@@ -46,6 +46,7 @@ import { RankingsView } from './views/RankingsView';
 import { RegisteredPlayersView } from './views/RegisteredPlayersView';
 import { CaptainSelectionView } from './views/CaptainSelectionView';
 import { AuctionDraft } from './components/AuctionDraft';
+import { AuctionReport } from './components/AuctionReport';
 import { OrganiserDashboardView } from './views/OrganiserDashboardView';
 import { AdminDashboardView } from './views/AdminDashboardView';
 import { NotFoundView } from './views/NotFoundView';
@@ -872,6 +873,21 @@ export default function App() {
 
               {(currentView === 'auction' || currentView === 'draft' || currentView === 'draft_results') && (
                 <AuctionDraft onNavigate={handleNavigate} tournamentId={activeEntityId} />
+              )}
+
+              {currentView === 'auction_report' && (
+                <div className="space-y-6">
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => handleNavigate('tournament_detail', activeEntityId || 'pb-game-dota2-1791361091142')}
+                      className="bg-white hover:bg-stone-100 text-black border-2 border-black px-3 py-1.5 font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                      Back to Tournament
+                    </button>
+                  </div>
+                  <AuctionReport tournamentId={activeEntityId || 'pb-game-dota2-1791361091142'} onNavigate={handleNavigate} />
+                </div>
               )}
 
               {currentView === 'organiser_dashboard' && (

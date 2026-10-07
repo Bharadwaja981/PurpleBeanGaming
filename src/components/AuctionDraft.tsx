@@ -806,13 +806,22 @@ export function AuctionDraft({ onNavigate, tournamentId }: AuctionDraftProps = {
         {/* Status Indicators & Navigation */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           {onNavigate && (
-            <button
-              onClick={() => onNavigate('tournament_detail', selectedTournamentId)}
-              className="bg-white hover:bg-stone-100 text-black border-2 border-black px-3 py-1.5 font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1 cursor-pointer mr-1"
-              title="Return to tournament details and overview"
-            >
-              ← Tournament Hub
-            </button>
+            <>
+              <button
+                onClick={() => onNavigate('tournament_detail', selectedTournamentId)}
+                className="bg-white hover:bg-stone-100 text-black border-2 border-black px-3 py-1.5 font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1 cursor-pointer mr-1"
+                title="Return to tournament details and overview"
+              >
+                ← Tournament Hub
+              </button>
+              <button
+                onClick={() => onNavigate('auction_report', selectedTournamentId)}
+                className="bg-[#FFE600] hover:bg-yellow-400 text-black border-2 border-black px-3 py-1.5 font-mono text-xs font-black uppercase shadow-[2px_2px_0px_0px_#000] flex items-center gap-1 cursor-pointer mr-1"
+                title="View complete official auction report with bids, stats, and logs"
+              >
+                📊 Auction Report
+              </button>
+            </>
           )}
 
           {/* Sound FX Toggle */}
