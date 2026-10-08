@@ -298,7 +298,7 @@ export class CompetitionClientService {
   }
 
   public async updateBroadcast(params: {
-    tournamentId: string;
+    tournamentId?: string;
     matchId: string;
     streamUrl?: string;
     streamType?: 'twitch' | 'youtube' | 'obs' | 'custom';
@@ -311,7 +311,11 @@ export class CompetitionClientService {
   }): Promise<AuthoritativeMutationResult<any>> {
     try {
       const authHeader = await getBearerAuthHeader();
-      const res = await fetch(`/api/tournaments/${encodeURIComponent(params.tournamentId)}/competition/matches/${encodeURIComponent(params.matchId)}/broadcast`, {
+      const endpoint = params.tournamentId 
+        ? `/api/tournaments/${encodeURIComponent(params.tournamentId)}/competition/matches/${encodeURIComponent(params.matchId)}/broadcast`
+        : `/api/matches/${encodeURIComponent(params.matchId)}/broadcast`;
+
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -329,7 +333,7 @@ export class CompetitionClientService {
         };
       }
 
-      if (json.structure) {
+      if (json.structure && params.tournamentId) {
         dotaCompetitionEngine.hydrateFromFirestore(params.tournamentId, json.structure);
       }
 

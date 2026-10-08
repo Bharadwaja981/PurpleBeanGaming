@@ -26,6 +26,8 @@ import {
 } from 'lucide-react';
 import { Match, ViewType } from '../types/tournament';
 import { tournamentService } from '../services/firebaseService';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../services/firebaseConfig';
 import { 
   dotaCompetitionEngine, 
   CompetitionMatchNode, 
@@ -70,6 +72,7 @@ export function MatchDetailView({ matchId, onNavigate }: MatchDetailViewProps) {
   // Load and subscribe to match data
   useEffect(() => {
     let isCancelled = false;
+    let unsubMatchDoc: (() => void) | undefined;
     const cleanId = (matchId || '').trim();
 
     if (!cleanId) {
@@ -98,10 +101,19 @@ export function MatchDetailView({ matchId, onNavigate }: MatchDetailViewProps) {
           setMatch(foundMatch);
           setIsLoading(false);
         }
-        return;
       }
 
-      // 2. Async search if not yet hydrated into local cache
+      // 2. Query Firestore asynchronously for latest authoritative match data
+      try {
+        const remoteMatch = await tournamentService.fetchMatchById(cleanId);
+        if (remoteMatch && !isCancelled) {
+          setMatch(remoteMatch);
+          setIsLoading(false);
+          return;
+        }
+      } catch {}
+
+      // 3. Async search if not yet hydrated into local cache
       const asyncComp = await dotaCompetitionEngine.findMatchAsync(cleanId);
       if (asyncComp && !isCancelled) {
         setCompNode(asyncComp.match);
@@ -151,14 +163,62 @@ export function MatchDetailView({ matchId, onNavigate }: MatchDetailViewProps) {
         return;
       }
 
-      // 3. Fallback to first available match if ID unknown
+      if (foundMatch && !isCancelled) {
+        setIsLoading(false);
+        return;
+      }
+
+      // 4. Fallback to first available match if ID unknown
       if (!isCancelled) {
-        setMatch(tournamentService.getMatches()[0]);
+        const fallback = tournamentService.getMatches()[0];
+        if (fallback) setMatch(fallback);
         setIsLoading(false);
       }
     };
 
     resolveMatch();
+
+    // 5. Establish real-time Firestore listener on matches/{cleanId} doc
+    if (db && cleanId) {
+      try {
+        unsubMatchDoc = onSnapshot(doc(db, 'matches', cleanId), (snap) => {
+          if (!isCancelled && snap.exists()) {
+            const data = snap.data();
+            setMatch((prev) => {
+              if (!prev) return { ...data, id: snap.id } as Match;
+              return {
+                ...prev,
+                ...data,
+                id: snap.id,
+                streamUrl: data.streamUrl !== undefined ? data.streamUrl : prev.streamUrl,
+                streamType: data.streamType || prev.streamType,
+                streamTitle: data.streamTitle || prev.streamTitle,
+                casterNames: data.casterNames || prev.casterNames,
+                obsStreamUrl: data.obsStreamUrl || prev.obsStreamUrl,
+                status: data.status || prev.status,
+                isLive: data.isLive !== undefined ? data.isLive : prev.isLive,
+                teamA: {
+                  ...prev.teamA,
+                  ...(data.teamA || {}),
+                  score: data.scores?.teamA ?? data.teamA?.score ?? prev.teamA.score
+                },
+                teamB: {
+                  ...prev.teamB,
+                  ...(data.teamB || {}),
+                  score: data.scores?.teamB ?? data.teamB?.score ?? prev.teamB.score
+                },
+                telemetry: data.telemetry || prev.telemetry
+              };
+            });
+            setIsLoading(false);
+          }
+        }, (err) => {
+          console.warn('[MatchDetailView] Firestore match snapshot warning:', err);
+        });
+      } catch (listenerErr) {
+        console.warn('[MatchDetailView] Listener initialization error:', listenerErr);
+      }
+    }
 
     const unsubTourneys = tournamentService.subscribe(() => {
       if (!isCancelled) {
@@ -174,6 +234,7 @@ export function MatchDetailView({ matchId, onNavigate }: MatchDetailViewProps) {
 
     return () => {
       isCancelled = true;
+      if (unsubMatchDoc) unsubMatchDoc();
       unsubTourneys();
     };
   }, [matchId]);

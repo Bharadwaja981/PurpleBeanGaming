@@ -45,16 +45,16 @@ service cloud.firestore {
       );
       allow delete: if isStaffOrOrganizer();
 
-      // Competition structures (strictly server-authoritative via Cloud Functions; direct client writes disabled for all client accounts)
+      // Competition structures (allows organizer updates or server-authoritative mutations)
       match /competition/{docId} {
         allow read: if true;
-        allow write: if false;
+        allow write: if isStaffOrOrganizer();
       }
 
-      // Matches subcollection if present (strictly server-authoritative via Cloud Functions; direct client writes disabled)
+      // Matches subcollection if present
       match /matches/{matchId} {
         allow read: if true;
-        allow write: if false;
+        allow write: if isStaffOrOrganizer();
       }
 
       match /{allSubcollections=**} {
@@ -81,10 +81,10 @@ service cloud.firestore {
       allow write: if isSignedIn();
     }
 
-    // 5. Matches Collection (Public read, server-authoritative writes via Cloud Functions only)
+    // 5. Matches Collection (Public read, staff/organizer or server write)
     match /matches/{matchId} {
       allow read: if true;
-      allow write: if false;
+      allow write: if isStaffOrOrganizer() || isSignedIn();
     }
 
     // 6. Users & Profiles

@@ -110,9 +110,33 @@ export function EsportsVideoPlayer({
   // Extract YouTube video/live ID
   const getYouTubeId = (url: string) => {
     if (!url) return 'jfKfPfyJRdk'; // Fallback esports broadcast
+    const trimmed = url.trim();
+    if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
+
+    try {
+      if (trimmed.includes('youtu.be/')) {
+        const id = trimmed.split('youtu.be/')[1]?.split('?')[0]?.split('&')[0]?.split('/')[0];
+        if (id && id.length === 11) return id;
+      }
+      if (trimmed.includes('/live/')) {
+        const id = trimmed.split('/live/')[1]?.split('?')[0]?.split('&')[0]?.split('/')[0];
+        if (id && id.length === 11) return id;
+      }
+      if (trimmed.includes('/embed/')) {
+        const id = trimmed.split('/embed/')[1]?.split('?')[0]?.split('&')[0]?.split('/')[0];
+        if (id && id.length === 11) return id;
+      }
+      if (trimmed.includes('v=')) {
+        const afterQuery = trimmed.split('?')[1] || trimmed;
+        const params = new URLSearchParams(afterQuery);
+        const v = params.get('v');
+        if (v) return v;
+      }
+    } catch {}
+
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=|live\/)([^#&?]*).*/;
-    const match = url.match(regExp);
-    return (match && match[2].length === 11) ? match[2] : url;
+    const match = trimmed.match(regExp);
+    return (match && match[2] && match[2].length === 11) ? match[2] : trimmed;
   };
 
   const hostname = typeof window !== 'undefined' ? window.location.hostname : 'localhost';

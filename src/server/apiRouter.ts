@@ -90,6 +90,7 @@ import {
   shouldTournamentGrantTemporaryDiscordRoles
 } from '../domain/tournamentLifecycleEngine';
 import { pbgAccountRegistry } from '../domain/pbgAccountRegistry';
+import { sanitizeFirestorePayload } from '../utils/sanitizeFirestore';
 import {
   seedTestPlayers,
   seedTestCaptains,
@@ -3443,16 +3444,50 @@ apiRouter.post('/tournaments/:tournamentId/competition/matches/:matchId/schedule
 });
 
 // 12. Authoritative Match Broadcast & OBS Link (Organiser/Admin Only)
-apiRouter.post('/tournaments/:tournamentId/competition/matches/:matchId/broadcast', async (req: Request, res: Response) => {
+async function handleBroadcastUpdate(req: Request, res: Response, tournamentIdParam?: string) {
   try {
     const authHeader = req.headers.authorization;
     const decoded = await verifyFirebaseBearerToken(authHeader);
-    checkOrganizerAuthorization(decoded, req.params.tournamentId);
+    const tournamentId = tournamentIdParam || req.params.tournamentId || req.body.tournamentId;
+    checkOrganizerAuthorization(decoded, tournamentId);
 
-    const { tournamentId, matchId } = req.params;
+    const matchId = req.params.matchId;
     const { streamUrl, streamType, streamTitle, casterNames, obsStreamUrl, isLive, scores, telemetry } = req.body;
 
-    const compMatchInfo = dotaCompetitionEngine.findMatch(matchId);
+    const adminDb = getAdminDb();
+    let compMatchInfo = dotaCompetitionEngine.findMatch(matchId);
+
+    // If tournamentId exists and match not found in memory, hydrate from Firestore
+    if (!compMatchInfo && tournamentId) {
+      await dotaCompetitionEngine.fetchStructureFromFirestore(tournamentId);
+      compMatchInfo = dotaCompetitionEngine.findMatch(matchId);
+    }
+
+    // Build the match object
+    const matchDoc: any = {
+      id: matchId,
+      updatedAt: new Date().toISOString()
+    };
+    if (tournamentId) matchDoc.tournamentId = tournamentId;
+    if (streamUrl !== undefined) matchDoc.streamUrl = streamUrl;
+    if (streamType) matchDoc.streamType = streamType;
+    if (streamTitle !== undefined) matchDoc.streamTitle = streamTitle;
+    if (casterNames !== undefined) matchDoc.casterNames = casterNames;
+    if (obsStreamUrl !== undefined) matchDoc.obsStreamUrl = obsStreamUrl;
+    if (isLive !== undefined) {
+      matchDoc.isLive = Boolean(isLive);
+      matchDoc.status = isLive ? 'LIVE' : 'UPCOMING';
+    }
+    if (scores) {
+      matchDoc.scores = {
+        teamA: Number(scores.scoreA) || 0,
+        teamB: Number(scores.scoreB) || 0
+      };
+      matchDoc.teamA = { score: Number(scores.scoreA) || 0 };
+      matchDoc.teamB = { score: Number(scores.scoreB) || 0 };
+    }
+    if (telemetry) matchDoc.telemetry = telemetry;
+
     if (compMatchInfo) {
       const node = compMatchInfo.match;
       if (streamUrl !== undefined) node.streamUrl = streamUrl;
@@ -3468,30 +3503,71 @@ apiRouter.post('/tournaments/:tournamentId/competition/matches/:matchId/broadcas
       }
       if (telemetry) node.telemetry = telemetry;
 
-      // Persist to server Admin DB if available
-      const adminDb = getAdminDb();
-      if (adminDb) {
+      const teamAObj = (node.teamA as any) || {};
+      const teamBObj = (node.teamB as any) || {};
+      matchDoc.teamA = {
+        id: teamAObj.id || teamAObj.teamId || 'team-a',
+        name: teamAObj.name || 'Team 1',
+        tag: teamAObj.tag || 'T1',
+        logo: teamAObj.logo || '🛡️',
+        score: node.scores?.teamA ?? 0
+      };
+      matchDoc.teamB = {
+        id: teamBObj.id || teamBObj.teamId || 'team-b',
+        name: teamBObj.name || 'Team 2',
+        tag: teamBObj.tag || 'T2',
+        logo: teamBObj.logo || '⚔️',
+        score: node.scores?.teamB ?? 0
+      };
+      matchDoc.round = node.roundTitle || node.round || 'Tournament Match';
+      matchDoc.status = node.status;
+      matchDoc.isLive = node.status === 'LIVE';
+
+      if (adminDb && tournamentId) {
         try {
-          const structRef = adminDb.collection('tournament_structures').doc(tournamentId);
-          await structRef.set(compMatchInfo.structure, { merge: true });
+          const sanitizedStruct = sanitizeFirestorePayload(compMatchInfo.structure);
+          const structRef = adminDb.collection('tournaments').doc(tournamentId).collection('competition').doc('structure');
+          await structRef.set(sanitizedStruct, { merge: true });
+
+          const tourneyRef = adminDb.collection('tournaments').doc(tournamentId);
+          await tourneyRef.set({
+            competitionStructure: sanitizedStruct,
+            updatedAt: new Date().toISOString()
+          }, { merge: true });
         } catch (dbErr) {
-          console.warn('[Broadcast] Error persisting to Firestore structure doc:', dbErr);
+          console.warn('[Broadcast] Error persisting to tournament doc:', dbErr);
         }
       }
-
-      return res.json({
-        ok: true,
-        success: true,
-        match: node,
-        structure: compMatchInfo.structure
-      });
     }
 
-    return res.json({ ok: true, success: true, message: 'Broadcast updated in memory' });
+    // Persist to authoritative matches collection in Firestore
+    if (adminDb) {
+      try {
+        const sanitizedMatch = sanitizeFirestorePayload(matchDoc);
+        await adminDb.collection('matches').doc(matchId).set(sanitizedMatch, { merge: true });
+      } catch (mErr) {
+        console.warn('[Broadcast] Error persisting to matches collection:', mErr);
+      }
+    }
+
+    return res.json({
+      ok: true,
+      success: true,
+      match: matchDoc,
+      structure: compMatchInfo?.structure
+    });
   } catch (err: any) {
     const status = err.message?.includes('ORGANIZER_PERMISSION_REQUIRED') ? 403 : (err.message?.includes('SIGN_IN_REQUIRED') ? 401 : 400);
     return res.status(status).json({ ok: false, success: false, error: err.message });
   }
+}
+
+apiRouter.post('/tournaments/:tournamentId/competition/matches/:matchId/broadcast', async (req: Request, res: Response) => {
+  return handleBroadcastUpdate(req, res, req.params.tournamentId);
+});
+
+apiRouter.post('/matches/:matchId/broadcast', async (req: Request, res: Response) => {
+  return handleBroadcastUpdate(req, res);
 });
 
 

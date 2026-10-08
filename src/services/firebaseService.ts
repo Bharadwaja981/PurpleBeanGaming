@@ -18,6 +18,7 @@
 import { 
   collection, 
   doc, 
+  getDoc,
   getDocs,
   setDoc, 
   updateDoc, 
@@ -1148,11 +1149,21 @@ class FirebaseTournamentService {
 
       // 3. Matches listener
       const unsubMatches = onSnapshot(collection(db, 'matches'), (snapshot) => {
-        const list: Match[] = [];
+        const firestoreMatches: Match[] = [];
         snapshot.forEach((docSnap) => {
-          list.push(docSnap.data() as Match);
+          firestoreMatches.push({ ...docSnap.data(), id: docSnap.id } as Match);
         });
-        this.matches = list;
+        
+        // Merge with existing matches and baseline fixtures so no match is lost,
+        // and any authoritative Firestore match overrides baseline defaults!
+        const matchMap = new Map<string, Match>();
+        MOCK_MATCHES.forEach(m => matchMap.set(m.id, { ...m }));
+        this.matches.forEach(m => matchMap.set(m.id, m));
+        firestoreMatches.forEach(m => {
+          const existing = matchMap.get(m.id);
+          matchMap.set(m.id, existing ? { ...existing, ...m } : m);
+        });
+        this.matches = Array.from(matchMap.values());
         this.notify();
       }, (error) => {
         console.warn('Firestore matches sync note:', error);
@@ -3231,7 +3242,29 @@ class FirebaseTournamentService {
     return undefined;
   }
 
-  public updateMatchBroadcast(matchId: string, broadcastData: {
+  public async fetchMatchById(matchId: string): Promise<Match | undefined> {
+    const local = this.getMatchById(matchId);
+    if (!db || !matchId) return local;
+    try {
+      const snap = await getDoc(doc(db, 'matches', matchId));
+      if (snap.exists()) {
+        const remoteMatch = { ...snap.data(), id: snap.id } as Match;
+        const idx = this.matches.findIndex(m => m.id === matchId);
+        if (idx >= 0) {
+          this.matches[idx] = { ...this.matches[idx], ...remoteMatch };
+        } else {
+          this.matches.push(remoteMatch);
+        }
+        this.notify();
+        return this.getMatchById(matchId) || remoteMatch;
+      }
+    } catch (e) {
+      console.warn('Fetch match from Firestore warning:', e);
+    }
+    return local;
+  }
+
+  public async updateMatchBroadcast(matchId: string, broadcastData: {
     streamUrl?: string;
     streamType?: 'twitch' | 'youtube' | 'obs' | 'custom';
     streamTitle?: string;
@@ -3240,25 +3273,35 @@ class FirebaseTournamentService {
     isLive?: boolean;
     scores?: { scoreA: number; scoreB: number };
     telemetry?: any;
-  }): { success: boolean; message: string; match?: Match } {
-    const rootMatch = this.matches.find(m => m.id === matchId);
-    if (rootMatch) {
-      if (broadcastData.streamUrl !== undefined) rootMatch.streamUrl = broadcastData.streamUrl;
-      if (broadcastData.streamType) rootMatch.streamType = broadcastData.streamType;
-      if (broadcastData.streamTitle !== undefined) rootMatch.streamTitle = broadcastData.streamTitle;
-      if (broadcastData.casterNames !== undefined) rootMatch.casterNames = broadcastData.casterNames;
-      if (broadcastData.obsStreamUrl !== undefined) rootMatch.obsStreamUrl = broadcastData.obsStreamUrl;
+    tournamentId?: string;
+  }): Promise<{ success: boolean; message: string; match?: Match }> {
+    let targetMatch = this.matches.find(m => m.id === matchId);
+    if (!targetMatch) {
+      targetMatch = this.getMatchById(matchId);
+    }
+
+    if (targetMatch) {
+      if (broadcastData.streamUrl !== undefined) targetMatch.streamUrl = broadcastData.streamUrl;
+      if (broadcastData.streamType) targetMatch.streamType = broadcastData.streamType;
+      if (broadcastData.streamTitle !== undefined) targetMatch.streamTitle = broadcastData.streamTitle;
+      if (broadcastData.casterNames !== undefined) targetMatch.casterNames = broadcastData.casterNames;
+      if (broadcastData.obsStreamUrl !== undefined) targetMatch.obsStreamUrl = broadcastData.obsStreamUrl;
       if (broadcastData.isLive !== undefined) {
-        rootMatch.isLive = broadcastData.isLive;
-        rootMatch.status = broadcastData.isLive ? 'LIVE' : (rootMatch.winnerId ? 'COMPLETED' : 'UPCOMING');
+        targetMatch.isLive = broadcastData.isLive;
+        targetMatch.status = broadcastData.isLive ? 'LIVE' : (targetMatch.winnerId ? 'COMPLETED' : 'UPCOMING');
       }
       if (broadcastData.scores) {
-        rootMatch.teamA.score = broadcastData.scores.scoreA;
-        rootMatch.teamB.score = broadcastData.scores.scoreB;
+        targetMatch.teamA = { ...targetMatch.teamA, score: broadcastData.scores.scoreA };
+        targetMatch.teamB = { ...targetMatch.teamB, score: broadcastData.scores.scoreB };
       }
-      if (broadcastData.telemetry) rootMatch.telemetry = broadcastData.telemetry;
-      this.notify();
-      return { success: true, message: 'Broadcast updated.', match: rootMatch };
+      if (broadcastData.telemetry) targetMatch.telemetry = broadcastData.telemetry;
+
+      const idx = this.matches.findIndex(m => m.id === matchId);
+      if (idx >= 0) {
+        this.matches[idx] = { ...targetMatch };
+      } else {
+        this.matches.push({ ...targetMatch });
+      }
     }
 
     const compMatchInfo = dotaCompetitionEngine.findMatch(matchId);
@@ -3276,13 +3319,47 @@ class FirebaseTournamentService {
         node.scores = { teamA: broadcastData.scores.scoreA, teamB: broadcastData.scores.scoreB };
       }
       if (broadcastData.telemetry) node.telemetry = broadcastData.telemetry;
-
-      const converted = this.getMatchById(matchId);
-      this.notify();
-      return { success: true, message: 'Competition match broadcast updated.', match: converted };
+      if (!targetMatch) {
+        targetMatch = this.getMatchById(matchId);
+      }
     }
 
-    return { success: false, message: 'Match not found.' };
+    const finalMatch = targetMatch || this.getMatchById(matchId);
+    this.notify();
+
+    // Persist directly to Firestore
+    if (db && finalMatch) {
+      try {
+        const payload = sanitizeFirestorePayload({
+          ...finalMatch,
+          updatedAt: new Date().toISOString()
+        });
+        await setDoc(doc(db, 'matches', matchId), payload, { merge: true });
+
+        const tId = finalMatch.tournamentId || broadcastData.tournamentId;
+        if (tId && compMatchInfo) {
+          try {
+            await setDoc(
+              doc(db, 'tournaments', tId, 'competition', 'structure'),
+              sanitizeFirestorePayload(compMatchInfo.structure),
+              { merge: true }
+            );
+            await updateDoc(doc(db, 'tournaments', tId), {
+              competitionStructure: sanitizeFirestorePayload(compMatchInfo.structure),
+              updatedAt: new Date().toISOString()
+            });
+          } catch {}
+        }
+      } catch (err) {
+        console.warn('[firebaseService] Direct Firestore save error:', err);
+      }
+    }
+
+    return { 
+      success: true, 
+      message: 'Broadcast updated and synced to Firestore.', 
+      match: finalMatch 
+    };
   }
 
   public getTeams(game?: CompetitiveGame): Team[] {

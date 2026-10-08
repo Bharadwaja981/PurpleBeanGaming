@@ -109,17 +109,18 @@ export function OrganiserBroadcastControlsModal({
       }
     };
 
-    // 1. Update in local firebaseService & competitionEngine
-    const localRes = tournamentService.updateMatchBroadcast(match.id, broadcastData);
+    // 1. Update in local firebaseService & persist directly to Firestore
+    const localRes = await tournamentService.updateMatchBroadcast(match.id, {
+      ...broadcastData,
+      tournamentId: match.tournamentId
+    });
 
-    // 2. Authoritative server push if tournamentId is present
-    if (match.tournamentId) {
-      await competitionClientService.updateBroadcast({
-        tournamentId: match.tournamentId,
-        matchId: match.id,
-        ...broadcastData
-      });
-    }
+    // 2. Authoritative server push (updates backend memory + admin Firestore doc)
+    await competitionClientService.updateBroadcast({
+      tournamentId: match.tournamentId,
+      matchId: match.id,
+      ...broadcastData
+    });
 
     setIsSaving(false);
     setSaveSuccess(true);
