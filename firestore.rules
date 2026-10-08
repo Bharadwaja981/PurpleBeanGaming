@@ -15,34 +15,76 @@ service cloud.firestore {
       );
     }
 
-    // 1. Tournaments Collection and subcollections (Public read, authenticated / admin write)
+    function isStaffOrOrganizer() {
+      return isSignedIn() && (
+        isAdmin() ||
+        request.auth.token.role == 'organizer' ||
+        request.auth.token.role == 'admin' ||
+        request.auth.token.email == '11106cm009@gmail.com' ||
+        request.auth.token.email == 'neelapuharsha@gmail.com'
+      );
+    }
+
+    function isTournamentOwner(tournamentId) {
+      return isSignedIn() && (
+        isStaffOrOrganizer() ||
+        (resource != null && (
+          resource.data.organizer == request.auth.uid ||
+          resource.data.organizerId == request.auth.uid ||
+          resource.data.organizerEmail == request.auth.token.email
+        ))
+      );
+    }
+
+    // 1. Tournaments Collection and subcollections (Public read, authenticated / organiser write)
     match /tournaments/{tournamentId} {
       allow read: if true;
-      allow write: if true;
+      allow create: if isSignedIn();
+      allow update: if isTournamentOwner(tournamentId) && (
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['competitionStructure', 'competitionStructureSummary'])
+      );
+      allow delete: if isStaffOrOrganizer();
+
+      // Competition structures (strictly server-authoritative via Cloud Functions; direct client writes disabled for all client accounts)
+      match /competition/{docId} {
+        allow read: if true;
+        allow write: if false;
+      }
+
+      // Matches subcollection if present (strictly server-authoritative via Cloud Functions; direct client writes disabled)
+      match /matches/{matchId} {
+        allow read: if true;
+        allow write: if false;
+      }
 
       match /{allSubcollections=**} {
-        allow read, write: if true;
+        allow read: if true;
+        allow write: if isStaffOrOrganizer();
       }
     }
 
     // 2. Auctions (Live bidding state)
     match /auctions/{auctionId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isSignedIn();
     }
 
     // 3. Teams Collection
     match /teams/{teamId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isStaffOrOrganizer() || isSignedIn();
     }
 
     // 4. Registrations Collection
     match /registrations/{registrationId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isSignedIn();
     }
 
-    // 5. Matches Collection
+    // 5. Matches Collection (Public read, server-authoritative writes via Cloud Functions only)
     match /matches/{matchId} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if false;
     }
 
     // 6. Users & Profiles
@@ -77,7 +119,8 @@ service cloud.firestore {
     }
 
     match /{document=**} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isAdmin();
     }
   }
 }

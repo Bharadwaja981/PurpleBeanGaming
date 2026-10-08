@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import { ViewType, NotificationItem, CompetitiveGame } from './types/tournament';
 import { Navigation } from './components/Navigation';
 import { SearchModal } from './components/SearchModal';
@@ -36,6 +37,10 @@ import { TournamentDetailView } from './views/TournamentDetailView';
 import { MatchesView } from './views/MatchesView';
 import { MatchDetailView } from './views/MatchDetailView';
 import { DoubleEliminationBracket } from './components/DoubleEliminationBracket';
+import { SingleEliminationBracket } from './components/SingleEliminationBracket';
+import { SwissStageView } from './components/SwissStageView';
+import { GroupStageView } from './components/GroupStageView';
+import { dotaCompetitionEngine } from './domain/dotaCompetitionEngine';
 import { TeamsView } from './views/TeamsView';
 import { TeamProfileView } from './views/TeamProfileView';
 import { PlayersView } from './views/PlayersView';
@@ -799,25 +804,59 @@ export default function App() {
                 />
               )}
 
-              {currentView === 'bracket' && (
-                <div className="space-y-6">
-                  <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-6 space-y-2">
-                    <span className="font-mono text-xs font-black uppercase text-[#7C3AED] block">
-                      PURPLE BEAN TOURNAMENT ENGINE · INDIA
-                    </span>
-                    <h1 className="text-3xl sm:text-5xl font-black uppercase text-black font-sans">
-                      INDIA MASTERS 2026 BRACKET
-                    </h1>
-                    <p className="font-mono text-xs text-stone-600">
-                      Official double elimination bracket. Solid black lines denote winner advancement; dotted red lines demonstrate upper bracket losers dropping directly to lower bracket survival deciders.
-                    </p>
+              {currentView === 'bracket' && (() => {
+                const tourneyId = activeEntityId || (tournamentService.getTournaments()[0]?.id || '');
+                const struct = dotaCompetitionEngine.getStructure(tourneyId);
+                const activeStage = struct?.stages?.[0];
+
+                return (
+                  <div className="space-y-6">
+                    <div className="bg-white border-[3.5px] border-black shadow-[6px_6px_0px_0px_#000] p-6 space-y-2">
+                      <span className="font-mono text-xs font-black uppercase text-[#7C3AED] block">
+                        PURPLE BEAN TOURNAMENT ENGINE · INDIA
+                      </span>
+                      <h1 className="text-3xl sm:text-5xl font-black uppercase text-black font-sans">
+                        {struct?.tournamentName || 'OFFICIAL COMPETITION'} BRACKET
+                      </h1>
+                      <p className="font-mono text-xs text-stone-600">
+                        {activeStage?.type === 'SINGLE_ELIMINATION' 
+                          ? 'Official Single Elimination Knockout bracket. Solid lines indicate progression to finals.'
+                          : activeStage?.type === 'SWISS'
+                          ? 'Official Swiss System tournament. Contenders paired dynamically round-by-round.'
+                          : activeStage?.type === 'GROUP_STAGE'
+                          ? 'Official Round-Robin Group Stage standings and fixtures.'
+                          : 'Official double elimination bracket. Solid black lines denote winner advancement; dotted red lines demonstrate upper bracket losers dropping directly to lower bracket survival deciders.'}
+                      </p>
+                    </div>
+
+                    {activeStage?.type === 'SINGLE_ELIMINATION' ? (
+                      <SingleEliminationBracket
+                        tournamentId={tourneyId}
+                        stageConfig={activeStage}
+                        onSelectMatch={(mId) => handleNavigate('match_detail', mId)}
+                      />
+                    ) : activeStage?.type === 'SWISS' ? (
+                      <SwissStageView
+                        stage={activeStage}
+                        tournamentId={tourneyId}
+                        onSelectMatch={(mId) => handleNavigate('match_detail', mId)}
+                      />
+                    ) : activeStage?.type === 'GROUP_STAGE' ? (
+                      <GroupStageView
+                        stage={activeStage}
+                        tournamentId={tourneyId}
+                        onSelectMatch={(mId) => handleNavigate('match_detail', mId)}
+                      />
+                    ) : (
+                      <DoubleEliminationBracket 
+                        tournamentId={tourneyId} 
+                        stageConfig={activeStage}
+                        onSelectMatch={(mId) => handleNavigate('match_detail', mId)} 
+                      />
+                    )}
                   </div>
-                  <DoubleEliminationBracket 
-                    tournamentId={activeEntityId || (tournamentService.getTournaments()[0]?.id || '')} 
-                    onSelectMatch={(mId) => handleNavigate('match_detail', mId)} 
-                  />
-                </div>
-              )}
+                );
+              })()}
 
               {currentView === 'teams' && (
                 <TeamsView onNavigate={handleNavigate} />

@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { dotaCompetitionEngine } from '../domain/dotaCompetitionEngine';
 import { verifyFirebaseBearerToken, getAdminDb } from './firebaseAdmin';
 import { generateSignedSteamState, verifySignedSteamState } from './steamState';
 import { buildSteamOpenIdLoginUrl, validateSteamOpenIdCallback } from './steamOpenId';
@@ -3157,6 +3158,257 @@ apiRouter.get('/tournaments/:tournamentId/test-tools/identities', async (req: Re
       success: false,
       error: err.message
     });
+  }
+});
+
+// -------------------------------------------------------------
+// Phase 4 & Production: Server-Authoritative Competition Operations
+// -------------------------------------------------------------
+
+// 1. Get Canonical Competition Structure (Public Read)
+apiRouter.get('/tournaments/:tournamentId/competition/structure', async (req: Request, res: Response) => {
+  try {
+    const tournamentId = req.params.tournamentId;
+    let structure = dotaCompetitionEngine.getStructure(tournamentId);
+    if (!structure) {
+      structure = await dotaCompetitionEngine.fetchStructureFromFirestore(tournamentId);
+    }
+    return res.json({
+      ok: true,
+      success: true,
+      structure: structure || null
+    });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, success: false, error: err.message });
+  }
+});
+
+// 2. Authoritative Generate Bracket/Group Structure (Organiser/Admin Only)
+apiRouter.post('/tournaments/:tournamentId/competition/generate', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const teams = req.body?.teams || [];
+    const result = dotaCompetitionEngine.generateFullStructure(tournamentId, teams);
+
+    return res.json({
+      ok: true,
+      success: result.success,
+      structure: result.structure
+    });
+  } catch (err: any) {
+    const status = err.message?.includes('ORGANIZER_PERMISSION_REQUIRED') ? 403 : (err.message?.includes('SIGN_IN_REQUIRED') ? 401 : 400);
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+
+// 3. Authoritative Publish & Lock Structure (Organiser/Admin Only)
+apiRouter.post('/tournaments/:tournamentId/competition/publish', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const result = await dotaCompetitionEngine.publishStructureTransactional({
+      tournamentId,
+      callerRole: 'organizer',
+      isAdmin: true
+    });
+
+    if (!result.success) {
+      return res.status(400).json({ ok: false, success: false, error: result.error });
+    }
+
+    return res.json({
+      ok: true,
+      success: true,
+      structure: result.structure
+    });
+  } catch (err: any) {
+    const status = err.message?.includes('ORGANIZER_PERMISSION_REQUIRED') ? 403 : (err.message?.includes('SIGN_IN_REQUIRED') ? 401 : 400);
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+
+// 4. Authoritative Unlock Structure for Post-Publication Editing (Organiser/Admin Only)
+apiRouter.post('/tournaments/:tournamentId/competition/unlock', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const result = await dotaCompetitionEngine.editPublishedStructureTransactional({
+      tournamentId,
+      callerRole: 'organizer',
+      isAdmin: true
+    });
+
+    return res.json({
+      ok: true,
+      success: result.success,
+      hasStartedMatches: result.hasStartedMatches,
+      structure: result.structure
+    });
+  } catch (err: any) {
+    const status = err.message?.includes('ORGANIZER_PERMISSION_REQUIRED') ? 403 : (err.message?.includes('SIGN_IN_REQUIRED') ? 401 : 400);
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+
+// 5. Authoritative Match Result Confirmation with Firestore Transaction (Organiser/Admin Only)
+apiRouter.post('/tournaments/:tournamentId/competition/matches/:matchId/result', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const { tournamentId, matchId } = req.params;
+    const { stageId, scoreA, scoreB, games, isForfeit, forfeitWinnerId, clientVersion } = req.body;
+
+    const result = await dotaCompetitionEngine.recordMatchResultTransactional({
+      tournamentId,
+      stageId,
+      matchId,
+      scoreA: Number(scoreA),
+      scoreB: Number(scoreB),
+      games,
+      confirmedBy: decoded.email || decoded.uid,
+      isForfeit: Boolean(isForfeit),
+      forfeitWinnerId,
+      clientVersion: typeof clientVersion === 'number' ? clientVersion : undefined,
+      callerRole: 'organizer',
+      isAdmin: true
+    });
+
+    if (!result.success) {
+      const status = result.error?.includes('STALE_SUBMISSION_CONFLICT') ? 409 : 400;
+      return res.status(status).json({ ok: false, success: false, error: result.error });
+    }
+
+    return res.json({
+      ok: true,
+      success: true,
+      match: result.match,
+      structure: result.structure
+    });
+  } catch (err: any) {
+    const status = err.message?.includes('ORGANIZER_PERMISSION_REQUIRED') ? 403 : (err.message?.includes('SIGN_IN_REQUIRED') ? 401 : 400);
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+
+// 6. Authoritative Add Stage (Organiser/Admin Only)
+apiRouter.post('/tournaments/:tournamentId/competition/stages', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const tournamentId = req.params.tournamentId;
+    const { type, name, defaultSeriesFormat } = req.body;
+    const newStageRes = dotaCompetitionEngine.addStage(tournamentId, type || 'DOUBLE_ELIMINATION');
+    if (newStageRes.stage && name) newStageRes.stage.name = name;
+    if (newStageRes.stage && defaultSeriesFormat) newStageRes.stage.defaultSeriesFormat = defaultSeriesFormat;
+
+    const structure = dotaCompetitionEngine.getStructure(tournamentId);
+    return res.json({ ok: true, success: newStageRes.success, stage: newStageRes.stage, structure });
+  } catch (err: any) {
+    const status = err.message?.includes('ORGANIZER_PERMISSION_REQUIRED') ? 403 : (err.message?.includes('SIGN_IN_REQUIRED') ? 401 : 400);
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+
+// 7. Authoritative Delete Stage (Organiser/Admin Only)
+apiRouter.delete('/tournaments/:tournamentId/competition/stages/:stageId', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const { tournamentId, stageId } = req.params;
+    const ok = dotaCompetitionEngine.deleteStage(tournamentId, stageId);
+    const structure = dotaCompetitionEngine.getStructure(tournamentId);
+    return res.json({ ok: true, success: ok, structure });
+  } catch (err: any) {
+    const status = err.message?.includes('ORGANIZER_PERMISSION_REQUIRED') ? 403 : (err.message?.includes('SIGN_IN_REQUIRED') ? 401 : 400);
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+
+// 8. Authoritative Move Stage (Organiser/Admin Only)
+apiRouter.post('/tournaments/:tournamentId/competition/stages/:stageId/move', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const { tournamentId, stageId } = req.params;
+    const direction = req.body?.direction || 'UP';
+    const ok = dotaCompetitionEngine.moveStage(tournamentId, stageId, direction);
+    const structure = dotaCompetitionEngine.getStructure(tournamentId);
+    return res.json({ ok: true, success: ok, structure });
+  } catch (err: any) {
+    const status = err.message?.includes('ORGANIZER_PERMISSION_REQUIRED') ? 403 : (err.message?.includes('SIGN_IN_REQUIRED') ? 401 : 400);
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+
+// 9. Authoritative Update Stage Config (Organiser/Admin Only)
+apiRouter.put('/tournaments/:tournamentId/competition/stages/:stageId', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const { tournamentId, stageId } = req.params;
+    const updates = req.body?.updates || req.body || {};
+    const ok = dotaCompetitionEngine.updateStageConfig(tournamentId, stageId, updates);
+    const structure = dotaCompetitionEngine.getStructure(tournamentId);
+    return res.json({ ok: true, success: ok, structure });
+  } catch (err: any) {
+    const status = err.message?.includes('ORGANIZER_PERMISSION_REQUIRED') ? 403 : (err.message?.includes('SIGN_IN_REQUIRED') ? 401 : 400);
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+
+// 10. Authoritative Swap Team Placements Before Publication (Organiser/Admin Only)
+apiRouter.post('/tournaments/:tournamentId/competition/swap-teams', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const { tournamentId } = req.params;
+    const { teamIdA, teamIdB } = req.body;
+    const ok = dotaCompetitionEngine.swapTeams(tournamentId, teamIdA, teamIdB);
+    const structure = dotaCompetitionEngine.getStructure(tournamentId);
+    return res.json({ ok: true, success: ok, structure });
+  } catch (err: any) {
+    const status = err.message?.includes('ORGANIZER_PERMISSION_REQUIRED') ? 403 : (err.message?.includes('SIGN_IN_REQUIRED') ? 401 : 400);
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+
+// 11. Authoritative Match Scheduling & Series Format (Organiser/Admin Only)
+apiRouter.post('/tournaments/:tournamentId/competition/matches/:matchId/schedule', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+
+    const { tournamentId, matchId } = req.params;
+    const { scheduledTime, seriesFormat } = req.body;
+    const ok = dotaCompetitionEngine.updateMatchSchedule(tournamentId, matchId, scheduledTime, seriesFormat);
+    const structure = dotaCompetitionEngine.getStructure(tournamentId);
+    return res.json({ ok: true, success: ok, structure });
+  } catch (err: any) {
+    const status = err.message?.includes('ORGANIZER_PERMISSION_REQUIRED') ? 403 : (err.message?.includes('SIGN_IN_REQUIRED') ? 401 : 400);
+    return res.status(status).json({ ok: false, success: false, error: err.message });
   }
 });
 

@@ -5,13 +5,3384 @@ import express from "express";
 // ../src/server/apiRouter.ts
 import { Router } from "express";
 
+// ../src/domain/dotaCompetitionEngine.ts
+import { doc as doc2, setDoc, updateDoc, onSnapshot, getDoc, runTransaction } from "firebase/firestore";
+
+// ../src/services/firebaseConfig.ts
+import { initializeApp, getApps, getApp } from "firebase/app";
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  signOut as fbSignOut,
+  onAuthStateChanged
+} from "firebase/auth";
+import { initializeFirestore, getFirestore, doc, getDocFromServer, setLogLevel } from "firebase/firestore";
+
+// ../firebase-applet-config.json
+var firebase_applet_config_default = {
+  projectId: "gen-lang-client-0634745445",
+  appId: "1:866955042948:web:b4faf027f5552b1d90e2d1",
+  apiKey: "AIzaSyBXbW4wptQI_ny98vCEcHbdHJhsMgRYbv0",
+  authDomain: "gen-lang-client-0634745445.firebaseapp.com",
+  firestoreDatabaseId: "ai-studio-helloworld-3b15cdcf-4ce0-4040-9e96-73767517ade0",
+  storageBucket: "gen-lang-client-0634745445.firebasestorage.app",
+  messagingSenderId: "866955042948",
+  measurementId: "",
+  oAuthClientId: "866955042948-mtiemau7sc6smf9mtp7m4vqumedhomau.apps.googleusercontent.com",
+  recaptchaSiteKey: ""
+};
+
+// ../src/services/firebaseConfig.ts
+try {
+  setLogLevel("silent");
+} catch {
+}
+var env = typeof import.meta !== "undefined" && import.meta.env ? import.meta.env : {};
+var activeFirebaseConfig = {
+  projectId: env.VITE_FIREBASE_PROJECT_ID || firebase_applet_config_default.projectId,
+  appId: env.VITE_FIREBASE_APP_ID || firebase_applet_config_default.appId,
+  apiKey: env.VITE_FIREBASE_API_KEY || firebase_applet_config_default.apiKey,
+  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || firebase_applet_config_default.authDomain,
+  firestoreDatabaseId: env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebase_applet_config_default.firestoreDatabaseId,
+  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || firebase_applet_config_default.storageBucket,
+  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebase_applet_config_default.messagingSenderId,
+  measurementId: env.VITE_FIREBASE_MEASUREMENT_ID || firebase_applet_config_default.measurementId || "",
+  oAuthClientId: env.VITE_FIREBASE_OAUTH_CLIENT_ID || firebase_applet_config_default.oAuthClientId || "",
+  recaptchaSiteKey: env.VITE_FIREBASE_RECAPTCHA_SITE_KEY || firebase_applet_config_default.recaptchaSiteKey || ""
+};
+var app = getApps().length > 0 ? getApp() : initializeApp(activeFirebaseConfig);
+var db = (() => {
+  try {
+    return initializeFirestore(app, {
+      experimentalForceLongPolling: true,
+      ignoreUndefinedProperties: true
+    }, activeFirebaseConfig.firestoreDatabaseId);
+  } catch {
+    return getFirestore(app, activeFirebaseConfig.firestoreDatabaseId);
+  }
+})();
+var auth = getAuth(app);
+var googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({
+  prompt: "select_account"
+});
+var quotaExhaustedState = false;
+var quotaListeners = /* @__PURE__ */ new Set();
+var LOCAL_DEV_MODE_KEY = "pb_local_dev_sync_mode";
+var localDevSyncMode = (() => {
+  if (typeof window !== "undefined" && window.localStorage) {
+    const saved = window.localStorage.getItem(LOCAL_DEV_MODE_KEY);
+    if (saved !== null) {
+      return saved === "true";
+    }
+  }
+  return false;
+})();
+function isQuotaExhausted() {
+  return quotaExhaustedState;
+}
+function setQuotaExhausted(exhausted = true) {
+  if (quotaExhaustedState !== exhausted) {
+    quotaExhaustedState = exhausted;
+    quotaListeners.forEach((cb) => {
+      try {
+        cb(isQuotaExhausted());
+      } catch {
+      }
+    });
+  }
+}
+function isQuotaError(error) {
+  if (!error) return false;
+  const msg = error instanceof Error ? error.message : String(error);
+  const code = error?.code;
+  return code === "resource-exhausted" || msg.toLowerCase().includes("quota") || msg.toLowerCase().includes("resource-exhausted") || msg.toLowerCase().includes("quota limit exceeded");
+}
+async function testFirestoreConnection() {
+  try {
+    await getDocFromServer(doc(db, "test", "connection"));
+    return true;
+  } catch (error) {
+    if (isQuotaError(error)) {
+      setQuotaExhausted(true);
+    }
+    if (error instanceof Error && error.message.includes("the client is offline")) {
+      console.warn("Please check your Firebase configuration: client is offline");
+      return false;
+    }
+    return true;
+  }
+}
+if (typeof window !== "undefined") {
+  setTimeout(() => {
+    testFirestoreConnection().catch(() => {
+    });
+  }, 1500);
+}
+
+// ../src/utils/sanitizeFirestore.ts
+function removeUndefinedDeep(value) {
+  if (value === null || value === void 0) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.filter((item) => item !== void 0).map((item) => typeof item === "object" && item !== null ? removeUndefinedDeep(item) : item);
+  }
+  if (typeof value === "object") {
+    if (value instanceof Date || value instanceof RegExp) {
+      return value;
+    }
+    const sanitized = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (v !== void 0) {
+        if (typeof v === "object" && v !== null) {
+          sanitized[k] = removeUndefinedDeep(v);
+        } else {
+          sanitized[k] = v;
+        }
+      }
+    }
+    return sanitized;
+  }
+  return value;
+}
+function sanitizeFirestorePayload(payload) {
+  return removeUndefinedDeep(payload);
+}
+
+// ../src/domain/dotaCompetitionEngine.ts
+var SHARED_STRUCTURE_STORAGE = /* @__PURE__ */ new Map();
+function getStorageBackend() {
+  if (typeof window !== "undefined" && window.localStorage) {
+    return window.localStorage;
+  }
+  if (typeof globalThis !== "undefined" && globalThis.localStorage) {
+    return globalThis.localStorage;
+  }
+  return {
+    getItem: (key) => SHARED_STRUCTURE_STORAGE.get(key) || null,
+    setItem: (key, value) => {
+      SHARED_STRUCTURE_STORAGE.set(key, String(value));
+    },
+    removeItem: (key) => {
+      SHARED_STRUCTURE_STORAGE.delete(key);
+    },
+    clear: () => {
+      SHARED_STRUCTURE_STORAGE.clear();
+    }
+  };
+}
+var DotaCompetitionEngine = class {
+  constructor() {
+    this.structures = /* @__PURE__ */ new Map();
+    this.structureSubscribers = /* @__PURE__ */ new Map();
+    this.firestoreListeners = /* @__PURE__ */ new Map();
+  }
+  loadPersistedStructure(tournamentId) {
+    const storage = getStorageBackend();
+    if (!storage) return void 0;
+    try {
+      const raw = storage.getItem(`pbg_competition_structure_${tournamentId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.tournamentId === tournamentId) {
+          return parsed;
+        }
+      }
+    } catch {
+    }
+    return void 0;
+  }
+  persistStructure(tournamentId, state) {
+    const storage = getStorageBackend();
+    if (storage) {
+      try {
+        storage.setItem(`pbg_competition_structure_${tournamentId}`, JSON.stringify(state));
+      } catch {
+      }
+    }
+    try {
+      if (db && tournamentId) {
+        const payload = sanitizeFirestorePayload(state);
+        setDoc(doc2(db, "tournaments", tournamentId, "competition", "structure"), payload, { merge: true }).catch(() => {
+        });
+        updateDoc(doc2(db, "tournaments", tournamentId), {
+          competitionStructure: payload,
+          competitionStructureSummary: {
+            status: state.status,
+            isLocked: state.isLocked,
+            version: state.version,
+            stageCount: state.stages.length,
+            matchCount: (state.matches || []).length,
+            completedMatchCount: (state.matches || []).filter((m) => m.status === "COMPLETED" || m.status === "FORFEIT").length,
+            format: state.format,
+            updatedAt: state.updatedAt,
+            publishedAt: state.publishedAt || null
+          },
+          updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+        }).catch(() => {
+        });
+      }
+    } catch {
+    }
+    this.notifySubscribers(tournamentId, state);
+  }
+  subscribe(tournamentId, listener) {
+    if (!this.structureSubscribers.has(tournamentId)) {
+      this.structureSubscribers.set(tournamentId, /* @__PURE__ */ new Set());
+    }
+    const set = this.structureSubscribers.get(tournamentId);
+    set.add(listener);
+    const current = this.structures.get(tournamentId) || this.loadPersistedStructure(tournamentId);
+    if (current) {
+      listener(current);
+    }
+    this.listenToFirestore(tournamentId);
+    return () => {
+      set.delete(listener);
+    };
+  }
+  listenToFirestore(tournamentId) {
+    if (!tournamentId || !db) return () => {
+    };
+    if (this.firestoreListeners.has(tournamentId)) {
+      return this.firestoreListeners.get(tournamentId);
+    }
+    try {
+      const unsub = onSnapshot(doc2(db, "tournaments", tournamentId, "competition", "structure"), (snap) => {
+        if (snap.exists()) {
+          const remoteData = snap.data();
+          if (remoteData && remoteData.tournamentId === tournamentId) {
+            this.structures.set(tournamentId, remoteData);
+            const storage = getStorageBackend();
+            try {
+              storage?.setItem(`pbg_competition_structure_${tournamentId}`, JSON.stringify(remoteData));
+            } catch {
+            }
+            this.notifySubscribers(tournamentId, remoteData);
+          }
+        }
+      }, () => {
+      });
+      this.firestoreListeners.set(tournamentId, unsub);
+      return unsub;
+    } catch {
+      return () => {
+      };
+    }
+  }
+  hydrateFromFirestore(tournamentId, remoteData) {
+    if (!remoteData || !tournamentId) return;
+    this.structures.set(tournamentId, remoteData);
+    const storage = getStorageBackend();
+    try {
+      storage?.setItem(`pbg_competition_structure_${tournamentId}`, JSON.stringify(remoteData));
+    } catch {
+    }
+    this.notifySubscribers(tournamentId, remoteData);
+  }
+  notifySubscribers(tournamentId, struct) {
+    const set = this.structureSubscribers.get(tournamentId);
+    if (set) {
+      set.forEach((cb) => {
+        try {
+          cb(struct);
+        } catch {
+        }
+      });
+    }
+  }
+  async fetchStructureFromFirestore(tournamentId) {
+    if (!tournamentId || !db) return void 0;
+    try {
+      const structRef = doc2(db, "tournaments", tournamentId, "competition", "structure");
+      const snap = await getDoc(structRef);
+      if (snap.exists()) {
+        const remoteData = snap.data();
+        this.structures.set(tournamentId, remoteData);
+        const storage = getStorageBackend();
+        try {
+          storage?.setItem(`pbg_competition_structure_${tournamentId}`, JSON.stringify(remoteData));
+        } catch {
+        }
+        try {
+          const tourneyRef = doc2(db, "tournaments", tournamentId);
+          const tSnap = await getDoc(tourneyRef);
+          if (tSnap.exists()) {
+            const tData = tSnap.data();
+            const summaryVer = tData?.competitionStructureSummary?.version;
+            if (summaryVer !== remoteData.version) {
+              const sanitized = sanitizeFirestorePayload(remoteData);
+              await updateDoc(tourneyRef, {
+                competitionStructure: sanitized,
+                competitionStructureSummary: {
+                  status: remoteData.status,
+                  isLocked: remoteData.isLocked,
+                  version: remoteData.version,
+                  stageCount: remoteData.stages.length,
+                  matchCount: (remoteData.matches || []).length,
+                  completedMatchCount: (remoteData.matches || []).filter((m) => m.status === "COMPLETED" || m.status === "FORFEIT").length,
+                  format: remoteData.format,
+                  updatedAt: remoteData.updatedAt,
+                  publishedAt: remoteData.publishedAt || null
+                },
+                updatedAt: remoteData.updatedAt
+              });
+            }
+          }
+        } catch {
+        }
+        return remoteData;
+      } else {
+        const tourneyRef = doc2(db, "tournaments", tournamentId);
+        const tSnap = await getDoc(tourneyRef);
+        if (tSnap.exists()) {
+          const tData = tSnap.data();
+          if (tData?.competitionStructure) {
+            const structureData = tData.competitionStructure;
+            this.structures.set(tournamentId, structureData);
+            try {
+              await setDoc(structRef, sanitizeFirestorePayload(structureData), { merge: true });
+            } catch {
+            }
+            return structureData;
+          }
+        }
+      }
+    } catch {
+    }
+    return void 0;
+  }
+  async ensureCanonicalSync(tournamentId) {
+    const struct = await this.fetchStructureFromFirestore(tournamentId);
+    return Boolean(struct);
+  }
+  getStructure(tournamentId) {
+    const memory = this.structures.get(tournamentId);
+    if (memory) return memory;
+    const persisted = this.loadPersistedStructure(tournamentId);
+    if (persisted) {
+      this.structures.set(tournamentId, persisted);
+      return persisted;
+    }
+    return void 0;
+  }
+  setStructure(tournamentId, state) {
+    this.structures.set(tournamentId, state);
+    this.persistStructure(tournamentId, state);
+  }
+  /**
+   * Initializes or returns structure draft for a tournament
+   */
+  getOrCreateStructure(tournamentId, initialTeams = []) {
+    const existing = this.structures.get(tournamentId);
+    if (existing) {
+      if (initialTeams.length > 0 && (!existing.teams || existing.teams.length === 0)) {
+        existing.teams = this.normalizeTeams(initialTeams);
+      }
+      return existing;
+    }
+    const seededTeams = this.normalizeTeams(initialTeams);
+    const defaultStages = [
+      {
+        id: `stage-${tournamentId}-1`,
+        name: "Stage 1: Playoff Bracket",
+        sequence: 1,
+        type: "DOUBLE_ELIMINATION",
+        status: "UPCOMING",
+        teamCount: Math.max(4, seededTeams.length || 8),
+        defaultSeriesFormat: "BO3",
+        grandFinalSeriesFormat: "BO5",
+        thirdPlaceMatch: false,
+        grandFinalReset: true,
+        seedingMode: "RATING_BASED",
+        seededTeams: [...seededTeams],
+        matches: []
+      }
+    ];
+    const newStructure = {
+      tournamentId,
+      format: "DOUBLE_ELIMINATION",
+      config: { format: "DOUBLE_ELIMINATION" },
+      status: "DRAFT",
+      version: 1,
+      stages: defaultStages,
+      isLocked: false,
+      teams: seededTeams,
+      matches: [],
+      auditTrail: [
+        {
+          id: `audit-${Date.now()}-init`,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+          actorId: "system",
+          action: "INIT_STRUCTURE",
+          details: `Initialized draft competition structure with ${seededTeams.length} teams.`
+        }
+      ]
+    };
+    this.structures.set(tournamentId, newStructure);
+    return newStructure;
+  }
+  normalizeTeams(rawTeams) {
+    return rawTeams.map((t, idx) => ({
+      teamId: t.id || t.teamId || `placeholder-team-${idx + 1}`,
+      name: t.name || t.teamName || `Seed #${idx + 1}`,
+      tag: t.tag || `T${idx + 1}`,
+      seed: idx + 1,
+      rating: t.rating || 1500,
+      mmr: t.mmr || t.lockedTournamentMmr || t.primaryRoster?.[0]?.tournamentMmr || 6e3,
+      logo: t.logo || "\u{1F6E1}\uFE0F",
+      color: t.color || "#7C3AED",
+      captainUserId: t.captainId || t.captainUserId,
+      captainIgn: t.captainName || t.captainIgn,
+      isPlaceholder: Boolean(t.isPlaceholder || !t.id)
+    }));
+  }
+  /**
+   * Adds a new stage to tournament structure
+   */
+  addStage(tournamentId, type, customName) {
+    const structure = this.getOrCreateStructure(tournamentId);
+    const nextSeq = structure.stages.length + 1;
+    const stageId = `stage-${tournamentId}-${Date.now()}-${nextSeq}`;
+    let defaultName = `Stage ${nextSeq}: `;
+    switch (type) {
+      case "GROUP_STAGE":
+        defaultName += "Group Stage";
+        break;
+      case "ROUND_ROBIN":
+        defaultName += "Round Robin";
+        break;
+      case "DOUBLE_ROUND_ROBIN":
+        defaultName += "Double Round Robin";
+        break;
+      case "GSL":
+        defaultName += "GSL Group Format";
+        break;
+      case "SWISS":
+        defaultName += "Swiss System";
+        break;
+      case "SINGLE_ELIMINATION":
+        defaultName += "Single Elimination Bracket";
+        break;
+      case "DOUBLE_ELIMINATION":
+        defaultName += "Double Elimination Bracket";
+        break;
+      case "LEAGUE":
+        defaultName += "League Play";
+        break;
+      case "PLAY_IN":
+        defaultName += "Play-In Gauntlet";
+        break;
+      case "CUSTOM":
+        defaultName += "Custom Stage";
+        break;
+    }
+    const newStage = {
+      id: stageId,
+      name: customName || defaultName,
+      sequence: nextSeq,
+      type,
+      status: "UPCOMING",
+      teamCount: structure.teams?.length || 8,
+      defaultSeriesFormat: type === "GROUP_STAGE" || type === "ROUND_ROBIN" || type === "DOUBLE_ROUND_ROBIN" ? "BO2" : "BO3",
+      grandFinalSeriesFormat: "BO5",
+      groupCount: type === "GROUP_STAGE" || type === "GSL" ? 2 : void 0,
+      teamsPerGroup: type === "GSL" ? 4 : type === "GROUP_STAGE" ? 4 : void 0,
+      winPoints: 3,
+      drawPoints: 1,
+      lossPoints: 0,
+      seedingMode: "RATING_BASED",
+      seededTeams: structure.teams ? [...structure.teams] : [],
+      matches: []
+    };
+    structure.stages.push(newStage);
+    structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.appendAudit(structure, "ADD_STAGE", `Added stage "${newStage.name}" (${type}) at sequence ${nextSeq}.`);
+    return { success: true, stage: newStage };
+  }
+  /**
+   * Reorders stages (Move Up / Down)
+   */
+  moveStage(tournamentId, stageId, direction) {
+    const structure = this.getStructure(tournamentId);
+    if (!structure) return false;
+    const idx = structure.stages.findIndex((s) => s.id === stageId);
+    if (idx === -1) return false;
+    if (direction === "UP" && idx > 0) {
+      const temp = structure.stages[idx];
+      structure.stages[idx] = structure.stages[idx - 1];
+      structure.stages[idx - 1] = temp;
+    } else if (direction === "DOWN" && idx < structure.stages.length - 1) {
+      const temp = structure.stages[idx];
+      structure.stages[idx] = structure.stages[idx + 1];
+      structure.stages[idx + 1] = temp;
+    }
+    structure.stages.forEach((s, i) => {
+      s.sequence = i + 1;
+    });
+    structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.appendAudit(structure, "REORDER_STAGES", `Moved stage ${stageId} ${direction}.`);
+    return true;
+  }
+  /**
+   * Replaces stage type in place
+   */
+  replaceStageType(tournamentId, stageId, newType) {
+    const structure = this.getStructure(tournamentId);
+    if (!structure) return false;
+    const stage = structure.stages.find((s) => s.id === stageId);
+    if (!stage) return false;
+    stage.type = newType;
+    if (newType === "GROUP_STAGE" || newType === "ROUND_ROBIN" || newType === "DOUBLE_ROUND_ROBIN") {
+      stage.defaultSeriesFormat = "BO2";
+      stage.groupCount = stage.groupCount || 2;
+      stage.teamsPerGroup = stage.teamsPerGroup || 4;
+    } else if (newType === "GSL") {
+      stage.defaultSeriesFormat = "BO3";
+      stage.groupCount = stage.groupCount || 2;
+      stage.teamsPerGroup = 4;
+    } else {
+      stage.defaultSeriesFormat = "BO3";
+    }
+    stage.matches = [];
+    structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.appendAudit(structure, "REPLACE_STAGE_TYPE", `Replaced stage ${stage.name} type with ${newType}.`);
+    return true;
+  }
+  /**
+   * Deletes a stage
+   */
+  deleteStage(tournamentId, stageId) {
+    const structure = this.getStructure(tournamentId);
+    if (!structure) return false;
+    const stageToDelete = structure.stages.find((s) => s.id === stageId);
+    if (!stageToDelete) return false;
+    const hasCompleted = stageToDelete.matches?.some((m) => m.status === "COMPLETED");
+    if (hasCompleted) {
+      throw new Error("Cannot delete a stage with completed matches.");
+    }
+    structure.stages = structure.stages.filter((s) => s.id !== stageId);
+    structure.stages.forEach((s, i) => {
+      s.sequence = i + 1;
+    });
+    structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.appendAudit(structure, "DELETE_STAGE", `Deleted stage "${stageToDelete.name}".`);
+    return true;
+  }
+  /**
+   * Updates stage properties
+   */
+  updateStageConfig(tournamentId, stageId, updates) {
+    const structure = this.getStructure(tournamentId);
+    if (!structure) return false;
+    const stage = structure.stages.find((s) => s.id === stageId);
+    if (!stage) return false;
+    Object.assign(stage, updates);
+    structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.appendAudit(structure, "UPDATE_STAGE_CONFIG", `Updated configuration for stage "${stage.name}".`);
+    return true;
+  }
+  /**
+   * Swap seeds between two teams
+   */
+  swapSeeds(tournamentId, stageId, seedA, seedB) {
+    const structure = this.getStructure(tournamentId);
+    if (!structure) return false;
+    const stage = structure.stages.find((s) => s.id === stageId);
+    if (!stage || !stage.seededTeams) return false;
+    const teamA = stage.seededTeams.find((t) => t.seed === seedA);
+    const teamB = stage.seededTeams.find((t) => t.seed === seedB);
+    if (!teamA || !teamB) return false;
+    teamA.seed = seedB;
+    teamB.seed = seedA;
+    stage.seededTeams.sort((a, b) => a.seed - b.seed);
+    structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.appendAudit(structure, "SWAP_SEEDS", `Swapped seed #${seedA} (${teamA.name}) with seed #${seedB} (${teamB.name}).`);
+    return true;
+  }
+  /**
+   * Reassign a team to a different group
+   */
+  reassignTeamGroup(tournamentId, stageId, teamId, targetGroupId) {
+    const structure = this.getStructure(tournamentId);
+    if (!structure) return false;
+    const stage = structure.stages.find((s) => s.id === stageId);
+    if (!stage || !stage.groups) return false;
+    let targetTeam = null;
+    stage.groups.forEach((grp) => {
+      const found = grp.teams.find((t) => t.teamId === teamId);
+      if (found) {
+        targetTeam = found;
+        grp.teams = grp.teams.filter((t) => t.teamId !== teamId);
+      }
+    });
+    if (!targetTeam) return false;
+    const targetGroup = stage.groups.find((g) => g.id === targetGroupId);
+    if (!targetGroup) return false;
+    targetTeam.groupId = targetGroup.id;
+    targetTeam.groupName = targetGroup.name;
+    targetGroup.teams.push(targetTeam);
+    structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.appendAudit(structure, "REASSIGN_GROUP", `Reassigned team ${targetTeam.name} to ${targetGroup.name}.`);
+    return true;
+  }
+  /**
+   * Applies automated seeding (MANUAL, RANDOM, RATING_BASED, RANKING_BASED)
+   */
+  applySeedingMethod(tournamentId, stageId, method) {
+    const structure = this.getStructure(tournamentId);
+    if (!structure) return { success: false, seededTeams: [] };
+    const stage = structure.stages.find((s) => s.id === stageId);
+    if (!stage || !stage.seededTeams) return { success: false, seededTeams: [] };
+    stage.seedingMode = method;
+    if (method === "RATING_BASED") {
+      stage.seededTeams.sort((a, b) => (b.mmr || b.rating || 0) - (a.mmr || a.rating || 0));
+      stage.seededTeams.forEach((t, i) => {
+        t.seed = i + 1;
+      });
+    } else if (method === "RANDOM") {
+      const shuffled = [...stage.seededTeams].sort(() => Math.random() - 0.5);
+      shuffled.forEach((t, i) => {
+        t.seed = i + 1;
+      });
+      stage.seededTeams = shuffled;
+    }
+    structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.appendAudit(structure, "APPLY_SEEDING", `Applied ${method} seeding to stage "${stage.name}".`);
+    return { success: true, seededTeams: stage.seededTeams };
+  }
+  /**
+   * Generates bracket/group match fixtures for all stages in structure
+   */
+  generateFullStructure(tournamentId, availableTeams = []) {
+    const structure = this.getOrCreateStructure(tournamentId, availableTeams);
+    const teamsList = structure.teams && structure.teams.length > 0 ? structure.teams : this.normalizeTeams(availableTeams);
+    structure.teams = teamsList;
+    if (tournamentId === "pb-challenger-2026" || structure.format === "groups_to_playoffs") {
+      const teamsA = teamsList.slice(0, 4);
+      const teamsB = teamsList.slice(4, 8);
+      const matchesA = this.buildRoundRobinMatches(tournamentId, teamsA, "BO1", "group-a");
+      const matchesB = this.buildRoundRobinMatches(tournamentId, teamsB, "BO1", "group-b");
+      const standingsA = teamsA.map((t, idx) => ({
+        teamId: t.teamId,
+        teamName: t.name || t.teamName,
+        rank: idx + 1,
+        points: (3 - idx) * 3,
+        gamesWon: (3 - idx) * 2,
+        gamesLost: idx * 2
+      }));
+      const standingsB = teamsB.map((t, idx) => ({
+        teamId: t.teamId,
+        teamName: t.name || t.teamName,
+        rank: idx + 1,
+        points: (3 - idx) * 3,
+        gamesWon: (3 - idx) * 2,
+        gamesLost: idx * 2
+      }));
+      structure.groups = {
+        "group-a": { id: "group-a", name: "Group A", teams: teamsA, matches: matchesA, standings: standingsA },
+        "group-b": { id: "group-b", name: "Group B", teams: teamsB, matches: matchesB, standings: standingsB }
+      };
+      const sf1 = {
+        id: `${tournamentId}-po-sf-1`,
+        tournamentId,
+        stage: "playoffs",
+        round: "Playoff Semifinal 1",
+        roundKey: "po-sf",
+        bracketType: "upper",
+        seriesFormat: "BO3",
+        teamA: { name: "Group A 1st Place", sourceLabel: "A1", seed: 1 },
+        teamB: { name: "Group B 2nd Place", sourceLabel: "B2", seed: 2 },
+        winnerNextMatchId: `${tournamentId}-po-final`,
+        winnerNextSlot: "teamA",
+        winnerDestinationId: `${tournamentId}-po-final`,
+        winnerDestinationSlot: "teamA",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      };
+      const sf2 = {
+        id: `${tournamentId}-po-sf-2`,
+        tournamentId,
+        stage: "playoffs",
+        round: "Playoff Semifinal 2",
+        roundKey: "po-sf",
+        bracketType: "upper",
+        seriesFormat: "BO3",
+        teamA: { name: "Group B 1st Place", sourceLabel: "B1", seed: 1 },
+        teamB: { name: "Group A 2nd Place", sourceLabel: "A2", seed: 2 },
+        winnerNextMatchId: `${tournamentId}-po-final`,
+        winnerNextSlot: "teamB",
+        winnerDestinationId: `${tournamentId}-po-final`,
+        winnerDestinationSlot: "teamB",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      };
+      const poFinal = {
+        id: `${tournamentId}-po-final`,
+        tournamentId,
+        stage: "grand_final",
+        round: "Playoff Grand Final",
+        roundKey: "po-final",
+        bracketType: "grand_final",
+        seriesFormat: "BO5",
+        teamA: { name: "Winner SF1", seed: 0 },
+        teamB: { name: "Winner SF2", seed: 0 },
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      };
+      const allMatches = [...matchesA, ...matchesB, sf1, sf2, poFinal];
+      structure.matches = allMatches;
+      if (structure.stages[0]) structure.stages[0].matches = allMatches;
+      structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+      return { success: true, structure };
+    }
+    let allStructureMatches = [];
+    for (let sIdx = 0; sIdx < structure.stages.length; sIdx++) {
+      const stage = structure.stages[sIdx];
+      const isFirstStage = sIdx === 0;
+      const stageTeams = isFirstStage ? [...teamsList] : stage.seededTeams || [];
+      if (stage.type === "GROUP_STAGE" || stage.type === "ROUND_ROBIN" || stage.type === "DOUBLE_ROUND_ROBIN") {
+        const groupCount = Math.max(1, stage.groupCount || 2);
+        const groups = [];
+        const stageMatches = [];
+        for (let g = 0; g < groupCount; g++) {
+          const letter = String.fromCharCode(65 + g);
+          groups.push({
+            id: `group-${stage.id}-${letter}`,
+            name: `Group ${letter}`,
+            teams: []
+          });
+        }
+        stageTeams.forEach((tm, idx) => {
+          const targetGroup = groups[idx % groupCount];
+          tm.groupId = targetGroup.id;
+          tm.groupName = targetGroup.name;
+          targetGroup.teams.push(tm);
+        });
+        stage.groups = groups;
+        const isDoubleRR = stage.type === "DOUBLE_ROUND_ROBIN";
+        groups.forEach((grp) => {
+          const grpTeams = grp.teams;
+          let matchNum = 1;
+          for (let i = 0; i < grpTeams.length; i++) {
+            for (let j = i + 1; j < grpTeams.length; j++) {
+              stageMatches.push({
+                id: `match-${stage.id}-${grp.name.replace(/\s+/g, "")}-m${matchNum++}`,
+                tournamentId,
+                stageId: stage.id,
+                stageName: stage.name,
+                round: `${grp.name} Round 1`,
+                roundKey: grp.name,
+                bracketType: "group",
+                seriesFormat: stage.defaultSeriesFormat || "BO2",
+                teamA: grpTeams[i],
+                teamB: grpTeams[j],
+                teamASource: { type: "SEED", sourceSeed: grpTeams[i].seed, label: `#${grpTeams[i].seed} ${grpTeams[i].name}` },
+                teamBSource: { type: "SEED", sourceSeed: grpTeams[j].seed, label: `#${grpTeams[j].seed} ${grpTeams[j].name}` },
+                status: "UPCOMING",
+                scores: { teamA: 0, teamB: 0 },
+                games: []
+              });
+              if (isDoubleRR) {
+                stageMatches.push({
+                  id: `match-${stage.id}-${grp.name.replace(/\s+/g, "")}-m${matchNum++}`,
+                  tournamentId,
+                  stageId: stage.id,
+                  stageName: stage.name,
+                  round: `${grp.name} Round 2`,
+                  roundKey: grp.name,
+                  bracketType: "group",
+                  seriesFormat: stage.defaultSeriesFormat || "BO2",
+                  teamA: grpTeams[j],
+                  teamB: grpTeams[i],
+                  teamASource: { type: "SEED", sourceSeed: grpTeams[j].seed, label: `#${grpTeams[j].seed} ${grpTeams[j].name}` },
+                  teamBSource: { type: "SEED", sourceSeed: grpTeams[i].seed, label: `#${grpTeams[i].seed} ${grpTeams[i].name}` },
+                  status: "UPCOMING",
+                  scores: { teamA: 0, teamB: 0 },
+                  games: []
+                });
+              }
+            }
+          }
+        });
+        stage.matches = stageMatches;
+        allStructureMatches.push(...stageMatches);
+      } else if (stage.type === "GSL") {
+        const groupCount = Math.max(1, stage.groupCount || 2);
+        const groups = [];
+        const stageMatches = [];
+        for (let g = 0; g < groupCount; g++) {
+          const letter = String.fromCharCode(65 + g);
+          groups.push({
+            id: `gsl-group-${stage.id}-${letter}`,
+            name: `Group ${letter}`,
+            teams: []
+          });
+        }
+        stageTeams.forEach((tm, idx) => {
+          const targetGroup = groups[idx % groupCount];
+          tm.groupId = targetGroup.id;
+          tm.groupName = targetGroup.name;
+          targetGroup.teams.push(tm);
+        });
+        stage.groups = groups;
+        groups.forEach((grp) => {
+          const gTeams = grp.teams;
+          const gName = grp.name;
+          const mPrefix = `match-${stage.id}-${gName.replace(/\s+/g, "")}`;
+          const m1Id = `${mPrefix}-opening-1`;
+          const m2Id = `${mPrefix}-opening-2`;
+          const m3Id = `${mPrefix}-winners`;
+          const m4Id = `${mPrefix}-elim`;
+          const m5Id = `${mPrefix}-decider`;
+          stageMatches.push({
+            id: m1Id,
+            tournamentId,
+            stageId: stage.id,
+            stageName: stage.name,
+            round: `${gName} Opening Match 1`,
+            roundKey: "GSL_OPENING",
+            bracketType: "gsl",
+            seriesFormat: stage.defaultSeriesFormat || "BO3",
+            teamA: gTeams[0] || { name: "Seed #1", seed: 1 },
+            teamB: gTeams[3] || { name: "Seed #4", seed: 4 },
+            winnerDestinationId: m3Id,
+            winnerDestinationSlot: "teamA",
+            loserDestinationId: m4Id,
+            loserDestinationSlot: "teamA",
+            status: "UPCOMING",
+            scores: { teamA: 0, teamB: 0 },
+            games: []
+          });
+          stageMatches.push({
+            id: m2Id,
+            tournamentId,
+            stageId: stage.id,
+            stageName: stage.name,
+            round: `${gName} Opening Match 2`,
+            roundKey: "GSL_OPENING",
+            bracketType: "gsl",
+            seriesFormat: stage.defaultSeriesFormat || "BO3",
+            teamA: gTeams[1] || { name: "Seed #2", seed: 2 },
+            teamB: gTeams[2] || { name: "Seed #3", seed: 3 },
+            winnerDestinationId: m3Id,
+            winnerDestinationSlot: "teamB",
+            loserDestinationId: m4Id,
+            loserDestinationSlot: "teamB",
+            status: "UPCOMING",
+            scores: { teamA: 0, teamB: 0 },
+            games: []
+          });
+          stageMatches.push({
+            id: m3Id,
+            tournamentId,
+            stageId: stage.id,
+            stageName: stage.name,
+            round: `${gName} Winners Match`,
+            roundKey: "GSL_WINNERS",
+            bracketType: "gsl",
+            seriesFormat: stage.defaultSeriesFormat || "BO3",
+            teamA: { name: "Winner Opening 1", seed: 0 },
+            teamB: { name: "Winner Opening 2", seed: 0 },
+            loserDestinationId: m5Id,
+            loserDestinationSlot: "teamA",
+            status: "UPCOMING",
+            scores: { teamA: 0, teamB: 0 },
+            games: []
+          });
+          stageMatches.push({
+            id: m4Id,
+            tournamentId,
+            stageId: stage.id,
+            stageName: stage.name,
+            round: `${gName} Elimination Match`,
+            roundKey: "GSL_ELIM",
+            bracketType: "gsl",
+            seriesFormat: stage.defaultSeriesFormat || "BO3",
+            teamA: { name: "Loser Opening 1", seed: 0 },
+            teamB: { name: "Loser Opening 2", seed: 0 },
+            winnerDestinationId: m5Id,
+            winnerDestinationSlot: "teamB",
+            status: "UPCOMING",
+            scores: { teamA: 0, teamB: 0 },
+            games: []
+          });
+          stageMatches.push({
+            id: m5Id,
+            tournamentId,
+            stageId: stage.id,
+            stageName: stage.name,
+            round: `${gName} Decider Match`,
+            roundKey: "GSL_DECIDER",
+            bracketType: "gsl",
+            seriesFormat: stage.defaultSeriesFormat || "BO3",
+            teamA: { name: "Loser Winners Match", seed: 0 },
+            teamB: { name: "Winner Elimination Match", seed: 0 },
+            status: "UPCOMING",
+            scores: { teamA: 0, teamB: 0 },
+            games: []
+          });
+        });
+        stage.matches = stageMatches;
+        allStructureMatches.push(...stageMatches);
+      } else if (stage.type === "SWISS") {
+        const totalRounds = stage.swissRoundsCount || (stageTeams.length >= 8 ? 3 : 2);
+        const stageMatches = [];
+        const half = Math.floor(stageTeams.length / 2);
+        for (let i = 0; i < half; i++) {
+          stageMatches.push({
+            id: `match-${stage.id}-swiss-r1-m${i + 1}`,
+            tournamentId,
+            stageId: stage.id,
+            stageName: stage.name,
+            round: "Swiss Round 1",
+            roundKey: "SWISS_R1",
+            bracketType: "swiss",
+            seriesFormat: stage.defaultSeriesFormat || "BO3",
+            teamA: stageTeams[i],
+            teamB: stageTeams[stageTeams.length - 1 - i],
+            status: "UPCOMING",
+            scores: { teamA: 0, teamB: 0 },
+            games: []
+          });
+        }
+        for (let r = 2; r <= totalRounds; r++) {
+          for (let m = 1; m <= half; m++) {
+            stageMatches.push({
+              id: `match-${stage.id}-swiss-r${r}-m${m}`,
+              tournamentId,
+              stageId: stage.id,
+              stageName: stage.name,
+              round: `Swiss Round ${r}`,
+              roundKey: `SWISS_R${r}`,
+              bracketType: "swiss",
+              seriesFormat: stage.defaultSeriesFormat || "BO3",
+              teamA: { name: `Round ${r - 1} Contender`, seed: 0 },
+              teamB: { name: `Round ${r - 1} Contender`, seed: 0 },
+              status: "UPCOMING",
+              scores: { teamA: 0, teamB: 0 },
+              games: []
+            });
+          }
+        }
+        stage.matches = stageMatches;
+        allStructureMatches.push(...stageMatches);
+      } else if (stage.type === "DOUBLE_ELIMINATION") {
+        const gfSeriesFormat = structure.roundSeriesOverrides?.["gf"] || stage.grandFinalSeriesFormat || "BO5";
+        const effectiveTeams = stageTeams.length > 0 ? stageTeams : Array.from({ length: 8 }, (_, i) => ({
+          teamId: `team-${i + 1}`,
+          name: `Seed #${i + 1}`,
+          teamName: `Seed #${i + 1}`,
+          tag: `S${i + 1}`,
+          seed: i + 1,
+          logo: "\u{1F6E1}\uFE0F"
+        }));
+        const prevGroupStage = sIdx > 0 ? structure.stages.slice(0, sIdx).reverse().find((s) => s.type === "GROUP_STAGE" || s.type === "ROUND_ROBIN" || s.type === "DOUBLE_ROUND_ROBIN") : null;
+        if (prevGroupStage && (prevGroupStage.groups && prevGroupStage.groups.length >= 2 || stage.mixedEntryFromGroups)) {
+          const grpA = prevGroupStage.groups?.[0];
+          const grpB = prevGroupStage.groups?.[1];
+          const standingsA = grpA ? this.calculateGroupStandings(grpA, prevGroupStage.matches) : [];
+          const standingsB = grpB ? this.calculateGroupStandings(grpB, prevGroupStage.matches) : [];
+          const stageMatches = this.generateMixedEntryPlayoffMatches({
+            tournamentId,
+            stageId: stage.id,
+            stageName: stage.name,
+            groupAStandings: standingsA,
+            groupBStandings: standingsB,
+            defaultFormat: stage.defaultSeriesFormat || "BO3",
+            gfFormat: gfSeriesFormat
+          });
+          stage.matches = stageMatches;
+          allStructureMatches.push(...stageMatches);
+        } else {
+          const stageMatches = this.generateDoubleEliminationMatches(
+            tournamentId,
+            effectiveTeams,
+            stage.defaultSeriesFormat || "BO3",
+            gfSeriesFormat
+          );
+          stage.matches = stageMatches;
+          allStructureMatches.push(...stageMatches);
+        }
+      } else if (stage.type === "SINGLE_ELIMINATION" || stage.type === "PLAY_IN") {
+        const gfSeriesFormat = structure.roundSeriesOverrides?.["gf"] || stage.grandFinalSeriesFormat || "BO5";
+        const effectiveTeams = stageTeams.length > 0 ? stageTeams : Array.from({ length: 4 }, (_, i) => ({
+          teamId: `team-${i + 1}`,
+          name: `Seed #${i + 1}`,
+          teamName: `Seed #${i + 1}`,
+          tag: `S${i + 1}`,
+          seed: i + 1,
+          logo: "\u{1F6E1}\uFE0F"
+        }));
+        const stageMatches = this.generateSingleEliminationMatches(
+          tournamentId,
+          effectiveTeams,
+          stage.defaultSeriesFormat || "BO3",
+          gfSeriesFormat
+        );
+        stage.matches = stageMatches;
+        allStructureMatches.push(...stageMatches);
+      } else {
+        stage.matches = [];
+      }
+    }
+    const existingMatchesMap = /* @__PURE__ */ new Map();
+    (structure.matches || []).forEach((m) => {
+      if (m.status === "COMPLETED" || m.status === "FORFEIT" || m.status === "LIVE") {
+        existingMatchesMap.set(m.id, m);
+      }
+    });
+    if (existingMatchesMap.size > 0) {
+      allStructureMatches = allStructureMatches.map((m) => existingMatchesMap.get(m.id) || m);
+      structure.stages.forEach((stg) => {
+        stg.matches = stg.matches.map((m) => existingMatchesMap.get(m.id) || m);
+      });
+    }
+    structure.matches = allStructureMatches;
+    structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.appendAudit(structure, "GENERATE_STRUCTURE", `Generated matches for ${structure.stages.length} stages (${allStructureMatches.length} total fixtures).`);
+    this.persistStructure(tournamentId, structure);
+    return { success: true, structure };
+  }
+  /**
+   * Calculates standings for a group
+   */
+  calculateGroupStandings(group, matches) {
+    const table = /* @__PURE__ */ new Map();
+    group.teams.forEach((t, idx) => {
+      table.set(t.teamId, {
+        position: idx + 1,
+        teamId: t.teamId,
+        teamName: t.name,
+        tag: t.tag,
+        logo: t.logo || "\u{1F6E1}\uFE0F",
+        seed: t.seed,
+        played: 0,
+        won: 0,
+        drawn: 0,
+        lost: 0,
+        gamesWon: 0,
+        gamesLost: 0,
+        gameDiff: 0,
+        points: 0
+      });
+    });
+    matches.forEach((m) => {
+      if (m.status !== "COMPLETED" || !m.scores) return;
+      const teamAId = m.teamA?.teamId || m.teamA?.id;
+      const teamBId = m.teamB?.teamId || m.teamB?.id;
+      if (!teamAId || !teamBId) return;
+      const rowA = table.get(teamAId);
+      const rowB = table.get(teamBId);
+      if (!rowA || !rowB) return;
+      const scoreA = m.scores.teamA;
+      const scoreB = m.scores.teamB;
+      rowA.played += 1;
+      rowB.played += 1;
+      rowA.gamesWon += scoreA;
+      rowA.gamesLost += scoreB;
+      rowB.gamesWon += scoreB;
+      rowB.gamesLost += scoreA;
+      if (scoreA > scoreB) {
+        rowA.won += 1;
+        rowA.points += 3;
+        rowB.lost += 1;
+      } else if (scoreB > scoreA) {
+        rowB.won += 1;
+        rowB.points += 3;
+        rowA.lost += 1;
+      } else {
+        rowA.drawn += 1;
+        rowB.drawn += 1;
+        rowA.points += 1;
+        rowB.points += 1;
+      }
+      rowA.gameDiff = rowA.gamesWon - rowA.gamesLost;
+      rowB.gameDiff = rowB.gamesWon - rowB.gamesLost;
+    });
+    const rows = Array.from(table.values());
+    rows.sort((a, b) => {
+      if (b.points !== a.points) return b.points - a.points;
+      const h2hMatch = matches.find(
+        (m) => (m.status === "COMPLETED" || m.status === "FORFEIT") && m.scores && (m.teamA?.teamId === a.teamId && m.teamB?.teamId === b.teamId || m.teamA?.teamId === b.teamId && m.teamB?.teamId === a.teamId)
+      );
+      if (h2hMatch && h2hMatch.scores) {
+        const isTeamA_First = h2hMatch.teamA?.teamId === a.teamId;
+        const aScore = isTeamA_First ? h2hMatch.scores.teamA : h2hMatch.scores.teamB;
+        const bScore = isTeamA_First ? h2hMatch.scores.teamB : h2hMatch.scores.teamA;
+        if (aScore > bScore) return -1;
+        if (bScore > aScore) return 1;
+      }
+      if (b.gameDiff !== a.gameDiff) return b.gameDiff - a.gameDiff;
+      if (b.gamesWon !== a.gamesWon) return b.gamesWon - a.gamesWon;
+      return (a.seed || 99) - (b.seed || 99);
+    });
+    rows.forEach((row, i) => {
+      row.position = i + 1;
+      if (i < 2) {
+        row.destination = "UPPER_BRACKET";
+      } else {
+        row.destination = "LOWER_BRACKET";
+      }
+    });
+    return rows;
+  }
+  /**
+   * Records match results transactionally, validates BO formats, and advances winner/loser
+   */
+  recordMatchResult(params) {
+    if (params.callerRole && params.callerRole !== "organizer" && params.callerRole !== "admin" && !params.isAdmin) {
+      return { success: false, error: "Unauthorized: Only tournament organizers and admins can confirm official match results." };
+    }
+    const structure = this.getStructure(params.tournamentId);
+    if (!structure) return { success: false, error: "Tournament structure not found." };
+    const stage = structure.stages.find((s) => s.id === params.stageId) || structure.stages.find((s) => s.matches.some((m) => m.id === params.matchId));
+    if (!stage) return { success: false, error: "Stage not found." };
+    const match = stage.matches.find((m) => m.id === params.matchId);
+    if (!match) return { success: false, error: "Match not found in stage." };
+    if (typeof params.clientVersion === "number" && params.clientVersion > 0 && (structure.version || 1) > params.clientVersion) {
+      if (match.status === "COMPLETED" || match.status === "FORFEIT") {
+        if (match.scores?.teamA === params.scoreA && match.scores?.teamB === params.scoreB) {
+          return { success: true, match };
+        }
+        return { success: false, error: "STALE_SUBMISSION_CONFLICT: A newer official match result has already been confirmed by the server." };
+      }
+    }
+    if (match.status === "COMPLETED" && match.scores?.teamA === params.scoreA && match.scores?.teamB === params.scoreB && (!params.isForfeit || match.forfeitWinnerId === params.forfeitWinnerId)) {
+      return { success: true, match };
+    }
+    const checkDestId = match.winnerDestinationId || match.winnerNextMatchId;
+    const destMatch = checkDestId ? stage.matches.find((m) => m.id === checkDestId) || structure.matches.find((m) => m.id === checkDestId) : void 0;
+    if (match.status === "COMPLETED" && destMatch && (destMatch.status === "LIVE" || destMatch.status === "COMPLETED")) {
+      return { success: false, error: "Cannot modify match: downstream destination match has already begun or completed." };
+    }
+    const format = match.seriesFormat || "BO3";
+    let targetWins = 2;
+    if (format === "BO1") targetWins = 1;
+    if (format === "BO2") targetWins = 2;
+    if (format === "BO3") targetWins = 2;
+    if (format === "BO5") targetWins = 3;
+    if (format === "BO7") targetWins = 4;
+    if (format !== "BO2") {
+      if (params.scoreA < targetWins && params.scoreB < targetWins && !params.isForfeit) {
+        return { success: false, error: `Invalid series score. ${format} requires at least one team to reach ${targetWins} game wins.` };
+      }
+      if (params.scoreA > targetWins || params.scoreB > targetWins) {
+        return { success: false, error: `Invalid series score. In ${format}, game wins cannot exceed ${targetWins}.` };
+      }
+    }
+    match.scores = { teamA: params.scoreA, teamB: params.scoreB };
+    match.games = params.games || [];
+    match.confirmedBy = params.confirmedBy || "Organiser";
+    match.confirmedAt = (/* @__PURE__ */ new Date()).toISOString();
+    let winningTeam = null;
+    let losingTeam = null;
+    if (params.isForfeit && params.forfeitWinnerId) {
+      match.status = "FORFEIT";
+      match.forfeitWinnerId = params.forfeitWinnerId;
+      if (match.teamA?.teamId === params.forfeitWinnerId || match.teamA?.id === params.forfeitWinnerId) {
+        winningTeam = match.teamA;
+        losingTeam = match.teamB;
+      } else {
+        winningTeam = match.teamB;
+        losingTeam = match.teamA;
+      }
+    } else {
+      match.status = "COMPLETED";
+      if (params.scoreA > params.scoreB) {
+        winningTeam = match.teamA;
+        losingTeam = match.teamB;
+      } else if (params.scoreB > params.scoreA) {
+        winningTeam = match.teamB;
+        losingTeam = match.teamA;
+      }
+    }
+    match.winnerId = winningTeam?.teamId || winningTeam?.id;
+    match.loserId = losingTeam?.teamId || losingTeam?.id;
+    const winDestId = match.winnerDestinationId || match.winnerNextMatchId;
+    const winSlot = match.winnerDestinationSlot || match.winnerNextSlot;
+    if (winningTeam && winDestId) {
+      const destMatch2 = stage.matches.find((m) => m.id === winDestId) || structure.matches.find((m) => m.id === winDestId);
+      if (destMatch2) {
+        const slot = winSlot || (destMatch2.teamA?.seed === 0 ? "teamA" : "teamB");
+        if (slot === "teamA") {
+          destMatch2.teamA = { ...winningTeam };
+        } else {
+          destMatch2.teamB = { ...winningTeam };
+        }
+      }
+    }
+    const loseDestId = match.loserDestinationId || match.loserNextMatchId;
+    const loseSlot = match.loserDestinationSlot || match.loserNextSlot;
+    if (losingTeam && loseDestId) {
+      const destMatch2 = stage.matches.find((m) => m.id === loseDestId) || structure.matches.find((m) => m.id === loseDestId);
+      if (destMatch2) {
+        const slot = loseSlot || (destMatch2.teamA?.seed === 0 ? "teamA" : "teamB");
+        if (slot === "teamA") {
+          destMatch2.teamA = { ...losingTeam };
+        } else {
+          destMatch2.teamB = { ...losingTeam };
+        }
+      }
+    }
+    const smIdx = structure.matches.findIndex((m) => m.id === match.id);
+    if (smIdx >= 0) {
+      structure.matches[smIdx] = { ...match };
+    }
+    const allStageMatchesDone = stage.matches.every((m) => m.status === "COMPLETED" || m.status === "FORFEIT");
+    if (allStageMatchesDone) {
+      stage.status = "FINISHED";
+      this.evaluateStageAdvancement(structure, stage);
+    } else {
+      stage.status = "LIVE";
+    }
+    structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.appendAudit(structure, "RECORD_MATCH_RESULT", `Recorded match ${match.id} score: ${params.scoreA}-${params.scoreB}. Winner: ${winningTeam?.name || "Draw"}`);
+    this.persistStructure(params.tournamentId, structure);
+    return { success: true, match };
+  }
+  /**
+   * Authoritative Firestore Transaction for atomic result confirmation, progression, and idempotency
+   */
+  async recordMatchResultTransactional(params) {
+    if (params.callerRole && params.callerRole !== "organizer" && params.callerRole !== "admin" && !params.isAdmin) {
+      return { success: false, error: "ORGANIZER_PERMISSION_REQUIRED: Only tournament organizers and admins can record match results." };
+    }
+    if (db && params.tournamentId) {
+      try {
+        const result = await runTransaction(db, async (txn) => {
+          const structRef = doc2(db, "tournaments", params.tournamentId, "competition", "structure");
+          const structSnap = await txn.get(structRef);
+          let structure;
+          if (structSnap.exists()) {
+            structure = structSnap.data();
+          } else {
+            const memory = this.getStructure(params.tournamentId);
+            if (!memory) throw new Error("Tournament structure not found");
+            structure = JSON.parse(JSON.stringify(memory));
+          }
+          if (typeof params.clientVersion === "number" && params.clientVersion > 0 && (structure.version || 1) > params.clientVersion) {
+            const m = structure.matches.find((x) => x.id === params.matchId);
+            if (m && m.status === "COMPLETED") {
+              if (m.scores?.teamA === params.scoreA && m.scores?.teamB === params.scoreB) {
+                return { success: true, match: m, structure };
+              }
+              throw new Error("STALE_SUBMISSION_CONFLICT: A newer official match result has already been confirmed by the server.");
+            }
+          }
+          const stage = structure.stages.find((s) => s.id === params.stageId) || structure.stages.find((s) => s.matches.some((m) => m.id === params.matchId));
+          if (!stage) throw new Error("Stage not found");
+          const match = stage.matches.find((m) => m.id === params.matchId);
+          if (!match) throw new Error("Match not found in stage");
+          if (match.status === "COMPLETED" && match.scores?.teamA === params.scoreA && match.scores?.teamB === params.scoreB && (!params.isForfeit || match.forfeitWinnerId === params.forfeitWinnerId)) {
+            return { success: true, match, structure };
+          }
+          const checkDestId = match.winnerDestinationId || match.winnerNextMatchId;
+          const destMatch = checkDestId ? stage.matches.find((m) => m.id === checkDestId) || structure.matches.find((m) => m.id === checkDestId) : void 0;
+          if (match.status === "COMPLETED" && destMatch && (destMatch.status === "LIVE" || destMatch.status === "COMPLETED")) {
+            throw new Error("Cannot modify match: downstream destination match has already begun or completed.");
+          }
+          const format = match.seriesFormat || "BO3";
+          let targetWins = 2;
+          if (format === "BO1") targetWins = 1;
+          if (format === "BO2") targetWins = 2;
+          if (format === "BO3") targetWins = 2;
+          if (format === "BO5") targetWins = 3;
+          if (format === "BO7") targetWins = 4;
+          if (format !== "BO2") {
+            if (params.scoreA < targetWins && params.scoreB < targetWins && !params.isForfeit) {
+              throw new Error(`Invalid series score. ${format} requires at least one team to reach ${targetWins} game wins.`);
+            }
+            if (params.scoreA > targetWins || params.scoreB > targetWins) {
+              throw new Error(`Invalid series score. In ${format}, game wins cannot exceed ${targetWins}.`);
+            }
+          }
+          match.scores = { teamA: params.scoreA, teamB: params.scoreB };
+          match.games = params.games || [];
+          match.confirmedBy = params.confirmedBy || "Organiser";
+          match.confirmedAt = (/* @__PURE__ */ new Date()).toISOString();
+          let winningTeam = null;
+          let losingTeam = null;
+          if (params.isForfeit && params.forfeitWinnerId) {
+            match.status = "FORFEIT";
+            match.forfeitWinnerId = params.forfeitWinnerId;
+            if (match.teamA?.teamId === params.forfeitWinnerId || match.teamA?.id === params.forfeitWinnerId) {
+              winningTeam = match.teamA;
+              losingTeam = match.teamB;
+            } else {
+              winningTeam = match.teamB;
+              losingTeam = match.teamA;
+            }
+          } else {
+            match.status = "COMPLETED";
+            if (params.scoreA > params.scoreB) {
+              winningTeam = match.teamA;
+              losingTeam = match.teamB;
+            } else if (params.scoreB > params.scoreA) {
+              winningTeam = match.teamB;
+              losingTeam = match.teamA;
+            }
+          }
+          match.winnerId = winningTeam?.teamId || winningTeam?.id;
+          match.loserId = losingTeam?.teamId || losingTeam?.id;
+          const winDestId = match.winnerDestinationId || match.winnerNextMatchId;
+          const winSlot = match.winnerDestinationSlot || match.winnerNextSlot;
+          if (winningTeam && winDestId) {
+            const dMatch = stage.matches.find((m) => m.id === winDestId) || structure.matches.find((m) => m.id === winDestId);
+            if (dMatch) {
+              const slot = winSlot || (dMatch.teamA?.seed === 0 ? "teamA" : "teamB");
+              if (slot === "teamA") dMatch.teamA = { ...winningTeam };
+              else dMatch.teamB = { ...winningTeam };
+            }
+          }
+          const loseDestId = match.loserDestinationId || match.loserNextMatchId;
+          const loseSlot = match.loserDestinationSlot || match.loserNextSlot;
+          if (losingTeam && loseDestId) {
+            const dMatch = stage.matches.find((m) => m.id === loseDestId) || structure.matches.find((m) => m.id === loseDestId);
+            if (dMatch) {
+              const slot = loseSlot || (dMatch.teamA?.seed === 0 ? "teamA" : "teamB");
+              if (slot === "teamA") dMatch.teamA = { ...losingTeam };
+              else dMatch.teamB = { ...losingTeam };
+            }
+          }
+          const smIdx = structure.matches.findIndex((m) => m.id === match.id);
+          if (smIdx >= 0) {
+            structure.matches[smIdx] = { ...match };
+          }
+          const allStageMatchesDone = stage.matches.every((m) => m.status === "COMPLETED" || m.status === "FORFEIT");
+          if (allStageMatchesDone) {
+            stage.status = "FINISHED";
+            this.evaluateStageAdvancement(structure, stage);
+          } else {
+            stage.status = "LIVE";
+          }
+          structure.version = (structure.version || 1) + 1;
+          structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+          this.appendAudit(structure, "RECORD_MATCH_RESULT_TXN", `Transactionally confirmed match ${match.id} score: ${params.scoreA}-${params.scoreB}. Winner: ${winningTeam?.name || "Draw"}`);
+          const sanitizedStructure = sanitizeFirestorePayload(structure);
+          txn.set(structRef, sanitizedStructure, { merge: true });
+          const tourneyRef = doc2(db, "tournaments", params.tournamentId);
+          txn.set(tourneyRef, {
+            competitionStructure: sanitizedStructure,
+            competitionStructureSummary: {
+              status: structure.status,
+              isLocked: structure.isLocked,
+              version: structure.version,
+              stageCount: structure.stages.length,
+              matchCount: (structure.matches || []).length,
+              completedMatchCount: (structure.matches || []).filter((m) => m.status === "COMPLETED" || m.status === "FORFEIT").length,
+              format: structure.format,
+              updatedAt: structure.updatedAt,
+              publishedAt: structure.publishedAt || null
+            },
+            updatedAt: structure.updatedAt
+          }, { merge: true });
+          return { success: true, match, structure };
+        });
+        if (result.success && result.structure) {
+          this.structures.set(params.tournamentId, result.structure);
+          const storage = getStorageBackend();
+          try {
+            storage?.setItem(`pbg_competition_structure_${params.tournamentId}`, JSON.stringify(result.structure));
+          } catch {
+          }
+          this.notifySubscribers(params.tournamentId, result.structure);
+        }
+        return result;
+      } catch (err) {
+        if (err?.message?.includes("STALE_SUBMISSION_CONFLICT") || err?.message?.includes("Cannot modify match") || err?.message?.includes("ORGANIZER_PERMISSION_REQUIRED")) {
+          return { success: false, error: err.message };
+        }
+      }
+    }
+    const localRes = this.recordMatchResult(params);
+    const struct = this.getStructure(params.tournamentId);
+    return { ...localRes, structure: struct };
+  }
+  /**
+   * Automatic stage advancement into subsequent playoff stages
+   */
+  evaluateStageAdvancement(structure, finishedStage) {
+    const nextStage = structure.stages.find((s) => s.sequence === finishedStage.sequence + 1);
+    if (!nextStage) return;
+    if (finishedStage.type === "GROUP_STAGE" || finishedStage.type === "ROUND_ROBIN" || finishedStage.type === "DOUBLE_ROUND_ROBIN") {
+      const allGroupStandings = (finishedStage.groups || []).map(
+        (grp) => this.calculateGroupStandings(grp, finishedStage.matches)
+      );
+      if (allGroupStandings.length >= 2) {
+        this.advanceGroupStageToPlayoffs({
+          tournamentId: structure.tournamentId,
+          groupAStandings: allGroupStandings[0],
+          groupBStandings: allGroupStandings[1],
+          playoffStageId: nextStage.id
+        });
+      }
+    }
+  }
+  /**
+   * Generates a 10-match mixed-entry double elimination playoff structure for 2 groups of 4:
+   * Upper Bracket (4 teams: A1, A2, B1, B2)
+   * Lower Bracket (4 teams: A3, A4, B3, B4)
+   */
+  generateMixedEntryPlayoffMatches(params) {
+    const {
+      tournamentId,
+      stageId = "playoffs",
+      stageName = "Playoff Bracket",
+      groupAStandings = [],
+      groupBStandings = [],
+      defaultFormat = "BO3",
+      gfFormat = "BO5"
+    } = params;
+    const tid = tournamentId;
+    const ubSf1Id = `${tid}-ub-sf-1`;
+    const ubSf2Id = `${tid}-ub-sf-2`;
+    const ubFinalId = `${tid}-ub-final`;
+    const lbR1_1Id = `${tid}-lb-r1-m1`;
+    const lbR1_2Id = `${tid}-lb-r1-m2`;
+    const lbR2_1Id = `${tid}-lb-r2-m1`;
+    const lbR2_2Id = `${tid}-lb-r2-m2`;
+    const lbSfId = `${tid}-lb-sf`;
+    const lbFinalId = `${tid}-lb-final`;
+    const gfId = `${tid}-gf`;
+    const getTeam = (list, pos, defaultName, label) => {
+      const item = list[pos - 1];
+      if (!item) return { teamId: `t-${label.toLowerCase()}`, name: defaultName, teamName: defaultName, tag: label, seed: pos, logo: "\u{1F6E1}\uFE0F", sourceLabel: label };
+      return {
+        teamId: item.teamId || item.id,
+        name: item.teamName || item.name || defaultName,
+        teamName: item.teamName || item.name || defaultName,
+        tag: item.tag || label,
+        seed: item.seed || pos,
+        logo: item.logo || "\u{1F6E1}\uFE0F",
+        sourceLabel: label
+      };
+    };
+    const teamA1 = getTeam(groupAStandings, 1, "Group A 1st Place", "A1");
+    const teamA2 = getTeam(groupAStandings, 2, "Group A 2nd Place", "A2");
+    const teamA3 = getTeam(groupAStandings, 3, "Group A 3rd Place", "A3");
+    const teamA4 = getTeam(groupAStandings, 4, "Group A 4th Place", "A4");
+    const teamB1 = getTeam(groupBStandings, 1, "Group B 1st Place", "B1");
+    const teamB2 = getTeam(groupBStandings, 2, "Group B 2nd Place", "B2");
+    const teamB3 = getTeam(groupBStandings, 3, "Group B 3rd Place", "B3");
+    const teamB4 = getTeam(groupBStandings, 4, "Group B 4th Place", "B4");
+    return [
+      // Upper Bracket Semifinal 1: A1 vs B2
+      {
+        id: ubSf1Id,
+        tournamentId: tid,
+        stageId,
+        stageName,
+        stage: "upper",
+        round: "Upper Semifinal 1",
+        roundKey: "ub-r2",
+        roundTitle: "UB SF 1",
+        bracketType: "upper",
+        seriesFormat: defaultFormat,
+        teamA: teamA1,
+        teamB: teamB2,
+        winnerNextMatchId: ubFinalId,
+        winnerNextSlot: "teamA",
+        winnerDestinationId: ubFinalId,
+        winnerDestinationSlot: "teamA",
+        winnerDestinationLabel: "Upper Final",
+        loserNextMatchId: lbR2_1Id,
+        loserNextSlot: "teamA",
+        loserDestinationId: lbR2_1Id,
+        loserDestinationSlot: "teamA",
+        loserDestinationLabel: "LB R2 Match 1",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // Upper Bracket Semifinal 2: B1 vs A2
+      {
+        id: ubSf2Id,
+        tournamentId: tid,
+        stageId,
+        stageName,
+        stage: "upper",
+        round: "Upper Semifinal 2",
+        roundKey: "ub-r2",
+        roundTitle: "UB SF 2",
+        bracketType: "upper",
+        seriesFormat: defaultFormat,
+        teamA: teamB1,
+        teamB: teamA2,
+        winnerNextMatchId: ubFinalId,
+        winnerNextSlot: "teamB",
+        winnerDestinationId: ubFinalId,
+        winnerDestinationSlot: "teamB",
+        winnerDestinationLabel: "Upper Final",
+        loserNextMatchId: lbR2_2Id,
+        loserNextSlot: "teamA",
+        loserDestinationId: lbR2_2Id,
+        loserDestinationSlot: "teamA",
+        loserDestinationLabel: "LB R2 Match 2",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // Upper Final: Winner UB SF 1 vs Winner UB SF 2
+      {
+        id: ubFinalId,
+        tournamentId: tid,
+        stageId,
+        stageName,
+        stage: "upper",
+        round: "Upper Final",
+        roundKey: "ub-final",
+        roundTitle: "Upper Final",
+        bracketType: "upper",
+        seriesFormat: defaultFormat,
+        teamA: { name: "Winner UB SF 1", sourceLabel: "UB SF 1 Winner", seed: 0 },
+        teamB: { name: "Winner UB SF 2", sourceLabel: "UB SF 2 Winner", seed: 0 },
+        winnerNextMatchId: gfId,
+        winnerNextSlot: "teamA",
+        winnerDestinationId: gfId,
+        winnerDestinationSlot: "teamA",
+        winnerDestinationLabel: "Grand Final",
+        loserNextMatchId: lbFinalId,
+        loserNextSlot: "teamA",
+        loserDestinationId: lbFinalId,
+        loserDestinationSlot: "teamA",
+        loserDestinationLabel: "LB Final",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // Lower Bracket Round 1 Match 1: A3 vs B4
+      {
+        id: lbR1_1Id,
+        tournamentId: tid,
+        stageId,
+        stageName,
+        stage: "lower",
+        round: "Lower Round 1 Match 1",
+        roundKey: "lb-r1",
+        roundTitle: "LB R1 M1",
+        bracketType: "lower",
+        seriesFormat: defaultFormat,
+        teamA: teamA3,
+        teamB: teamB4,
+        winnerNextMatchId: lbR2_1Id,
+        winnerNextSlot: "teamB",
+        winnerDestinationId: lbR2_1Id,
+        winnerDestinationSlot: "teamB",
+        winnerDestinationLabel: "LB R2 Match 1",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // Lower Bracket Round 1 Match 2: B3 vs A4
+      {
+        id: lbR1_2Id,
+        tournamentId: tid,
+        stageId,
+        stageName,
+        stage: "lower",
+        round: "Lower Round 1 Match 2",
+        roundKey: "lb-r1",
+        roundTitle: "LB R1 M2",
+        bracketType: "lower",
+        seriesFormat: defaultFormat,
+        teamA: teamB3,
+        teamB: teamA4,
+        winnerNextMatchId: lbR2_2Id,
+        winnerNextSlot: "teamB",
+        winnerDestinationId: lbR2_2Id,
+        winnerDestinationSlot: "teamB",
+        winnerDestinationLabel: "LB R2 Match 2",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // Lower Bracket Round 2 Match 1: Loser UB SF 1 vs Winner LB R1 M1
+      {
+        id: lbR2_1Id,
+        tournamentId: tid,
+        stageId,
+        stageName,
+        stage: "lower",
+        round: "Lower Round 2 Match 1",
+        roundKey: "lb-r2",
+        roundTitle: "LB R2 M1",
+        bracketType: "lower",
+        seriesFormat: defaultFormat,
+        teamA: { name: "Loser UB SF 1", sourceLabel: "UB SF 1 Loser", seed: 0 },
+        teamB: { name: "Winner LB R1 M1", sourceLabel: "LB R1 M1 Winner", seed: 0 },
+        winnerNextMatchId: lbSfId,
+        winnerNextSlot: "teamA",
+        winnerDestinationId: lbSfId,
+        winnerDestinationSlot: "teamA",
+        winnerDestinationLabel: "LB Semifinal",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // Lower Bracket Round 2 Match 2: Loser UB SF 2 vs Winner LB R1 M2
+      {
+        id: lbR2_2Id,
+        tournamentId: tid,
+        stageId,
+        stageName,
+        stage: "lower",
+        round: "Lower Round 2 Match 2",
+        roundKey: "lb-r2",
+        roundTitle: "LB R2 M2",
+        bracketType: "lower",
+        seriesFormat: defaultFormat,
+        teamA: { name: "Loser UB SF 2", sourceLabel: "UB SF 2 Loser", seed: 0 },
+        teamB: { name: "Winner LB R1 M2", sourceLabel: "LB R1 M2 Winner", seed: 0 },
+        winnerNextMatchId: lbSfId,
+        winnerNextSlot: "teamB",
+        winnerDestinationId: lbSfId,
+        winnerDestinationSlot: "teamB",
+        winnerDestinationLabel: "LB Semifinal",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // Lower Semifinal: Winner LB R2 M1 vs Winner LB R2 M2
+      {
+        id: lbSfId,
+        tournamentId: tid,
+        stageId,
+        stageName,
+        stage: "lower",
+        round: "Lower Semifinal",
+        roundKey: "lb-sf",
+        roundTitle: "LB Semifinal",
+        bracketType: "lower",
+        seriesFormat: defaultFormat,
+        teamA: { name: "Winner LB R2 M1", sourceLabel: "LB R2 M1 Winner", seed: 0 },
+        teamB: { name: "Winner LB R2 M2", sourceLabel: "LB R2 M2 Winner", seed: 0 },
+        winnerNextMatchId: lbFinalId,
+        winnerNextSlot: "teamB",
+        winnerDestinationId: lbFinalId,
+        winnerDestinationSlot: "teamB",
+        winnerDestinationLabel: "Lower Final",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // Lower Final: Loser UB Final vs Winner Lower Semifinal
+      {
+        id: lbFinalId,
+        tournamentId: tid,
+        stageId,
+        stageName,
+        stage: "lower",
+        round: "Lower Final",
+        roundKey: "lb-final",
+        roundTitle: "Lower Final",
+        bracketType: "lower",
+        seriesFormat: defaultFormat,
+        teamA: { name: "Loser Upper Final", sourceLabel: "UB Final Loser", seed: 0 },
+        teamB: { name: "Winner Lower Semifinal", sourceLabel: "LB SF Winner", seed: 0 },
+        winnerNextMatchId: gfId,
+        winnerNextSlot: "teamB",
+        winnerDestinationId: gfId,
+        winnerDestinationSlot: "teamB",
+        winnerDestinationLabel: "Grand Final",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // Championship Grand Final: Winner Upper Final vs Winner Lower Final
+      {
+        id: gfId,
+        tournamentId: tid,
+        stageId,
+        stageName,
+        stage: "grand_final",
+        round: "Grand Final",
+        roundKey: "gf",
+        roundTitle: "Championship Grand Final",
+        bracketType: "grand_final",
+        seriesFormat: gfFormat,
+        teamA: { name: "Winner Upper Final", sourceLabel: "UB Final Winner", seed: 0 },
+        teamB: { name: "Winner Lower Final", sourceLabel: "LB Final Winner", seed: 0 },
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      }
+    ];
+  }
+  /**
+   * Advances qualified group stage teams into mixed-entry playoff matches
+   */
+  advanceGroupStageToPlayoffs(params) {
+    const { tournamentId, groupAStandings, groupBStandings, playoffStageId } = params;
+    const structure = this.getStructure(tournamentId);
+    if (!structure) return { success: false, updatedMatches: [], error: "Structure not found" };
+    let targetStage = playoffStageId ? structure.stages.find((s) => s.id === playoffStageId) : structure.stages.find((s) => s.type === "DOUBLE_ELIMINATION" || s.type === "SINGLE_ELIMINATION");
+    if (!targetStage && structure.stages.length > 1) {
+      targetStage = structure.stages[1];
+    }
+    if (!targetStage) return { success: false, updatedMatches: [], error: "Playoff stage not found" };
+    const getTeam = (list, pos, fallbackName, label) => {
+      const item = list ? list[pos - 1] : void 0;
+      if (!item) return { teamId: `t-${label.toLowerCase()}`, name: fallbackName, teamName: fallbackName, tag: label, seed: pos, logo: "\u{1F6E1}\uFE0F", sourceLabel: label };
+      return {
+        teamId: item.teamId || item.id,
+        name: item.teamName || item.name || fallbackName,
+        teamName: item.teamName || item.name || fallbackName,
+        tag: item.tag || label,
+        seed: item.seed || pos,
+        logo: item.logo || "\u{1F6E1}\uFE0F",
+        sourceLabel: label
+      };
+    };
+    const teamA1 = getTeam(groupAStandings, 1, "Group A 1st Place", "A1");
+    const teamA2 = getTeam(groupAStandings, 2, "Group A 2nd Place", "A2");
+    const teamA3 = getTeam(groupAStandings, 3, "Group A 3rd Place", "A3");
+    const teamA4 = getTeam(groupAStandings, 4, "Group A 4th Place", "A4");
+    const teamB1 = getTeam(groupBStandings, 1, "Group B 1st Place", "B1");
+    const teamB2 = getTeam(groupBStandings, 2, "Group B 2nd Place", "B2");
+    const teamB3 = getTeam(groupBStandings, 3, "Group B 3rd Place", "B3");
+    const teamB4 = getTeam(groupBStandings, 4, "Group B 4th Place", "B4");
+    const updatedMatches = [];
+    const ubSf1 = targetStage.matches.find((m) => m.id === `${tournamentId}-ub-sf-1` || (m.roundTitle?.includes("UB SF 1") || m.round?.includes("Upper Semifinal 1")));
+    if (ubSf1) {
+      ubSf1.teamA = { ...teamA1 };
+      ubSf1.teamB = { ...teamB2 };
+      updatedMatches.push(ubSf1);
+    }
+    const ubSf2 = targetStage.matches.find((m) => m.id === `${tournamentId}-ub-sf-2` || (m.roundTitle?.includes("UB SF 2") || m.round?.includes("Upper Semifinal 2")) && m !== ubSf1);
+    if (ubSf2) {
+      ubSf2.teamA = { ...teamB1 };
+      ubSf2.teamB = { ...teamA2 };
+      updatedMatches.push(ubSf2);
+    }
+    const lbR1_1 = targetStage.matches.find((m) => m.id === `${tournamentId}-lb-r1-m1` || (m.roundTitle?.includes("LB R1 M1") || m.round?.includes("Lower Round 1 Match 1")));
+    if (lbR1_1) {
+      lbR1_1.teamA = { ...teamA3 };
+      lbR1_1.teamB = { ...teamB4 };
+      updatedMatches.push(lbR1_1);
+    }
+    const lbR1_2 = targetStage.matches.find((m) => m.id === `${tournamentId}-lb-r1-m2` || (m.roundTitle?.includes("LB R1 M2") || m.round?.includes("Lower Round 1 Match 2")) && m !== lbR1_1);
+    if (lbR1_2) {
+      lbR1_2.teamA = { ...teamB3 };
+      lbR1_2.teamB = { ...teamA4 };
+      updatedMatches.push(lbR1_2);
+    }
+    targetStage.matches.forEach((m) => {
+      const idx = structure.matches.findIndex((sm) => sm.id === m.id);
+      if (idx >= 0) {
+        structure.matches[idx] = { ...m };
+      }
+    });
+    structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.appendAudit(structure, "ADVANCE_GROUP_TEAMS", "Advanced qualified group stage teams to Upper and Lower brackets.");
+    this.persistStructure(tournamentId, structure);
+    return { success: true, updatedMatches };
+  }
+  /**
+   * Validates structure consistency
+   */
+  validateStructure(tournamentId) {
+    const structure = this.getStructure(tournamentId);
+    if (!structure) return { valid: false, errors: ["Structure not found."], warnings: [] };
+    const errors = [];
+    const warnings = [];
+    if (structure.stages.length === 0) {
+      errors.push("Tournament must contain at least 1 stage.");
+    }
+    structure.stages.forEach((s) => {
+      if (s.matches.length === 0) {
+        warnings.push(`Stage "${s.name}" does not have generated matches yet.`);
+      }
+    });
+    return { valid: errors.length === 0, errors, warnings };
+  }
+  /**
+   * Previews the impact of modifying an already published structure
+   */
+  previewImpact(tournamentId, modifiedStages) {
+    const structure = this.getStructure(tournamentId);
+    if (!structure) {
+      return { canProceedSafely: false, completedMatchesCount: 0, affectedFutureMatchesCount: 0, warnings: ["Structure not found."] };
+    }
+    const completedMatches = structure.matches.filter((m) => m.status === "COMPLETED" || m.status === "FORFEIT");
+    const warnings = [];
+    if (completedMatches.length > 0) {
+      warnings.push(`Tournament has ${completedMatches.length} official completed match(es). Completed matches will be protected and retained.`);
+    }
+    return {
+      canProceedSafely: true,
+      completedMatchesCount: completedMatches.length,
+      affectedFutureMatchesCount: structure.matches.length - completedMatches.length,
+      warnings
+    };
+  }
+  /**
+   * Publishes the structure to make matches official
+   */
+  publishStructure(tournamentId) {
+    const structure = this.getStructure(tournamentId);
+    if (!structure) return { success: false, error: "Structure not found" };
+    const validation = this.validateStructure(tournamentId);
+    if (!validation.valid) {
+      return { success: false, error: validation.errors.join("; ") };
+    }
+    structure.status = "PUBLISHED";
+    structure.isLocked = true;
+    structure.publishedAt = (/* @__PURE__ */ new Date()).toISOString();
+    structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    structure.version += 1;
+    this.appendAudit(structure, "PUBLISH_STRUCTURE", `Published tournament competition structure (v${structure.version}).`);
+    this.persistStructure(tournamentId, structure);
+    return { success: true, structure };
+  }
+  /**
+   * Authoritative Firestore transaction for publishing competition structure
+   */
+  async publishStructureTransactional(params) {
+    if (params.callerRole && params.callerRole !== "organizer" && params.callerRole !== "admin" && !params.isAdmin) {
+      return { success: false, error: "ORGANIZER_PERMISSION_REQUIRED: Only tournament organizers and admins can publish competition structures." };
+    }
+    if (db && params.tournamentId) {
+      try {
+        const result = await runTransaction(db, async (txn) => {
+          const structRef = doc2(db, "tournaments", params.tournamentId, "competition", "structure");
+          const structSnap = await txn.get(structRef);
+          let structure;
+          if (structSnap.exists()) {
+            structure = structSnap.data();
+          } else {
+            const memory = this.getStructure(params.tournamentId);
+            if (!memory) throw new Error("Structure not found");
+            structure = JSON.parse(JSON.stringify(memory));
+          }
+          if (structure.status === "PUBLISHED" && structure.isLocked) {
+            return { success: true, structure };
+          }
+          if (!structure.stages || structure.stages.length === 0) {
+            throw new Error("Tournament must contain at least 1 stage.");
+          }
+          structure.status = "PUBLISHED";
+          structure.isLocked = true;
+          structure.publishedAt = structure.publishedAt || (/* @__PURE__ */ new Date()).toISOString();
+          structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+          structure.version = (structure.version || 1) + 1;
+          this.appendAudit(structure, "PUBLISH_STRUCTURE_TXN", `Transactionally published competition structure (v${structure.version}).`);
+          const sanitized = sanitizeFirestorePayload(structure);
+          txn.set(structRef, sanitized, { merge: true });
+          const tourneyRef = doc2(db, "tournaments", params.tournamentId);
+          txn.set(tourneyRef, {
+            competitionStructure: sanitized,
+            competitionStructureSummary: {
+              status: structure.status,
+              isLocked: structure.isLocked,
+              version: structure.version,
+              stageCount: structure.stages.length,
+              matchCount: (structure.matches || []).length,
+              completedMatchCount: (structure.matches || []).filter((m) => m.status === "COMPLETED" || m.status === "FORFEIT").length,
+              format: structure.format,
+              updatedAt: structure.updatedAt,
+              publishedAt: structure.publishedAt || null
+            },
+            updatedAt: structure.updatedAt
+          }, { merge: true });
+          return { success: true, structure };
+        });
+        if (result.success && result.structure) {
+          this.structures.set(params.tournamentId, result.structure);
+          const storage = getStorageBackend();
+          try {
+            storage?.setItem(`pbg_competition_structure_${params.tournamentId}`, JSON.stringify(result.structure));
+          } catch {
+          }
+          this.notifySubscribers(params.tournamentId, result.structure);
+        }
+        return result;
+      } catch (err) {
+        if (err?.message?.includes("ORGANIZER_PERMISSION_REQUIRED") || err?.message?.includes("Tournament must contain")) {
+          return { success: false, error: err.message };
+        }
+      }
+    }
+    const localRes = this.publishStructure(params.tournamentId);
+    return localRes;
+  }
+  /**
+   * Unlocks / enables editing for a published structure
+   */
+  editPublishedStructure(tournamentId) {
+    const structure = this.getStructure(tournamentId);
+    if (!structure) return { success: false, hasStartedMatches: false };
+    const hasStartedMatches = (structure.matches || []).some((m) => m.status === "LIVE" || m.status === "COMPLETED");
+    structure.isLocked = false;
+    this.appendAudit(structure, "UNLOCK_STRUCTURE", `Unlocked structure for editing. (Has started matches: ${hasStartedMatches})`);
+    this.persistStructure(tournamentId, structure);
+    return { success: true, hasStartedMatches };
+  }
+  /**
+   * Authoritative Firestore transaction for unlocking structure for post-publication editing
+   */
+  async editPublishedStructureTransactional(params) {
+    if (params.callerRole && params.callerRole !== "organizer" && params.callerRole !== "admin" && !params.isAdmin) {
+      return { success: false, hasStartedMatches: false, error: "ORGANIZER_PERMISSION_REQUIRED: Only tournament organizers and admins can edit competition structures." };
+    }
+    if (db && params.tournamentId) {
+      try {
+        const result = await runTransaction(db, async (txn) => {
+          const structRef = doc2(db, "tournaments", params.tournamentId, "competition", "structure");
+          const structSnap = await txn.get(structRef);
+          let structure;
+          if (structSnap.exists()) {
+            structure = structSnap.data();
+          } else {
+            const memory = this.getStructure(params.tournamentId);
+            if (!memory) throw new Error("Structure not found");
+            structure = JSON.parse(JSON.stringify(memory));
+          }
+          const hasStartedMatches = (structure.matches || []).some((m) => m.status === "LIVE" || m.status === "COMPLETED");
+          structure.isLocked = false;
+          structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+          structure.version = (structure.version || 1) + 1;
+          this.appendAudit(structure, "UNLOCK_STRUCTURE_TXN", `Unlocked structure for editing via transaction. (Has started matches: ${hasStartedMatches})`);
+          const sanitized = sanitizeFirestorePayload(structure);
+          txn.set(structRef, sanitized, { merge: true });
+          const tourneyRef = doc2(db, "tournaments", params.tournamentId);
+          txn.set(tourneyRef, {
+            competitionStructure: sanitized,
+            competitionStructureSummary: {
+              status: structure.status,
+              isLocked: structure.isLocked,
+              version: structure.version,
+              stageCount: structure.stages.length,
+              matchCount: (structure.matches || []).length,
+              completedMatchCount: (structure.matches || []).filter((m) => m.status === "COMPLETED" || m.status === "FORFEIT").length,
+              format: structure.format,
+              updatedAt: structure.updatedAt,
+              publishedAt: structure.publishedAt || null
+            },
+            updatedAt: structure.updatedAt
+          }, { merge: true });
+          return { success: true, hasStartedMatches, structure };
+        });
+        if (result.success && result.structure) {
+          this.structures.set(params.tournamentId, result.structure);
+          const storage = getStorageBackend();
+          try {
+            storage?.setItem(`pbg_competition_structure_${params.tournamentId}`, JSON.stringify(result.structure));
+          } catch {
+          }
+          this.notifySubscribers(params.tournamentId, result.structure);
+        }
+        return result;
+      } catch (err) {
+        if (err?.message?.includes("ORGANIZER_PERMISSION_REQUIRED")) {
+          return { success: false, hasStartedMatches: false, error: err.message };
+        }
+      }
+    }
+    const localRes = this.editPublishedStructure(params.tournamentId);
+    return { ...localRes, structure: this.getStructure(params.tournamentId) };
+  }
+  appendAudit(structure, action, details) {
+    if (!structure.auditTrail) structure.auditTrail = [];
+    structure.auditTrail.unshift({
+      id: `audit-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      actorId: "organiser",
+      action,
+      details
+    });
+  }
+  // ---------------------------------------------------------------------------
+  // Phase 4 Engine APIs: Seeding, Brackets, Graph Validation, Tiebreak Rules
+  // ---------------------------------------------------------------------------
+  initStructure(params) {
+    const { tournamentId, tournamentName, format, teamCount = 8, seedingMode = "rating", defaultSeriesFormat = "BO3", roundSeriesOverrides } = params;
+    let normalizedType = "DOUBLE_ELIMINATION";
+    const fmtLower = format.toLowerCase();
+    if (fmtLower.includes("single")) {
+      normalizedType = "SINGLE_ELIMINATION";
+    } else if (fmtLower.includes("double")) {
+      normalizedType = "DOUBLE_ELIMINATION";
+    } else if (fmtLower.includes("round_robin") || fmtLower.includes("round robin")) {
+      normalizedType = "ROUND_ROBIN";
+    } else if (fmtLower.includes("swiss")) {
+      normalizedType = "SWISS";
+    } else if (fmtLower.includes("gsl")) {
+      normalizedType = "GSL";
+    }
+    const stage = {
+      id: `stage-${tournamentId}-1`,
+      name: `Stage 1: ${normalizedType.replace("_", " ")}`,
+      sequence: 1,
+      type: normalizedType,
+      status: "UPCOMING",
+      teamCount,
+      defaultSeriesFormat: defaultSeriesFormat || "BO3",
+      grandFinalSeriesFormat: roundSeriesOverrides?.["gf"] || "BO5",
+      seedingMode: seedingMode.toUpperCase() === "RATING" ? "RATING_BASED" : seedingMode.toUpperCase() === "MANUAL" ? "MANUAL" : "RANDOM",
+      seededTeams: [],
+      matches: []
+    };
+    const structure = {
+      tournamentId,
+      tournamentName,
+      format,
+      config: { ...params, format },
+      status: "DRAFT",
+      version: 1,
+      stages: [stage],
+      isLocked: false,
+      teams: [],
+      matches: [],
+      roundSeriesOverrides,
+      auditTrail: [
+        {
+          id: `audit-${Date.now()}-init`,
+          timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+          actorId: "organizer",
+          action: "INIT_STRUCTURE",
+          details: `Initialized structure for ${tournamentName || tournamentId} with format ${format}`
+        }
+      ]
+    };
+    this.structures.set(tournamentId, structure);
+    return structure;
+  }
+  generateSeeds(arg1, arg2) {
+    let tournamentId;
+    let seedingMode = "rating";
+    let manualSeeds;
+    let candidateTeams = [];
+    if (typeof arg1 === "object") {
+      tournamentId = arg1.tournamentId;
+      seedingMode = arg1.seedingMode || "rating";
+      manualSeeds = arg1.manualSeeds;
+      candidateTeams = arg1.candidateTeams || [];
+    } else {
+      tournamentId = arg1;
+      candidateTeams = arg2 || [];
+    }
+    const structure = this.getOrCreateStructure(tournamentId);
+    if (candidateTeams.length === 0 && structure.teams && structure.teams.length > 0) {
+      candidateTeams = structure.teams;
+    }
+    for (const team of candidateTeams) {
+      const status = team.status?.toUpperCase?.();
+      if (status && status !== "APPROVED" && status !== "LOCKED") {
+        return {
+          success: false,
+          error: `DENIED: candidateTeams contains unfinalized team (${team.teamName || team.name || team.teamId}) with status ${team.status}. Only finalized teams can be seeded.`
+        };
+      }
+    }
+    let seeded = [];
+    const modeLower = seedingMode.toLowerCase();
+    const calculateTeamMmr = (t) => {
+      if (typeof t.avgMmr === "number") return t.avgMmr;
+      if (typeof t.rosterStrengthRating === "number") return t.rosterStrengthRating;
+      if (typeof t.mmr === "number") return t.mmr;
+      if (Array.isArray(t.primaryRoster) && t.primaryRoster.length > 0) {
+        const sum = t.primaryRoster.reduce((acc, p) => acc + (p.tournamentMmr || p.declaredMmr || 0), 0);
+        return Math.round(sum / t.primaryRoster.length);
+      }
+      return typeof t.rating === "number" ? t.rating : 0;
+    };
+    if (modeLower === "rating" || modeLower === "rating_based") {
+      const sorted = [...candidateTeams].sort((a, b) => {
+        return calculateTeamMmr(b) - calculateTeamMmr(a);
+      });
+      seeded = sorted.map((t, idx) => {
+        const teamMmr = calculateTeamMmr(t);
+        return {
+          teamId: t.teamId || t.id || `team-${idx + 1}`,
+          name: t.teamName || t.name || `Seed #${idx + 1}`,
+          teamName: t.teamName || t.name || `Seed #${idx + 1}`,
+          tag: t.tag || `T${idx + 1}`,
+          seed: idx + 1,
+          rating: t.rating || 1500,
+          mmr: teamMmr || 6e3,
+          avgMmr: teamMmr || 6e3,
+          rosterStrengthRating: teamMmr || 6e3,
+          logo: t.logo || "\u{1F6E1}\uFE0F",
+          color: t.color || "#7C3AED",
+          captainUserId: t.captainId || t.captainUserId,
+          captainIgn: t.captainIgn || t.captainName
+        };
+      });
+    } else if (modeLower === "manual") {
+      if (!manualSeeds || manualSeeds.length === 0) {
+        return { success: false, error: "DENIED: Manual seeding selected but no manualSeeds provided." };
+      }
+      const seedNums = manualSeeds.map((m) => m.seed);
+      const uniqueSeeds = new Set(seedNums);
+      if (uniqueSeeds.size !== seedNums.length) {
+        return { success: false, error: "DENIED: Duplicate seed detected in manual seeding configuration." };
+      }
+      const expectedSeeds = Array.from({ length: candidateTeams.length }, (_, i) => i + 1);
+      const sortedGiven = [...seedNums].sort((a, b) => a - b);
+      const hasGap = expectedSeeds.some((exp, idx) => sortedGiven[idx] !== exp);
+      if (hasGap) {
+        return { success: false, error: "DENIED: Missing seed gap in manual seeding. Seeds must be contiguous 1..N." };
+      }
+      seeded = manualSeeds.map((ms) => {
+        const teamObj = candidateTeams.find((t) => (t.teamId || t.id) === ms.teamId);
+        return {
+          teamId: ms.teamId,
+          name: teamObj?.teamName || teamObj?.name || `Seed #${ms.seed}`,
+          teamName: teamObj?.teamName || teamObj?.name || `Seed #${ms.seed}`,
+          tag: teamObj?.tag || `T${ms.seed}`,
+          seed: ms.seed,
+          rating: teamObj?.rating || 1500,
+          mmr: teamObj?.avgMmr || teamObj?.mmr || 6e3,
+          avgMmr: teamObj?.avgMmr || teamObj?.mmr || 6e3,
+          rosterStrengthRating: teamObj?.rosterStrengthRating || teamObj?.avgMmr || 6e3,
+          logo: teamObj?.logo || "\u{1F6E1}\uFE0F",
+          color: teamObj?.color || "#7C3AED",
+          captainUserId: teamObj?.captainId || teamObj?.captainUserId,
+          captainIgn: teamObj?.captainIgn || teamObj?.captainName
+        };
+      }).sort((a, b) => a.seed - b.seed);
+    } else if (modeLower === "random") {
+      const shuffled = [...candidateTeams].sort(() => Math.random() - 0.5);
+      seeded = shuffled.map((t, idx) => ({
+        teamId: t.teamId || t.id || `team-${idx + 1}`,
+        name: t.teamName || t.name || `Seed #${idx + 1}`,
+        teamName: t.teamName || t.name || `Seed #${idx + 1}`,
+        tag: t.tag || `T${idx + 1}`,
+        seed: idx + 1,
+        rating: t.rating || 1500,
+        mmr: t.avgMmr || t.mmr || 6e3,
+        avgMmr: t.avgMmr || t.mmr || 6e3,
+        rosterStrengthRating: t.rosterStrengthRating || t.avgMmr || 6e3,
+        logo: t.logo || "\u{1F6E1}\uFE0F",
+        color: t.color || "#7C3AED",
+        captainUserId: t.captainId || t.captainUserId,
+        captainIgn: t.captainIgn || t.captainName
+      }));
+    } else {
+      seeded = this.normalizeTeams(candidateTeams);
+    }
+    structure.teams = seeded;
+    if (structure.stages[0]) {
+      structure.stages[0].seededTeams = [...seeded];
+    }
+    structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.appendAudit(structure, "GENERATE_SEEDS", `Generated ${seedingMode} seeding for ${seeded.length} teams.`);
+    return { success: true, seededTeams: seeded };
+  }
+  generateCompetitionStructure(arg1, _caller) {
+    const tournamentId = typeof arg1 === "object" ? arg1.tournamentId : arg1;
+    const structure = this.getStructure(tournamentId) || this.getOrCreateStructure(tournamentId);
+    if (structure.isLocked || structure.status === "LOCKED") {
+      return {
+        success: false,
+        error: "DENIED: Competition structure is LOCKED and cannot be regenerated."
+      };
+    }
+    return this.generateFullStructure(tournamentId, structure.teams);
+  }
+  lockCompetitionStructure(arg1, _caller) {
+    const tournamentId = typeof arg1 === "object" ? arg1.tournamentId : arg1;
+    const structure = this.getStructure(tournamentId) || this.getOrCreateStructure(tournamentId);
+    structure.isLocked = true;
+    structure.status = "LOCKED";
+    structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    this.appendAudit(structure, "LOCK_STRUCTURE", `Structure locked by ${_caller || "organizer"}.`);
+    return { success: true, structure };
+  }
+  validateProgressionGraph(matches) {
+    const matchMap = /* @__PURE__ */ new Map();
+    for (const m of matches) {
+      matchMap.set(m.id, m);
+    }
+    for (const m of matches) {
+      if (m.loserNextMatchId) {
+        const dest = matchMap.get(m.loserNextMatchId);
+        if (dest) {
+          const isUpper = dest.bracketType === "upper" || dest.stage === "upper" || dest.roundKey?.startsWith("ub") || dest.roundTitle?.includes("UB");
+          if (isUpper) {
+            return {
+              valid: false,
+              error: `DENIED: Invalid loser destination for match ${m.id}. Upper Bracket cannot receive losers.`
+            };
+          }
+        }
+      }
+    }
+    return { valid: true };
+  }
+  validateSeriesFormat(format, stageType) {
+    if (format === "BO1" || format === "BO3" || format === "BO5") {
+      return { valid: true };
+    }
+    if ((stageType === "GROUP_STAGE" || stageType === "ROUND_ROBIN" || stageType === "DOUBLE_ROUND_ROBIN") && format === "BO2") {
+      return { valid: true };
+    }
+    return {
+      valid: false,
+      error: `DENIED: Invalid BO format configuration "${format}". Only BO1, BO3, and BO5 are allowed in this competition mode.`
+    };
+  }
+  validateMatchPairing(teamAId, teamBId) {
+    if (teamAId && teamBId && teamAId === teamBId) {
+      return {
+        valid: false,
+        error: `DENIED: Invalid match pairing. Same team (${teamAId}) scheduled against itself.`
+      };
+    }
+    return { valid: true };
+  }
+  getTiebreakRulesDescription() {
+    return [
+      "1. Match & Series Points: Total accumulated group stage points (Win = 3, Draw = 1, Loss = 0).",
+      "2. Head-to-Head Record: Winner of direct head-to-head match between tied teams advances.",
+      "3. Game / Map Differential: Total maps won minus total maps lost across all stage matches.",
+      "4. Total Games Won: Overall volume of map victories in the current competition stage.",
+      "5. Initial Tournament Seeding: Higher tournament seed breaks any remaining unresolved ties."
+    ];
+  }
+  buildRoundRobinMatches(tournamentId, teams, format = "BO1", groupId = "grp-a") {
+    const matches = [];
+    let matchNum = 1;
+    for (let i = 0; i < teams.length; i++) {
+      for (let j = i + 1; j < teams.length; j++) {
+        matches.push({
+          id: `${tournamentId}-${groupId}-m${matchNum}`,
+          tournamentId,
+          stageId: groupId,
+          round: `Round Robin Match ${matchNum}`,
+          roundKey: groupId,
+          bracketType: "round_robin",
+          matchNumber: matchNum,
+          seriesFormat: format || "BO1",
+          teamA: teams[i],
+          teamB: teams[j],
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: []
+        });
+        matchNum++;
+      }
+    }
+    return matches;
+  }
+  updateMatchProgression(arg1, _arg2, _arg3, _caller) {
+    if (typeof arg1 === "object") {
+      const userRole = arg1.userRole;
+      if (userRole && userRole !== "organizer" && !arg1.isAdmin) {
+        return {
+          success: false,
+          error: "DENIED: Organizer authorization required to modify bracket progression."
+        };
+      }
+    }
+    return { success: true };
+  }
+  generateDoubleEliminationMatches(tournamentId, seeded, defaultFormat = "BO3", gfFormat = "BO5") {
+    const tid = tournamentId;
+    const qf1Id = `${tid}-ub-r1-m1`;
+    const qf2Id = `${tid}-ub-r1-m2`;
+    const qf3Id = `${tid}-ub-r1-m3`;
+    const qf4Id = `${tid}-ub-r1-m4`;
+    const sf1Id = `${tid}-ub-sf-1`;
+    const sf2Id = `${tid}-ub-sf-2`;
+    const ubFinalId = `${tid}-ub-final`;
+    const lbR1_1Id = `${tid}-lb-r1-m1`;
+    const lbR1_2Id = `${tid}-lb-r1-m2`;
+    const lbR2_1Id = `${tid}-lb-r2-m1`;
+    const lbR2_2Id = `${tid}-lb-r2-m2`;
+    const lbSfId = `${tid}-lb-sf`;
+    const lbFinalId = `${tid}-lb-final`;
+    const gfId = `${tid}-gf`;
+    return [
+      // UB QF 1: 1 vs 8
+      {
+        id: qf1Id,
+        tournamentId: tid,
+        stage: "upper",
+        round: "Upper Quarterfinal 1",
+        roundKey: "ub-r1",
+        roundTitle: "UB QF 1",
+        bracketType: "upper",
+        seriesFormat: defaultFormat,
+        teamA: seeded[0] || { name: "Seed 1", seed: 1 },
+        teamB: seeded[7] || { name: "Seed 8", seed: 8 },
+        winnerNextMatchId: sf1Id,
+        winnerNextSlot: "teamA",
+        winnerDestinationId: sf1Id,
+        winnerDestinationSlot: "teamA",
+        winnerDestinationLabel: "UB SF 1",
+        loserNextMatchId: lbR1_1Id,
+        loserNextSlot: "teamA",
+        loserDestinationId: lbR1_1Id,
+        loserDestinationSlot: "teamA",
+        loserDestinationLabel: "LB R1 Match 1",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // UB QF 2: 4 vs 5
+      {
+        id: qf2Id,
+        tournamentId: tid,
+        stage: "upper",
+        round: "Upper Quarterfinal 2",
+        roundKey: "ub-r1",
+        roundTitle: "UB QF 2",
+        bracketType: "upper",
+        seriesFormat: defaultFormat,
+        teamA: seeded[3] || { name: "Seed 4", seed: 4 },
+        teamB: seeded[4] || { name: "Seed 5", seed: 5 },
+        winnerNextMatchId: sf1Id,
+        winnerNextSlot: "teamB",
+        winnerDestinationId: sf1Id,
+        winnerDestinationSlot: "teamB",
+        winnerDestinationLabel: "UB SF 1",
+        loserNextMatchId: lbR1_1Id,
+        loserNextSlot: "teamB",
+        loserDestinationId: lbR1_1Id,
+        loserDestinationSlot: "teamB",
+        loserDestinationLabel: "LB R1 Match 1",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // UB QF 3: 2 vs 7
+      {
+        id: qf3Id,
+        tournamentId: tid,
+        stage: "upper",
+        round: "Upper Quarterfinal 3",
+        roundKey: "ub-r1",
+        roundTitle: "UB QF 3",
+        bracketType: "upper",
+        seriesFormat: defaultFormat,
+        teamA: seeded[1] || { name: "Seed 2", seed: 2 },
+        teamB: seeded[6] || { name: "Seed 7", seed: 7 },
+        winnerNextMatchId: sf2Id,
+        winnerNextSlot: "teamA",
+        winnerDestinationId: sf2Id,
+        winnerDestinationSlot: "teamA",
+        winnerDestinationLabel: "UB SF 2",
+        loserNextMatchId: lbR1_2Id,
+        loserNextSlot: "teamA",
+        loserDestinationId: lbR1_2Id,
+        loserDestinationSlot: "teamA",
+        loserDestinationLabel: "LB R1 Match 2",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // UB QF 4: 3 vs 6
+      {
+        id: qf4Id,
+        tournamentId: tid,
+        stage: "upper",
+        round: "Upper Quarterfinal 4",
+        roundKey: "ub-r1",
+        roundTitle: "UB QF 4",
+        bracketType: "upper",
+        seriesFormat: defaultFormat,
+        teamA: seeded[2] || { name: "Seed 3", seed: 3 },
+        teamB: seeded[5] || { name: "Seed 6", seed: 6 },
+        winnerNextMatchId: sf2Id,
+        winnerNextSlot: "teamB",
+        winnerDestinationId: sf2Id,
+        winnerDestinationSlot: "teamB",
+        winnerDestinationLabel: "UB SF 2",
+        loserNextMatchId: lbR1_2Id,
+        loserNextSlot: "teamB",
+        loserDestinationId: lbR1_2Id,
+        loserDestinationSlot: "teamB",
+        loserDestinationLabel: "LB R1 Match 2",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // UB SF 1
+      {
+        id: sf1Id,
+        tournamentId: tid,
+        stage: "upper",
+        round: "Upper Semifinal 1",
+        roundKey: "ub-r2",
+        roundTitle: "UB SF 1",
+        bracketType: "upper",
+        seriesFormat: defaultFormat,
+        teamA: { name: "Winner UB QF 1", seed: 0 },
+        teamB: { name: "Winner UB QF 2", seed: 0 },
+        winnerNextMatchId: ubFinalId,
+        winnerNextSlot: "teamA",
+        winnerDestinationId: ubFinalId,
+        winnerDestinationSlot: "teamA",
+        winnerDestinationLabel: "Upper Final",
+        loserNextMatchId: lbR2_1Id,
+        loserNextSlot: "teamA",
+        loserDestinationId: lbR2_1Id,
+        loserDestinationSlot: "teamA",
+        loserDestinationLabel: "LB R2 Match 1",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // UB SF 2
+      {
+        id: sf2Id,
+        tournamentId: tid,
+        stage: "upper",
+        round: "Upper Semifinal 2",
+        roundKey: "ub-r2",
+        roundTitle: "UB SF 2",
+        bracketType: "upper",
+        seriesFormat: defaultFormat,
+        teamA: { name: "Winner UB QF 3", seed: 0 },
+        teamB: { name: "Winner UB QF 4", seed: 0 },
+        winnerNextMatchId: ubFinalId,
+        winnerNextSlot: "teamB",
+        winnerDestinationId: ubFinalId,
+        winnerDestinationSlot: "teamB",
+        winnerDestinationLabel: "Upper Final",
+        loserNextMatchId: lbR2_2Id,
+        loserNextSlot: "teamA",
+        loserDestinationId: lbR2_2Id,
+        loserDestinationSlot: "teamA",
+        loserDestinationLabel: "LB R2 Match 2",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // UB Final
+      {
+        id: ubFinalId,
+        tournamentId: tid,
+        stage: "upper",
+        round: "Upper Final",
+        roundKey: "ub-final",
+        roundTitle: "Upper Final",
+        bracketType: "upper",
+        seriesFormat: defaultFormat,
+        teamA: { name: "Winner UB SF 1", seed: 0 },
+        teamB: { name: "Winner UB SF 2", seed: 0 },
+        winnerNextMatchId: gfId,
+        winnerNextSlot: "teamA",
+        winnerDestinationId: gfId,
+        winnerDestinationSlot: "teamA",
+        winnerDestinationLabel: "Grand Final",
+        loserNextMatchId: lbFinalId,
+        loserNextSlot: "teamA",
+        loserDestinationId: lbFinalId,
+        loserDestinationSlot: "teamA",
+        loserDestinationLabel: "LB Final",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // LB R1 Match 1
+      {
+        id: lbR1_1Id,
+        tournamentId: tid,
+        stage: "lower",
+        round: "Lower Round 1 Match 1",
+        roundKey: "lb-r1",
+        roundTitle: "LB R1 M1",
+        bracketType: "lower",
+        seriesFormat: defaultFormat,
+        teamA: { name: "Loser UB QF 1", seed: 0 },
+        teamB: { name: "Loser UB QF 2", seed: 0 },
+        winnerNextMatchId: lbR2_1Id,
+        winnerNextSlot: "teamB",
+        winnerDestinationId: lbR2_1Id,
+        winnerDestinationSlot: "teamB",
+        winnerDestinationLabel: "LB R2 Match 1",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // LB R1 Match 2
+      {
+        id: lbR1_2Id,
+        tournamentId: tid,
+        stage: "lower",
+        round: "Lower Round 1 Match 2",
+        roundKey: "lb-r1",
+        roundTitle: "LB R1 M2",
+        bracketType: "lower",
+        seriesFormat: defaultFormat,
+        teamA: { name: "Loser UB QF 3", seed: 0 },
+        teamB: { name: "Loser UB QF 4", seed: 0 },
+        winnerNextMatchId: lbR2_2Id,
+        winnerNextSlot: "teamB",
+        winnerDestinationId: lbR2_2Id,
+        winnerDestinationSlot: "teamB",
+        winnerDestinationLabel: "LB R2 Match 2",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // LB R2 Match 1
+      {
+        id: lbR2_1Id,
+        tournamentId: tid,
+        stage: "lower",
+        round: "Lower Round 2 Match 1",
+        roundKey: "lb-r2",
+        roundTitle: "LB R2 M1",
+        bracketType: "lower",
+        seriesFormat: defaultFormat,
+        teamA: { name: "Loser UB SF 1", seed: 0 },
+        teamB: { name: "Winner LB R1 M1", seed: 0 },
+        winnerNextMatchId: lbSfId,
+        winnerNextSlot: "teamA",
+        winnerDestinationId: lbSfId,
+        winnerDestinationSlot: "teamA",
+        winnerDestinationLabel: "LB Semifinal",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // LB R2 Match 2
+      {
+        id: lbR2_2Id,
+        tournamentId: tid,
+        stage: "lower",
+        round: "Lower Round 2 Match 2",
+        roundKey: "lb-r2",
+        roundTitle: "LB R2 M2",
+        bracketType: "lower",
+        seriesFormat: defaultFormat,
+        teamA: { name: "Loser UB SF 2", seed: 0 },
+        teamB: { name: "Winner LB R1 M2", seed: 0 },
+        winnerNextMatchId: lbSfId,
+        winnerNextSlot: "teamB",
+        winnerDestinationId: lbSfId,
+        winnerDestinationSlot: "teamB",
+        winnerDestinationLabel: "LB Semifinal",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // LB Semifinal
+      {
+        id: lbSfId,
+        tournamentId: tid,
+        stage: "lower",
+        round: "Lower Semifinal",
+        roundKey: "lb-sf",
+        roundTitle: "LB Semifinal",
+        bracketType: "lower",
+        seriesFormat: defaultFormat,
+        teamA: { name: "Winner LB R2 M1", seed: 0 },
+        teamB: { name: "Winner LB R2 M2", seed: 0 },
+        winnerNextMatchId: lbFinalId,
+        winnerNextSlot: "teamB",
+        winnerDestinationId: lbFinalId,
+        winnerDestinationSlot: "teamB",
+        winnerDestinationLabel: "Lower Final",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // LB Final
+      {
+        id: lbFinalId,
+        tournamentId: tid,
+        stage: "lower",
+        round: "Lower Final",
+        roundKey: "lb-final",
+        roundTitle: "Lower Final",
+        bracketType: "lower",
+        seriesFormat: defaultFormat,
+        teamA: { name: "Loser Upper Final", seed: 0 },
+        teamB: { name: "Winner Lower Semifinal", seed: 0 },
+        winnerNextMatchId: gfId,
+        winnerNextSlot: "teamB",
+        winnerDestinationId: gfId,
+        winnerDestinationSlot: "teamB",
+        winnerDestinationLabel: "Grand Final",
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      },
+      // Grand Final
+      {
+        id: gfId,
+        tournamentId: tid,
+        stage: "grand_final",
+        round: "Grand Final",
+        roundKey: "gf",
+        roundTitle: "Championship Grand Final",
+        bracketType: "grand_final",
+        seriesFormat: gfFormat,
+        teamA: { name: "Winner Upper Final", seed: 0 },
+        teamB: { name: "Winner Lower Final", seed: 0 },
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: []
+      }
+    ];
+  }
+  generateSingleEliminationMatches(tournamentId, teams, defaultFormat = "BO3", gfFormat = "BO5") {
+    const n = teams.length;
+    if (n <= 1) return [];
+    if (n === 2) {
+      return [
+        {
+          id: `${tournamentId}-gf`,
+          tournamentId,
+          stage: "grand_final",
+          round: "Grand Final",
+          roundKey: "gf",
+          bracketType: "grand_final",
+          seriesFormat: gfFormat,
+          teamA: teams[0],
+          teamB: teams[1],
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        }
+      ];
+    }
+    if (n === 3) {
+      const gfId2 = `${tournamentId}-gf`;
+      const sfId = `${tournamentId}-se-sf-1`;
+      return [
+        {
+          id: sfId,
+          tournamentId,
+          stage: "semifinal",
+          round: "Semifinal",
+          roundKey: "sf",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: teams[1],
+          // Seed 2
+          teamB: teams[2],
+          // Seed 3
+          winnerNextMatchId: gfId2,
+          winnerNextSlot: "teamB",
+          winnerDestinationId: gfId2,
+          winnerDestinationSlot: "teamB",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: gfId2,
+          tournamentId,
+          stage: "grand_final",
+          round: "Grand Final",
+          roundKey: "gf",
+          bracketType: "grand_final",
+          seriesFormat: gfFormat,
+          teamA: { ...teams[0], sourceLabel: "Seed 1 (BYE)" },
+          teamB: { name: "Winner Semifinal", seed: 0 },
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        }
+      ];
+    }
+    if (n === 4) {
+      const gfId2 = `${tournamentId}-gf`;
+      const sf1Id2 = `${tournamentId}-se-sf-1`;
+      const sf2Id2 = `${tournamentId}-se-sf-2`;
+      return [
+        {
+          id: sf1Id2,
+          tournamentId,
+          stage: "semifinal",
+          round: "Semifinal 1",
+          roundKey: "sf",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: teams[0],
+          teamB: teams[3],
+          winnerNextMatchId: gfId2,
+          winnerNextSlot: "teamA",
+          winnerDestinationId: gfId2,
+          winnerDestinationSlot: "teamA",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: sf2Id2,
+          tournamentId,
+          stage: "semifinal",
+          round: "Semifinal 2",
+          roundKey: "sf",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: teams[1],
+          teamB: teams[2],
+          winnerNextMatchId: gfId2,
+          winnerNextSlot: "teamB",
+          winnerDestinationId: gfId2,
+          winnerDestinationSlot: "teamB",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: gfId2,
+          tournamentId,
+          stage: "grand_final",
+          round: "Grand Final",
+          roundKey: "gf",
+          bracketType: "grand_final",
+          seriesFormat: gfFormat,
+          teamA: { name: "Winner SF1", seed: 0 },
+          teamB: { name: "Winner SF2", seed: 0 },
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        }
+      ];
+    }
+    if (n === 5) {
+      const gfId2 = `${tournamentId}-gf`;
+      const sf1Id2 = `${tournamentId}-se-sf-1`;
+      const sf2Id2 = `${tournamentId}-se-sf-2`;
+      const r1Id = `${tournamentId}-se-r1-1`;
+      return [
+        {
+          id: r1Id,
+          tournamentId,
+          stage: "round1",
+          round: "Quarterfinal",
+          roundKey: "r1",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: teams[3],
+          // 4
+          teamB: teams[4],
+          // 5
+          winnerNextMatchId: sf1Id2,
+          winnerNextSlot: "teamB",
+          winnerDestinationId: sf1Id2,
+          winnerDestinationSlot: "teamB",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: sf1Id2,
+          tournamentId,
+          stage: "semifinal",
+          round: "Semifinal 1",
+          roundKey: "sf",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: { ...teams[0], sourceLabel: "Seed 1 (BYE)" },
+          teamB: { name: "Winner QF", seed: 0 },
+          winnerNextMatchId: gfId2,
+          winnerNextSlot: "teamA",
+          winnerDestinationId: gfId2,
+          winnerDestinationSlot: "teamA",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: sf2Id2,
+          tournamentId,
+          stage: "semifinal",
+          round: "Semifinal 2",
+          roundKey: "sf",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: { ...teams[1], sourceLabel: "Seed 2 (BYE)" },
+          teamB: { ...teams[2], sourceLabel: "Seed 3 (BYE)" },
+          winnerNextMatchId: gfId2,
+          winnerNextSlot: "teamB",
+          winnerDestinationId: gfId2,
+          winnerDestinationSlot: "teamB",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: gfId2,
+          tournamentId,
+          stage: "grand_final",
+          round: "Grand Final",
+          roundKey: "gf",
+          bracketType: "grand_final",
+          seriesFormat: gfFormat,
+          teamA: { name: "Winner SF1", seed: 0 },
+          teamB: { name: "Winner SF2", seed: 0 },
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        }
+      ];
+    }
+    if (n === 6) {
+      const gfId2 = `${tournamentId}-gf`;
+      const sf1Id2 = `${tournamentId}-se-sf-1`;
+      const sf2Id2 = `${tournamentId}-se-sf-2`;
+      const r1_1Id = `${tournamentId}-se-r1-1`;
+      const r1_2Id = `${tournamentId}-se-r1-2`;
+      return [
+        {
+          id: r1_1Id,
+          tournamentId,
+          stage: "round1",
+          round: "Round 1 Match 1",
+          roundKey: "r1",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: teams[3],
+          // 4
+          teamB: teams[4],
+          // 5
+          winnerNextMatchId: sf1Id2,
+          winnerNextSlot: "teamB",
+          winnerDestinationId: sf1Id2,
+          winnerDestinationSlot: "teamB",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: r1_2Id,
+          tournamentId,
+          stage: "round1",
+          round: "Round 1 Match 2",
+          roundKey: "r1",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: teams[2],
+          // 3
+          teamB: teams[5],
+          // 6
+          winnerNextMatchId: sf2Id2,
+          winnerNextSlot: "teamB",
+          winnerDestinationId: sf2Id2,
+          winnerDestinationSlot: "teamB",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: sf1Id2,
+          tournamentId,
+          stage: "semifinal",
+          round: "Semifinal 1",
+          roundKey: "sf",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: { ...teams[0], sourceLabel: "Seed 1 (BYE)" },
+          teamB: { name: "Winner R1-1", seed: 0 },
+          winnerNextMatchId: gfId2,
+          winnerNextSlot: "teamA",
+          winnerDestinationId: gfId2,
+          winnerDestinationSlot: "teamA",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: sf2Id2,
+          tournamentId,
+          stage: "semifinal",
+          round: "Semifinal 2",
+          roundKey: "sf",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: { ...teams[1], sourceLabel: "Seed 2 (BYE)" },
+          teamB: { name: "Winner R1-2", seed: 0 },
+          winnerNextMatchId: gfId2,
+          winnerNextSlot: "teamB",
+          winnerDestinationId: gfId2,
+          winnerDestinationSlot: "teamB",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: gfId2,
+          tournamentId,
+          stage: "grand_final",
+          round: "Grand Final",
+          roundKey: "gf",
+          bracketType: "grand_final",
+          seriesFormat: gfFormat,
+          teamA: { name: "Winner SF1", seed: 0 },
+          teamB: { name: "Winner SF2", seed: 0 },
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        }
+      ];
+    }
+    if (n === 7) {
+      const gfId2 = `${tournamentId}-gf`;
+      const sf1Id2 = `${tournamentId}-se-sf-1`;
+      const sf2Id2 = `${tournamentId}-se-sf-2`;
+      const r1_1Id = `${tournamentId}-se-r1-1`;
+      const r1_2Id = `${tournamentId}-se-r1-2`;
+      const r1_3Id = `${tournamentId}-se-r1-3`;
+      return [
+        {
+          id: r1_1Id,
+          tournamentId,
+          stage: "round1",
+          round: "Round 1 Match 1",
+          roundKey: "r1",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: teams[3],
+          // 4
+          teamB: teams[4],
+          // 5
+          winnerNextMatchId: sf1Id2,
+          winnerNextSlot: "teamB",
+          winnerDestinationId: sf1Id2,
+          winnerDestinationSlot: "teamB",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: r1_2Id,
+          tournamentId,
+          stage: "round1",
+          round: "Round 1 Match 2",
+          roundKey: "r1",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: teams[1],
+          // 2
+          teamB: teams[6],
+          // 7
+          winnerNextMatchId: sf2Id2,
+          winnerNextSlot: "teamA",
+          winnerDestinationId: sf2Id2,
+          winnerDestinationSlot: "teamA",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: r1_3Id,
+          tournamentId,
+          stage: "round1",
+          round: "Round 1 Match 3",
+          roundKey: "r1",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: teams[2],
+          // 3
+          teamB: teams[5],
+          // 6
+          winnerNextMatchId: sf2Id2,
+          winnerNextSlot: "teamB",
+          winnerDestinationId: sf2Id2,
+          winnerDestinationSlot: "teamB",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: sf1Id2,
+          tournamentId,
+          stage: "semifinal",
+          round: "Semifinal 1",
+          roundKey: "sf",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: { ...teams[0], sourceLabel: "Seed 1 (BYE)" },
+          teamB: { name: "Winner R1-1", seed: 0 },
+          winnerNextMatchId: gfId2,
+          winnerNextSlot: "teamA",
+          winnerDestinationId: gfId2,
+          winnerDestinationSlot: "teamA",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: sf2Id2,
+          tournamentId,
+          stage: "semifinal",
+          round: "Semifinal 2",
+          roundKey: "sf",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: { name: "Winner R1-2", seed: 0 },
+          teamB: { name: "Winner R1-3", seed: 0 },
+          winnerNextMatchId: gfId2,
+          winnerNextSlot: "teamB",
+          winnerDestinationId: gfId2,
+          winnerDestinationSlot: "teamB",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: gfId2,
+          tournamentId,
+          stage: "grand_final",
+          round: "Grand Final",
+          roundKey: "gf",
+          bracketType: "grand_final",
+          seriesFormat: gfFormat,
+          teamA: { name: "Winner SF1", seed: 0 },
+          teamB: { name: "Winner SF2", seed: 0 },
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        }
+      ];
+    }
+    if (n === 8) {
+      const gfId2 = `${tournamentId}-gf`;
+      const sf1Id2 = `${tournamentId}-se-sf-1`;
+      const sf2Id2 = `${tournamentId}-se-sf-2`;
+      const qf1Id = `${tournamentId}-se-qf-1`;
+      const qf2Id = `${tournamentId}-se-qf-2`;
+      const qf3Id = `${tournamentId}-se-qf-3`;
+      const qf4Id = `${tournamentId}-se-qf-4`;
+      return [
+        {
+          id: qf1Id,
+          tournamentId,
+          stage: "quarterfinal",
+          round: "Quarterfinal 1",
+          roundKey: "qf",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: teams[0],
+          // 1
+          teamB: teams[7],
+          // 8
+          winnerNextMatchId: sf1Id2,
+          winnerNextSlot: "teamA",
+          winnerDestinationId: sf1Id2,
+          winnerDestinationSlot: "teamA",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: qf2Id,
+          tournamentId,
+          stage: "quarterfinal",
+          round: "Quarterfinal 2",
+          roundKey: "qf",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: teams[3],
+          // 4
+          teamB: teams[4],
+          // 5
+          winnerNextMatchId: sf1Id2,
+          winnerNextSlot: "teamB",
+          winnerDestinationId: sf1Id2,
+          winnerDestinationSlot: "teamB",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: qf3Id,
+          tournamentId,
+          stage: "quarterfinal",
+          round: "Quarterfinal 3",
+          roundKey: "qf",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: teams[1],
+          // 2
+          teamB: teams[6],
+          // 7
+          winnerNextMatchId: sf2Id2,
+          winnerNextSlot: "teamA",
+          winnerDestinationId: sf2Id2,
+          winnerDestinationSlot: "teamA",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: qf4Id,
+          tournamentId,
+          stage: "quarterfinal",
+          round: "Quarterfinal 4",
+          roundKey: "qf",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: teams[2],
+          // 3
+          teamB: teams[5],
+          // 6
+          winnerNextMatchId: sf2Id2,
+          winnerNextSlot: "teamB",
+          winnerDestinationId: sf2Id2,
+          winnerDestinationSlot: "teamB",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: sf1Id2,
+          tournamentId,
+          stage: "semifinal",
+          round: "Semifinal 1",
+          roundKey: "sf",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: { name: "Winner QF1", seed: 0 },
+          teamB: { name: "Winner QF2", seed: 0 },
+          winnerNextMatchId: gfId2,
+          winnerNextSlot: "teamA",
+          winnerDestinationId: gfId2,
+          winnerDestinationSlot: "teamA",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: sf2Id2,
+          tournamentId,
+          stage: "semifinal",
+          round: "Semifinal 2",
+          roundKey: "sf",
+          bracketType: "upper",
+          seriesFormat: defaultFormat,
+          teamA: { name: "Winner QF3", seed: 0 },
+          teamB: { name: "Winner QF4", seed: 0 },
+          winnerNextMatchId: gfId2,
+          winnerNextSlot: "teamB",
+          winnerDestinationId: gfId2,
+          winnerDestinationSlot: "teamB",
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        },
+        {
+          id: gfId2,
+          tournamentId,
+          stage: "grand_final",
+          round: "Grand Final",
+          roundKey: "gf",
+          bracketType: "grand_final",
+          seriesFormat: gfFormat,
+          teamA: { name: "Winner SF1", seed: 0 },
+          teamB: { name: "Winner SF2", seed: 0 },
+          status: "UPCOMING",
+          scores: { teamA: 0, teamB: 0 },
+          games: [],
+          isBye: false
+        }
+      ];
+    }
+    const gfId = `${tournamentId}-gf`;
+    const sf1Id = `${tournamentId}-se-sf-1`;
+    const sf2Id = `${tournamentId}-se-sf-2`;
+    const qfIds = [1, 2, 3, 4].map((i) => `${tournamentId}-se-qf-${i}`);
+    const r16Ids = [1, 2, 3, 4, 5, 6, 7, 8].map((i) => `${tournamentId}-se-r16-${i}`);
+    const matches = [];
+    const seedPairs16 = [
+      [0, 15],
+      [7, 8],
+      [3, 12],
+      [4, 11],
+      [1, 14],
+      [6, 9],
+      [2, 13],
+      [5, 10]
+    ];
+    for (let i = 0; i < 8; i++) {
+      const [sA, sB] = seedPairs16[i];
+      const targetQfId = qfIds[Math.floor(i / 2)];
+      const targetSlot = i % 2 === 0 ? "teamA" : "teamB";
+      matches.push({
+        id: r16Ids[i],
+        tournamentId,
+        stage: "round_of_16",
+        round: `Round of 16 Match ${i + 1}`,
+        roundKey: "r16",
+        bracketType: "upper",
+        seriesFormat: defaultFormat,
+        teamA: teams[sA] || { name: `Seed #${sA + 1}`, seed: sA + 1 },
+        teamB: teams[sB] || { name: `Seed #${sB + 1}`, seed: sB + 1 },
+        winnerNextMatchId: targetQfId,
+        winnerNextSlot: targetSlot,
+        winnerDestinationId: targetQfId,
+        winnerDestinationSlot: targetSlot,
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: [],
+        isBye: false
+      });
+    }
+    for (let i = 0; i < 4; i++) {
+      const targetSfId = i < 2 ? sf1Id : sf2Id;
+      const targetSlot = i % 2 === 0 ? "teamA" : "teamB";
+      matches.push({
+        id: qfIds[i],
+        tournamentId,
+        stage: "quarterfinal",
+        round: `Quarterfinal ${i + 1}`,
+        roundKey: "qf",
+        bracketType: "upper",
+        seriesFormat: defaultFormat,
+        teamA: { name: `Winner R16 Match ${i * 2 + 1}`, seed: 0 },
+        teamB: { name: `Winner R16 Match ${i * 2 + 2}`, seed: 0 },
+        winnerNextMatchId: targetSfId,
+        winnerNextSlot: targetSlot,
+        winnerDestinationId: targetSfId,
+        winnerDestinationSlot: targetSlot,
+        status: "UPCOMING",
+        scores: { teamA: 0, teamB: 0 },
+        games: [],
+        isBye: false
+      });
+    }
+    matches.push({
+      id: sf1Id,
+      tournamentId,
+      stage: "semifinal",
+      round: "Semifinal 1",
+      roundKey: "sf",
+      bracketType: "upper",
+      seriesFormat: defaultFormat,
+      teamA: { name: "Winner QF1", seed: 0 },
+      teamB: { name: "Winner QF2", seed: 0 },
+      winnerNextMatchId: gfId,
+      winnerNextSlot: "teamA",
+      winnerDestinationId: gfId,
+      winnerDestinationSlot: "teamA",
+      status: "UPCOMING",
+      scores: { teamA: 0, teamB: 0 },
+      games: [],
+      isBye: false
+    });
+    matches.push({
+      id: sf2Id,
+      tournamentId,
+      stage: "semifinal",
+      round: "Semifinal 2",
+      roundKey: "sf",
+      bracketType: "upper",
+      seriesFormat: defaultFormat,
+      teamA: { name: "Winner QF3", seed: 0 },
+      teamB: { name: "Winner QF4", seed: 0 },
+      winnerNextMatchId: gfId,
+      winnerNextSlot: "teamB",
+      winnerDestinationId: gfId,
+      winnerDestinationSlot: "teamB",
+      status: "UPCOMING",
+      scores: { teamA: 0, teamB: 0 },
+      games: [],
+      isBye: false
+    });
+    matches.push({
+      id: gfId,
+      tournamentId,
+      stage: "grand_final",
+      round: "Grand Final",
+      roundKey: "gf",
+      bracketType: "grand_final",
+      seriesFormat: gfFormat,
+      teamA: { name: "Winner SF1", seed: 0 },
+      teamB: { name: "Winner SF2", seed: 0 },
+      status: "UPCOMING",
+      scores: { teamA: 0, teamB: 0 },
+      games: [],
+      isBye: false
+    });
+    return matches;
+  }
+  applyCanonicalMatchResult(params) {
+    const { tournamentId, matchId, winnerTeamId, loserTeamId, scoreA = 0, scoreB = 0 } = params;
+    const structure = this.getStructure(tournamentId);
+    if (!structure) return { success: false, error: "Structure not found" };
+    const match = structure.matches.find((m) => m.id === matchId);
+    if (!match) return { success: false, error: "Match not found" };
+    match.status = "COMPLETED";
+    match.scores = { teamA: scoreA, teamB: scoreB };
+    match.winnerId = winnerTeamId;
+    match.loserId = loserTeamId;
+    const winningTeam = match.teamA && (match.teamA.teamId === winnerTeamId || match.teamA.id === winnerTeamId) ? match.teamA : match.teamB;
+    const losingTeam = match.teamB && (match.teamB.teamId === loserTeamId || match.teamB.id === loserTeamId) ? match.teamB : match.teamA;
+    const winMatchId = match.winnerNextMatchId || match.winnerDestinationId;
+    const winSlot = match.winnerNextSlot || match.winnerDestinationSlot || "teamA";
+    if (winMatchId && winningTeam) {
+      const targetMatch = structure.matches.find((m) => m.id === winMatchId);
+      if (targetMatch) {
+        if (winSlot === "teamA") {
+          targetMatch.teamA = { ...winningTeam };
+        } else {
+          targetMatch.teamB = { ...winningTeam };
+        }
+      }
+    }
+    const loseMatchId = match.loserNextMatchId || match.loserDestinationId;
+    const loseSlot = match.loserNextSlot || match.loserDestinationSlot || "teamA";
+    if (loseMatchId && losingTeam) {
+      const targetMatch = structure.matches.find((m) => m.id === loseMatchId);
+      if (targetMatch) {
+        if (loseSlot === "teamA") {
+          targetMatch.teamA = { ...losingTeam };
+        } else {
+          targetMatch.teamB = { ...losingTeam };
+        }
+      }
+    }
+    structure.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    return { success: true };
+  }
+  // Backward compatibility signatures
+  generateBracket(tournamentId, teams, format = "DOUBLE_ELIMINATION") {
+    return this.generateFullStructure(tournamentId, teams).structure;
+  }
+};
+var dotaCompetitionEngine = new DotaCompetitionEngine();
+
 // ../src/server/firebaseAdmin.ts
-import { initializeApp, getApps, getApp, cert } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
-import { getAuth } from "firebase-admin/auth";
+import { initializeApp as initializeApp2, getApps as getApps2, getApp as getApp2, cert } from "firebase-admin/app";
+import { getFirestore as getFirestore2 } from "firebase-admin/firestore";
+import { getAuth as getAuth2 } from "firebase-admin/auth";
 var isInitialized = false;
 function initAdmin() {
-  if (getApps().length > 0) {
+  if (getApps2().length > 0) {
     isInitialized = true;
     return;
   }
@@ -20,12 +3391,12 @@ function initAdmin() {
   try {
     if (serviceAccountJson && serviceAccountJson.trim().startsWith("{")) {
       const parsed = JSON.parse(serviceAccountJson);
-      initializeApp({
+      initializeApp2({
         credential: cert(parsed),
         projectId: parsed.project_id || projectId
       });
     } else {
-      initializeApp({
+      initializeApp2({
         projectId
       });
     }
@@ -35,19 +3406,19 @@ function initAdmin() {
   }
 }
 function getAdminApp() {
-  if (!isInitialized || getApps().length === 0) {
+  if (!isInitialized || getApps2().length === 0) {
     initAdmin();
   }
-  return getApp();
+  return getApp2();
 }
 function getAdminDb() {
   const app3 = getAdminApp();
   const databaseId = process.env.FIREBASE_FIRESTORE_DATABASE_ID || "ai-studio-helloworld-3b15cdcf-4ce0-4040-9e96-73767517ade0";
-  return getFirestore(app3, databaseId);
+  return getFirestore2(app3, databaseId);
 }
 function getAdminAuth() {
   const app3 = getAdminApp();
-  return getAuth(app3);
+  return getAuth2(app3);
 }
 async function verifyFirebaseBearerToken(authHeader) {
   if (!authHeader || typeof authHeader !== "string") {
@@ -457,8 +3828,8 @@ async function checkActiveTournamentLock(userId) {
     try {
       const db2 = getAdminDb();
       const snap = await db2.collection("registrations").where("userId", "==", userId).get();
-      for (const doc5 of snap.docs) {
-        const data = doc5.data();
+      for (const doc6 of snap.docs) {
+        const data = doc6.data();
         const status = data?.status || "REGISTERED";
         if (["REGISTERED", "UNDER_REVIEW", "VERIFIED"].includes(status)) {
           return true;
@@ -645,9 +4016,9 @@ async function unlinkSteamAccountAuthoritative(userId) {
   let currentAccount = inMemoryPrivateAccounts.get(userId) || null;
   if (!currentAccount && db2) {
     try {
-      const doc5 = await db2.collection("privatePlayerAccounts").doc(userId).get();
-      if (doc5.exists) {
-        currentAccount = doc5.data();
+      const doc6 = await db2.collection("privatePlayerAccounts").doc(userId).get();
+      if (doc6.exists) {
+        currentAccount = doc6.data();
       }
     } catch {
     }
@@ -730,9 +4101,9 @@ async function getPrivatePlayerAccount(userId) {
     }
     try {
       const db2 = getAdminDb();
-      const doc5 = await db2.collection("privatePlayerAccounts").doc(userId).get();
-      if (doc5.exists) {
-        privateAcc = doc5.data();
+      const doc6 = await db2.collection("privatePlayerAccounts").doc(userId).get();
+      if (doc6.exists) {
+        privateAcc = doc6.data();
         if (privateAcc) {
           inMemoryPrivateAccounts.set(userId, privateAcc);
           return privateAcc;
@@ -992,123 +4363,8 @@ async function removeDiscordMemberRole(params) {
   }
 }
 
-// ../src/services/firebaseConfig.ts
-import { initializeApp as initializeApp2, getApps as getApps2, getApp as getApp2 } from "firebase/app";
-import {
-  getAuth as getAuth2,
-  GoogleAuthProvider,
-  signInWithPopup,
-  signInWithRedirect,
-  getRedirectResult,
-  signOut as fbSignOut,
-  onAuthStateChanged
-} from "firebase/auth";
-import { initializeFirestore, getFirestore as getFirestore2, doc, getDocFromServer, setLogLevel } from "firebase/firestore";
-
-// ../firebase-applet-config.json
-var firebase_applet_config_default = {
-  projectId: "gen-lang-client-0634745445",
-  appId: "1:866955042948:web:b4faf027f5552b1d90e2d1",
-  apiKey: "AIzaSyBXbW4wptQI_ny98vCEcHbdHJhsMgRYbv0",
-  authDomain: "gen-lang-client-0634745445.firebaseapp.com",
-  firestoreDatabaseId: "ai-studio-helloworld-3b15cdcf-4ce0-4040-9e96-73767517ade0",
-  storageBucket: "gen-lang-client-0634745445.firebasestorage.app",
-  messagingSenderId: "866955042948",
-  measurementId: "",
-  oAuthClientId: "866955042948-mtiemau7sc6smf9mtp7m4vqumedhomau.apps.googleusercontent.com",
-  recaptchaSiteKey: ""
-};
-
-// ../src/services/firebaseConfig.ts
-try {
-  setLogLevel("silent");
-} catch {
-}
-var env = typeof import.meta !== "undefined" && import.meta.env ? import.meta.env : {};
-var activeFirebaseConfig = {
-  projectId: env.VITE_FIREBASE_PROJECT_ID || firebase_applet_config_default.projectId,
-  appId: env.VITE_FIREBASE_APP_ID || firebase_applet_config_default.appId,
-  apiKey: env.VITE_FIREBASE_API_KEY || firebase_applet_config_default.apiKey,
-  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || firebase_applet_config_default.authDomain,
-  firestoreDatabaseId: env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebase_applet_config_default.firestoreDatabaseId,
-  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || firebase_applet_config_default.storageBucket,
-  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebase_applet_config_default.messagingSenderId,
-  measurementId: env.VITE_FIREBASE_MEASUREMENT_ID || firebase_applet_config_default.measurementId || "",
-  oAuthClientId: env.VITE_FIREBASE_OAUTH_CLIENT_ID || firebase_applet_config_default.oAuthClientId || "",
-  recaptchaSiteKey: env.VITE_FIREBASE_RECAPTCHA_SITE_KEY || firebase_applet_config_default.recaptchaSiteKey || ""
-};
-var app = getApps2().length > 0 ? getApp2() : initializeApp2(activeFirebaseConfig);
-var db = (() => {
-  try {
-    return initializeFirestore(app, {
-      experimentalForceLongPolling: true,
-      ignoreUndefinedProperties: true
-    }, activeFirebaseConfig.firestoreDatabaseId);
-  } catch {
-    return getFirestore2(app, activeFirebaseConfig.firestoreDatabaseId);
-  }
-})();
-var auth = getAuth2(app);
-var googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({
-  prompt: "select_account"
-});
-var quotaExhaustedState = false;
-var quotaListeners = /* @__PURE__ */ new Set();
-var LOCAL_DEV_MODE_KEY = "pb_local_dev_sync_mode";
-var localDevSyncMode = (() => {
-  if (typeof window !== "undefined" && window.localStorage) {
-    const saved = window.localStorage.getItem(LOCAL_DEV_MODE_KEY);
-    if (saved !== null) {
-      return saved === "true";
-    }
-  }
-  return false;
-})();
-function isQuotaExhausted() {
-  return quotaExhaustedState;
-}
-function setQuotaExhausted(exhausted = true) {
-  if (quotaExhaustedState !== exhausted) {
-    quotaExhaustedState = exhausted;
-    quotaListeners.forEach((cb) => {
-      try {
-        cb(isQuotaExhausted());
-      } catch {
-      }
-    });
-  }
-}
-function isQuotaError(error) {
-  if (!error) return false;
-  const msg = error instanceof Error ? error.message : String(error);
-  const code = error?.code;
-  return code === "resource-exhausted" || msg.toLowerCase().includes("quota") || msg.toLowerCase().includes("resource-exhausted") || msg.toLowerCase().includes("quota limit exceeded");
-}
-async function testFirestoreConnection() {
-  try {
-    await getDocFromServer(doc(db, "test", "connection"));
-    return true;
-  } catch (error) {
-    if (isQuotaError(error)) {
-      setQuotaExhausted(true);
-    }
-    if (error instanceof Error && error.message.includes("the client is offline")) {
-      console.warn("Please check your Firebase configuration: client is offline");
-      return false;
-    }
-    return true;
-  }
-}
-if (typeof window !== "undefined") {
-  setTimeout(() => {
-    testFirestoreConnection().catch(() => {
-    });
-  }, 1500);
-}
-
 // ../src/domain/pbgAccountRegistry.ts
-import { doc as doc2, getDoc, setDoc, deleteDoc, collection, onSnapshot } from "firebase/firestore";
+import { doc as doc3, getDoc as getDoc2, setDoc as setDoc2, deleteDoc, collection, onSnapshot as onSnapshot2 } from "firebase/firestore";
 var STORAGE_KEY = "pbg_player_accounts_v1";
 var PBG_COUNTER_KEY = "pbg_player_id_counter_v1";
 var PBGAccountRegistry = class {
@@ -1718,7 +4974,7 @@ var PBGAccountRegistry = class {
   initFirestoreSync() {
     if (typeof window === "undefined" || !db) return;
     try {
-      onSnapshot(collection(db, "pbgAccounts"), (snapshot) => {
+      onSnapshot2(collection(db, "pbgAccounts"), (snapshot) => {
         let changed = false;
         snapshot.forEach((docSnap) => {
           const acc = docSnap.data();
@@ -1755,7 +5011,7 @@ var PBGAccountRegistry = class {
       }, (err) => {
         console.warn("Firestore pbgAccounts sync listener deferred:", err);
       });
-      onSnapshot(doc2(db, "system_counters", "pbg_counter"), (snap) => {
+      onSnapshot2(doc3(db, "system_counters", "pbg_counter"), (snap) => {
         if (snap.exists()) {
           const data = snap.data();
           if (typeof data?.currentCounter === "number") {
@@ -1837,7 +5093,7 @@ var PBGAccountRegistry = class {
     this.nextPbgNumber += 1;
     this.saveToStorage();
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
-      setDoc(doc2(db, "system_counters", "pbg_counter"), {
+      setDoc2(doc3(db, "system_counters", "pbg_counter"), {
         currentCounter: allocatedNum,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       }, { merge: true }).catch(() => {
@@ -2593,7 +5849,7 @@ var PBGAccountRegistry = class {
         return;
       }
       this.lastSyncedHash.set(account.googleUid, serialized);
-      await setDoc(doc2(db, "pbgAccounts", account.googleUid), account, { merge: true });
+      await setDoc2(doc3(db, "pbgAccounts", account.googleUid), account, { merge: true });
     } catch (e) {
       console.warn("Firestore pbgAccounts sync note (handled offline):", e);
     }
@@ -2606,7 +5862,7 @@ var PBGAccountRegistry = class {
       return this.accounts.get(googleUid);
     }
     try {
-      const snap = await getDoc(doc2(db, "pbgAccounts", googleUid));
+      const snap = await getDoc2(doc3(db, "pbgAccounts", googleUid));
       if (snap.exists()) {
         const data = snap.data();
         this.accounts.set(googleUid, data);
@@ -2640,7 +5896,7 @@ var PBGAccountRegistry = class {
     this.saveToStorage();
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
       try {
-        await deleteDoc(doc2(db, "pbgAccounts", googleUid));
+        await deleteDoc(doc3(db, "pbgAccounts", googleUid));
       } catch (e) {
         console.warn("Firestore account deletion note:", e);
       }
@@ -2677,8 +5933,8 @@ async function isUserRegisteredInActiveTournament(userId) {
   try {
     const regSnapshot = await db2.collection("tournamentRegistrations").where("userId", "==", userId).where("registrationStatus", "==", "CONFIRMED").get();
     if (regSnapshot.empty) return false;
-    for (const doc5 of regSnapshot.docs) {
-      const reg = doc5.data();
+    for (const doc6 of regSnapshot.docs) {
+      const reg = doc6.data();
       const tourneyDoc = await db2.collection("tournaments").doc(reg.tournamentId).get();
       if (tourneyDoc.exists) {
         const tourney = tourneyDoc.data();
@@ -3090,17 +6346,17 @@ async function unlinkDiscordAccountAuthoritative(userId, options) {
 async function reconcilePendingDiscordFinalization(userId) {
   if (!userId) return null;
   if (isTestEnv2()) {
-    for (const [discordId, doc5] of inMemoryLinks.entries()) {
-      if (doc5.pbgUserId === userId && doc5.status === "PROVISIONED_PENDING_FINALIZATION") {
+    for (const [discordId, doc6] of inMemoryLinks.entries()) {
+      if (doc6.pbgUserId === userId && doc6.status === "PROVISIONED_PENDING_FINALIZATION") {
         const finalRes = await finalizeDiscordAccountAuthoritative({
           userId,
-          pbgId: doc5.pbgId || void 0,
+          pbgId: doc6.pbgId || void 0,
           discordUserId: discordId,
-          discordUsername: doc5.discordUsername || "discord_user",
-          globalName: doc5.globalName,
-          discordAvatarUrl: doc5.avatarUrl,
-          guildMember: doc5.guildMember ?? true,
-          pbgMemberRole: doc5.pbgMemberRole ?? true
+          discordUsername: doc6.discordUsername || "discord_user",
+          globalName: doc6.globalName,
+          discordAvatarUrl: doc6.avatarUrl,
+          guildMember: doc6.guildMember ?? true,
+          pbgMemberRole: doc6.pbgMemberRole ?? true
         });
         return finalRes.account;
       }
@@ -3112,16 +6368,16 @@ async function reconcilePendingDiscordFinalization(userId) {
   try {
     const snap = await db2.collection("discord_links").where("pbgUserId", "==", userId).where("status", "==", "PROVISIONED_PENDING_FINALIZATION").limit(1).get();
     if (snap.empty) return null;
-    const doc5 = snap.docs[0].data();
+    const doc6 = snap.docs[0].data();
     const finalRes = await finalizeDiscordAccountAuthoritative({
       userId,
-      pbgId: doc5.pbgId || void 0,
-      discordUserId: doc5.discordUserId,
-      discordUsername: doc5.discordUsername || "discord_user",
-      globalName: doc5.globalName,
-      discordAvatarUrl: doc5.avatarUrl,
-      guildMember: doc5.guildMember ?? true,
-      pbgMemberRole: doc5.pbgMemberRole ?? true
+      pbgId: doc6.pbgId || void 0,
+      discordUserId: doc6.discordUserId,
+      discordUsername: doc6.discordUsername || "discord_user",
+      globalName: doc6.globalName,
+      discordAvatarUrl: doc6.avatarUrl,
+      guildMember: doc6.guildMember ?? true,
+      pbgMemberRole: doc6.pbgMemberRole ?? true
     });
     return finalRes.account;
   } catch (err) {
@@ -3153,9 +6409,9 @@ async function getPrivateDiscordAccount(userId) {
   }
   const db2 = getAdminDb();
   try {
-    const doc5 = await db2.collection("privatePlayerAccounts").doc(userId).get();
-    if (doc5.exists) {
-      const data = doc5.data();
+    const doc6 = await db2.collection("privatePlayerAccounts").doc(userId).get();
+    if (doc6.exists) {
+      const data = doc6.data();
       if (data.discordLinked && data.discordUserId) return data;
     }
     const reconciled = await reconcilePendingDiscordFinalization(userId);
@@ -3290,8 +6546,8 @@ async function getPrivateDiscordAccount(userId) {
         updatedAt: Date.now()
       };
     }
-    if (doc5.exists) {
-      return doc5.data();
+    if (doc6.exists) {
+      return doc6.data();
     }
   } catch (err) {
     console.warn("[getPrivateDiscordAccount] Firestore error:", err);
@@ -3341,10 +6597,10 @@ async function resolveAuthoritativeUserIdentity(input) {
     }
     const pbgSnap = await db2.collection("pbgAccounts").where("pbgId", "==", clean).limit(1).get();
     if (!pbgSnap.empty) {
-      const doc5 = pbgSnap.docs[0];
-      const data = doc5.data() || {};
+      const doc6 = pbgSnap.docs[0];
+      const data = doc6.data() || {};
       return {
-        uid: doc5.id,
+        uid: doc6.id,
         pbgId: data.pbgId || clean,
         email: data.email,
         displayName: data.displayName,
@@ -4549,15 +7805,15 @@ async function getAllTournamentLifecycleContexts() {
     try {
       const snap = await db2.collection("tournaments").limit(50).get();
       await Promise.all(
-        snap.docs.map(async (doc5) => {
-          const data = doc5.data();
+        snap.docs.map(async (doc6) => {
+          const data = doc6.data();
           let participants = Array.isArray(data.participants) ? data.participants : [];
           let teams = Array.isArray(data.teams) ? data.teams : [];
           if (participants.length === 0 || teams.length === 0) {
             try {
               const [pSnap, tSnap] = await Promise.all([
-                participants.length === 0 ? db2.collection(`tournaments/${doc5.id}/participants`).get().catch(() => null) : null,
-                teams.length === 0 ? db2.collection(`tournaments/${doc5.id}/teams`).get().catch(() => null) : null
+                participants.length === 0 ? db2.collection(`tournaments/${doc6.id}/participants`).get().catch(() => null) : null,
+                teams.length === 0 ? db2.collection(`tournaments/${doc6.id}/teams`).get().catch(() => null) : null
               ]);
               if (pSnap && !pSnap.empty) {
                 participants = pSnap.docs.map((d) => d.data());
@@ -4566,7 +7822,7 @@ async function getAllTournamentLifecycleContexts() {
                 teams = tSnap.docs.map((d) => d.data());
               }
               if (participants.length === 0) {
-                const rSnap = await db2.collection(`tournaments/${doc5.id}/registrations`).get().catch(() => null);
+                const rSnap = await db2.collection(`tournaments/${doc6.id}/registrations`).get().catch(() => null);
                 if (rSnap && !rSnap.empty) {
                   rSnap.docs.forEach((rd) => {
                     const rData = rd.data();
@@ -4574,7 +7830,7 @@ async function getAllTournamentLifecycleContexts() {
                     if (isApproved && rData.status !== "DISQUALIFIED" && rData.status !== "WITHDRAWN") {
                       participants.push({
                         userId: rd.id,
-                        tournamentId: doc5.id,
+                        tournamentId: doc6.id,
                         registrationId: rData.id || rd.id,
                         pbgId: rData.pbgId || rd.id,
                         displayName: rData.ign || rData.playerName || rData.displayName || rd.id,
@@ -4596,7 +7852,7 @@ async function getAllTournamentLifecycleContexts() {
                 if (capId && !participants.some((p) => p.userId === capId || p.pbgId === capId)) {
                   participants.push({
                     userId: capId,
-                    tournamentId: doc5.id,
+                    tournamentId: doc6.id,
                     registrationId: `cap-${capId}`,
                     pbgId: capId,
                     displayName: t.captainIgn || t.captainName || capId,
@@ -4616,7 +7872,7 @@ async function getAllTournamentLifecycleContexts() {
                   if (mId && !participants.some((p) => p.userId === mId || p.pbgId === mId)) {
                     participants.push({
                       userId: mId,
-                      tournamentId: doc5.id,
+                      tournamentId: doc6.id,
                       registrationId: `roster-${mId}`,
                       pbgId: mem.pbgId || mId,
                       displayName: mem.username || mem.displayName || mId,
@@ -4635,9 +7891,9 @@ async function getAllTournamentLifecycleContexts() {
             } catch {
             }
           }
-          contextMap.set(doc5.id, {
-            id: doc5.id,
-            name: data.name || data.title || doc5.id,
+          contextMap.set(doc6.id, {
+            id: doc6.id,
+            name: data.name || data.title || doc6.id,
             status: data.status,
             lifecycle: data.lifecycle,
             deleted: data.deleted === true,
@@ -5670,33 +8926,6 @@ async function getTournamentDiscordDiagnostics(tournamentId) {
     });
   }
   return diagnostics;
-}
-
-// ../src/utils/sanitizeFirestore.ts
-function removeUndefinedDeep(value) {
-  if (value === null || value === void 0) {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.filter((item) => item !== void 0).map((item) => typeof item === "object" && item !== null ? removeUndefinedDeep(item) : item);
-  }
-  if (typeof value === "object") {
-    if (value instanceof Date || value instanceof RegExp) {
-      return value;
-    }
-    const sanitized = {};
-    for (const [k, v] of Object.entries(value)) {
-      if (v !== void 0) {
-        if (typeof v === "object" && v !== null) {
-          sanitized[k] = removeUndefinedDeep(v);
-        } else {
-          sanitized[k] = v;
-        }
-      }
-    }
-    return sanitized;
-  }
-  return value;
 }
 
 // ../src/server/tournamentRegistrationOperations.ts
@@ -8774,7 +12003,7 @@ function calculateMmrBalancedPurses(options) {
 }
 
 // ../src/domain/dotaAuctionEngine.ts
-import { doc as doc3, setDoc as setDoc2, onSnapshot as onSnapshot2 } from "firebase/firestore";
+import { doc as doc4, setDoc as setDoc3, onSnapshot as onSnapshot3 } from "firebase/firestore";
 var DotaAuctionEngine = class {
   constructor(customConfig) {
     this.players = /* @__PURE__ */ new Map();
@@ -8955,7 +12184,7 @@ var DotaAuctionEngine = class {
     }
     if (typeof window !== "undefined" && db) {
       try {
-        this.firestoreUnsub = onSnapshot2(doc3(db, "auctions", this.config.tournamentId), (snap) => {
+        this.firestoreUnsub = onSnapshot3(doc4(db, "auctions", this.config.tournamentId), (snap) => {
           if (snap.exists()) {
             const data = snap.data();
             if (data && !this.isApplyingRemoteUpdate) {
@@ -8965,7 +12194,7 @@ var DotaAuctionEngine = class {
         }, (err) => {
           console.warn("Firestore auctions sync note:", err);
         });
-        this.tournamentDocUnsub = onSnapshot2(doc3(db, "tournaments", this.config.tournamentId), (snap) => {
+        this.tournamentDocUnsub = onSnapshot3(doc4(db, "tournaments", this.config.tournamentId), (snap) => {
           if (snap.exists()) {
             const tData = snap.data();
             if (tData && Array.isArray(tData.teams) && tData.teams.length > 0 && !this.isApplyingRemoteUpdate) {
@@ -8998,7 +12227,7 @@ var DotaAuctionEngine = class {
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
       try {
         const cleanPayload = JSON.parse(JSON.stringify(snapshot));
-        setDoc2(doc3(db, "auctions", this.config.tournamentId), {
+        setDoc3(doc4(db, "auctions", this.config.tournamentId), {
           ...cleanPayload,
           lastPersistedAt: (/* @__PURE__ */ new Date()).toISOString()
         }, { merge: true }).catch((err) => {
@@ -10990,13 +14219,13 @@ var dotaAuctionEngine = getAuctionEngine("purple-bean-test-cup");
 // ../src/services/firebaseService.ts
 import {
   collection as collection2,
-  doc as doc4,
+  doc as doc5,
   getDocs,
-  setDoc as setDoc3,
-  updateDoc,
+  setDoc as setDoc4,
+  updateDoc as updateDoc2,
   deleteDoc as deleteDoc2,
-  onSnapshot as onSnapshot3,
-  runTransaction,
+  onSnapshot as onSnapshot4,
+  runTransaction as runTransaction2,
   writeBatch,
   arrayUnion
 } from "firebase/firestore";
@@ -11386,8 +14615,66 @@ var PURPLE_BEAN_AUCTION_TEST_CONFIG = {
     organizerApprovalRequired: true
   }
 };
+var AFTER_AUCTION_TEST_CONFIG = {
+  identity: {
+    tournamentId: "after-auction-test",
+    name: "After auction test",
+    gameId: "dota2",
+    gameName: "Dota 2",
+    description: "Post-auction tournament fixture with 8 formed teams ready for bracket or group stage play.",
+    region: "Pan India",
+    locationType: "ONLINE",
+    city: "Bengaluru",
+    testMode: true,
+    environment: "TEST TOURNAMENT",
+    visibility: "PUBLIC",
+    bannerUrl: "https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80"
+  },
+  registration: {
+    registrationMode: "INDIVIDUAL",
+    openDate: "2026-09-01",
+    closeDate: "2026-09-30",
+    maxParticipants: 40,
+    eligibilityRules: {
+      minMmrOrRank: 3e3,
+      regionLocked: false,
+      requireKyc: false
+    }
+  },
+  teamFormation: {
+    mode: "AUCTION",
+    numberOfTeams: 8
+  },
+  roster: {
+    primaryRosterSize: 5,
+    captainCountsTowardRoster: true,
+    substituteSlots: 1,
+    substituteRequired: false
+  },
+  competition: {
+    format: "DOUBLE_ELIMINATION",
+    defaultSeriesFormat: "BO3",
+    roundOverrides: {
+      "Grand Final": "BO5"
+    },
+    seedingMethod: "RATING_BASED"
+  },
+  prizes: {
+    totalPrizePoolINR: 1e5,
+    placementDistribution: [
+      { placement: "1st Place (Champion)", percentage: 50, amountINR: 5e4 },
+      { placement: "2nd Place (Runner-up)", percentage: 30, amountINR: 3e4 },
+      { placement: "3rd Place", percentage: 20, amountINR: 2e4 }
+    ]
+  },
+  integrity: {
+    verificationRequired: true,
+    organizerApprovalRequired: true
+  }
+};
 var INITIAL_SEED_TOURNAMENTS = [
   PURPLE_BEAN_AUCTION_TEST_CONFIG,
+  AFTER_AUCTION_TEST_CONFIG,
   INDIA_MASTERS_AUCTION_CONFIG,
   INDIA_DOTA_OPEN_CONFIG,
   PURPLE_BEAN_CHALLENGER_CONFIG
@@ -11977,6 +15264,9 @@ var TournamentConfigRegistry = class {
   setTeamProvider(provider) {
     this.teamProvider = provider;
   }
+  getTeamProvider(tournamentId) {
+    return this.teamProvider;
+  }
   clearConfigs() {
     this.configs.clear();
     this.deletedIds.clear();
@@ -12264,6 +15554,48 @@ var MOCK_TOURNAMENTS = [
       { id: "stg-reg", name: "Registration Open", status: "current", date: "October 2026" },
       { id: "stg-cap", name: "Captain Selection (3 Teams)", status: "upcoming", date: "October 2026" },
       { id: "stg-auc", name: "Live 3-Team Captain Auction", status: "upcoming", date: "October 2026" }
+    ]
+  },
+  {
+    id: "after-auction-test",
+    name: "After auction test",
+    game: "Dota 2",
+    gameId: "dota2",
+    status: "In Progress",
+    lifecycle: "IN_PROGRESS",
+    dates: "October 2026",
+    startDate: "2026-10-01",
+    endDate: "2026-10-31",
+    prizePool: "\u20B9100,000 Prize Pool",
+    totalPrizeNumber: 1e5,
+    prizePoolINR: "\u20B9100,000",
+    teamCount: 8,
+    playerCount: 40,
+    format: "Post-Auction Championship \xB7 8 Formed Teams",
+    organizer: "Purple Bean Operations",
+    city: "Bengaluru",
+    region: "Pan India",
+    description: "Post-auction tournament fixture with 8 formed teams ready for double elimination bracket or group stage play.",
+    isDevelopment: false,
+    testMode: true,
+    environment: "TEST TOURNAMENT",
+    tournamentType: "auction",
+    teamFormation: { mode: "AUCTION", numberOfTeams: 8 },
+    visibility: "PUBLIC",
+    keyInfo: {
+      server: "India (Mumbai)",
+      antiCheat: "VAC & Verified Identity",
+      bracketFormat: "Double Elimination (BO3)",
+      rosterLock: "Strict 5/5 + 1 Stand-in"
+    },
+    prizeDistribution: [
+      { place: "1st Place (Champion)", percentage: "50%", amount: "\u20B950,000" },
+      { place: "2nd Place (Runner-up)", percentage: "30%", amount: "\u20B930,000" },
+      { place: "3rd Place", percentage: "20%", amount: "\u20B920,000" }
+    ],
+    stages: [
+      { id: "stg-auc-done", name: "Auction Completed (8 Teams Formed)", status: "completed", date: "October 2026" },
+      { id: "stg-comp", name: "Main Event Competition", status: "current", date: "October 2026" }
     ]
   }
 ];
@@ -12728,6 +16060,192 @@ var MOCK_PLAYERS = [
     heroPool: [{ hero: "Tiny", games: 18, winRate: 58 }]
   }
 ];
+var AFTER_AUCTION_8_TEAMS = [
+  {
+    id: "team-aat-1",
+    name: "Vanguard Gaming",
+    tag: "VAN",
+    logo: "\u{1F6E1}\uFE0F",
+    color: "#7C3AED",
+    bgHex: "#EDE9FE",
+    country: "India",
+    flag: "\u{1F1EE}\u{1F1F3}",
+    city: "Bengaluru",
+    region: "South India",
+    primaryGame: "Dota 2",
+    rating: 7500,
+    tournamentWins: 2,
+    captainId: "pbg-test-captain-01",
+    captainName: "VanguardCaptain",
+    players: ["pbg-test-001", "pbg-test-002", "pbg-test-003", "pbg-test-004", "pbg-test-005"],
+    standIn: "",
+    groupPoints: 0,
+    mapsRecord: { won: 0, lost: 0 },
+    form: ["W", "W", "W"],
+    tournamentId: "after-auction-test"
+  },
+  {
+    id: "team-aat-2",
+    name: "Apex Predators",
+    tag: "APX",
+    logo: "\u26A1",
+    color: "#3B82F6",
+    bgHex: "#DBEAFE",
+    country: "India",
+    flag: "\u{1F1EE}\u{1F1F3}",
+    city: "Mumbai",
+    region: "West India",
+    primaryGame: "Dota 2",
+    rating: 7300,
+    tournamentWins: 1,
+    captainId: "pbg-test-captain-02",
+    captainName: "ApexCaptain",
+    players: ["pbg-test-006", "pbg-test-007", "pbg-test-008", "pbg-test-009", "pbg-test-010"],
+    standIn: "",
+    groupPoints: 0,
+    mapsRecord: { won: 0, lost: 0 },
+    form: ["W", "L", "W"],
+    tournamentId: "after-auction-test"
+  },
+  {
+    id: "team-aat-3",
+    name: "Shadow Strikers",
+    tag: "SHD",
+    logo: "\u{1F451}",
+    color: "#059669",
+    bgHex: "#D1FAE5",
+    country: "India",
+    flag: "\u{1F1EE}\u{1F1F3}",
+    city: "Delhi",
+    region: "North India",
+    primaryGame: "Dota 2",
+    rating: 7100,
+    tournamentWins: 1,
+    captainId: "pbg-test-captain-03",
+    captainName: "ShadowCaptain",
+    players: ["pbg-test-011", "pbg-test-012", "pbg-test-013", "pbg-test-014", "pbg-test-015"],
+    standIn: "",
+    groupPoints: 0,
+    mapsRecord: { won: 0, lost: 0 },
+    form: ["W", "W", "L"],
+    tournamentId: "after-auction-test"
+  },
+  {
+    id: "team-aat-4",
+    name: "Iron Legion",
+    tag: "IRN",
+    logo: "\u{1F409}",
+    color: "#DC2626",
+    bgHex: "#FEE2E2",
+    country: "India",
+    flag: "\u{1F1EE}\u{1F1F3}",
+    city: "Hyderabad",
+    region: "South India",
+    primaryGame: "Dota 2",
+    rating: 6900,
+    tournamentWins: 0,
+    captainId: "pbg-test-captain-04",
+    captainName: "IronCaptain",
+    players: ["pbg-test-016", "pbg-test-017", "pbg-test-018", "pbg-test-019", "pbg-test-020"],
+    standIn: "",
+    groupPoints: 0,
+    mapsRecord: { won: 0, lost: 0 },
+    form: ["L", "W", "L"],
+    tournamentId: "after-auction-test"
+  },
+  {
+    id: "team-aat-5",
+    name: "Solar Flare",
+    tag: "SOL",
+    logo: "\u{1F525}",
+    color: "#D97706",
+    bgHex: "#FEF3C7",
+    country: "India",
+    flag: "\u{1F1EE}\u{1F1F3}",
+    city: "Chennai",
+    region: "South India",
+    primaryGame: "Dota 2",
+    rating: 6700,
+    tournamentWins: 0,
+    captainId: "pbg-test-captain-05",
+    captainName: "SolarCaptain",
+    players: ["pbg-test-021", "pbg-test-022", "pbg-test-023", "pbg-test-024", "pbg-test-025"],
+    standIn: "",
+    groupPoints: 0,
+    mapsRecord: { won: 0, lost: 0 },
+    form: ["W", "L", "L"],
+    tournamentId: "after-auction-test"
+  },
+  {
+    id: "team-aat-6",
+    name: "Thunderbolts",
+    tag: "THN",
+    logo: "\u{1F981}",
+    color: "#EC4899",
+    bgHex: "#FCE7F3",
+    country: "India",
+    flag: "\u{1F1EE}\u{1F1F3}",
+    city: "Kolkata",
+    region: "East India",
+    primaryGame: "Dota 2",
+    rating: 6500,
+    tournamentWins: 0,
+    captainId: "pbg-test-captain-06",
+    captainName: "ThunderCaptain",
+    players: ["pbg-test-026", "pbg-test-027", "pbg-test-028", "pbg-test-029", "pbg-test-030"],
+    standIn: "",
+    groupPoints: 0,
+    mapsRecord: { won: 0, lost: 0 },
+    form: ["L", "L", "W"],
+    tournamentId: "after-auction-test"
+  },
+  {
+    id: "team-aat-7",
+    name: "Mystic Wolves",
+    tag: "WLF",
+    logo: "\u2694\uFE0F",
+    color: "#6366F1",
+    bgHex: "#E0E7FF",
+    country: "India",
+    flag: "\u{1F1EE}\u{1F1F3}",
+    city: "Pune",
+    region: "West India",
+    primaryGame: "Dota 2",
+    rating: 6300,
+    tournamentWins: 0,
+    captainId: "pbg-test-captain-07",
+    captainName: "WolfCaptain",
+    players: ["pbg-test-031", "pbg-test-032", "pbg-test-033", "pbg-test-034", "pbg-test-035"],
+    standIn: "",
+    groupPoints: 0,
+    mapsRecord: { won: 0, lost: 0 },
+    form: ["L", "W", "L"],
+    tournamentId: "after-auction-test"
+  },
+  {
+    id: "team-aat-8",
+    name: "Frostbite Esports",
+    tag: "FRS",
+    logo: "\u{1F3AF}",
+    color: "#14B8A6",
+    bgHex: "#CCFBF1",
+    country: "India",
+    flag: "\u{1F1EE}\u{1F1F3}",
+    city: "Jaipur",
+    region: "North India",
+    primaryGame: "Dota 2",
+    rating: 6100,
+    tournamentWins: 0,
+    captainId: "pbg-test-captain-08",
+    captainName: "FrostCaptain",
+    players: ["pbg-test-036", "pbg-test-037", "pbg-test-038", "pbg-test-039", "pbg-test-040"],
+    standIn: "",
+    groupPoints: 0,
+    mapsRecord: { won: 0, lost: 0 },
+    form: ["L", "L", "L"],
+    tournamentId: "after-auction-test"
+  }
+];
 var MOCK_TEAMS = [
   {
     id: "t-1",
@@ -12797,7 +16315,8 @@ var MOCK_TEAMS = [
     mapsRecord: { won: 5, lost: 2 },
     form: ["W", "W", "L"],
     description: "Dynamic team known for tactical precision and execution."
-  }
+  },
+  ...AFTER_AUCTION_8_TEAMS
 ];
 var MOCK_MATCHES = [
   {
@@ -14426,94 +17945,6 @@ var DotaPremadeTeamEngine = class {
 };
 var dotaPremadeTeamEngine = new DotaPremadeTeamEngine();
 
-// ../src/domain/dotaCompetitionEngine.ts
-var DotaCompetitionEngine = class {
-  constructor() {
-    this.structures = /* @__PURE__ */ new Map();
-  }
-  getStructure(tournamentId) {
-    return this.structures.get(tournamentId);
-  }
-  setStructure(tournamentId, state) {
-    this.structures.set(tournamentId, state);
-  }
-  generateBracket(tournamentId, teams, format = "SINGLE_ELIMINATION", seedingMode = "RATING_BASED") {
-    const seededTeams = teams.map((t, idx) => ({
-      teamId: t.id || t.teamId,
-      name: t.name || t.teamName,
-      tag: t.tag || "T",
-      seed: idx + 1,
-      rating: t.rating || 1500,
-      logo: t.logo,
-      color: t.color,
-      captainUserId: t.captainId || t.captainUserId,
-      captainIgn: t.captainName || t.captainIgn
-    }));
-    const matches = [];
-    if (seededTeams.length >= 2) {
-      matches.push({
-        id: `match-${tournamentId}-1`,
-        tournamentId,
-        round: "Semifinal 1",
-        bracketType: "upper",
-        seriesFormat: "BO3",
-        teamA: seededTeams[0],
-        teamB: seededTeams[seededTeams.length - 1],
-        status: "UPCOMING"
-      });
-      matches.push({
-        id: `match-${tournamentId}-finals`,
-        tournamentId,
-        round: "Grand Final",
-        bracketType: "grand_final",
-        seriesFormat: "BO3",
-        teamA: { name: "Winner SF1", seed: 0 },
-        teamB: seededTeams[1] || { name: "Winner SF2", seed: 0 },
-        status: "UPCOMING"
-      });
-    }
-    const state = {
-      tournamentId,
-      format,
-      config: { format },
-      seedingMode,
-      teams: seededTeams,
-      matches,
-      isLocked: false
-    };
-    this.structures.set(tournamentId, state);
-    return state;
-  }
-  generateSeeds(arg1, arg2, _arg3, _caller) {
-    const tournamentId = typeof arg1 === "object" ? arg1.tournamentId : arg1;
-    const mode = typeof arg1 === "object" ? arg1.seedingMode : arg2;
-    const existing = this.structures.get(tournamentId);
-    const seededTeams = (existing?.teams || []).map((t, i) => ({ ...t, seed: i + 1 }));
-    return { success: true, seededTeams };
-  }
-  generateCompetitionStructure(arg1, _arg2) {
-    const tournamentId = typeof arg1 === "object" ? arg1.tournamentId : arg1;
-    let s = this.structures.get(tournamentId);
-    if (!s) {
-      s = this.generateBracket(tournamentId, []);
-    }
-    return { success: true, structure: s };
-  }
-  lockCompetitionStructure(arg1, _caller) {
-    const tournamentId = typeof arg1 === "object" ? arg1.tournamentId : arg1;
-    let s = this.structures.get(tournamentId);
-    if (!s) {
-      s = this.generateBracket(tournamentId, []);
-    }
-    s.isLocked = true;
-    return { success: true, structure: s };
-  }
-  updateMatchProgression(arg1, _arg2, _arg3, _caller) {
-    return { success: true };
-  }
-};
-var dotaCompetitionEngine = new DotaCompetitionEngine();
-
 // ../src/services/firebaseService.ts
 function tournamentToConfig(t) {
   if (t.config && t.config.identity) {
@@ -14785,6 +18216,10 @@ var FirebaseTournamentService = class {
     if (testTourney && !this.tournaments.some((t) => t.id === "purple-bean-auction-test")) {
       this.tournaments.push({ ...testTourney });
     }
+    const afterAuctionTourney = MOCK_TOURNAMENTS.find((t) => t.id === "after-auction-test");
+    if (afterAuctionTourney && !this.tournaments.some((t) => t.id === "after-auction-test")) {
+      this.tournaments.push({ ...afterAuctionTourney });
+    }
     pbgAccountRegistry.subscribe(() => {
       this.notify();
     });
@@ -14893,7 +18328,7 @@ var FirebaseTournamentService = class {
     }
     if (!this.authUnsubs.has("user_roles")) {
       try {
-        const unsubUserRoles = onSnapshot3(collection2(db, "user_roles"), (snapshot) => {
+        const unsubUserRoles = onSnapshot4(collection2(db, "user_roles"), (snapshot) => {
           const rolesMap = /* @__PURE__ */ new Map();
           snapshot.forEach((docSnap) => {
             const data = docSnap.data();
@@ -14951,7 +18386,7 @@ var FirebaseTournamentService = class {
     }
     if (!this.authUnsubs.has("system_revocations")) {
       try {
-        const unsubRevocations = onSnapshot3(collection2(db, "system_revocations"), (snapshot) => {
+        const unsubRevocations = onSnapshot4(collection2(db, "system_revocations"), (snapshot) => {
           let revokedChanged = false;
           const currentRevokedEmails = /* @__PURE__ */ new Set();
           snapshot.forEach((docSnap) => {
@@ -14991,7 +18426,7 @@ var FirebaseTournamentService = class {
     if (perms.isAdmin) {
       if (!this.authUnsubs.has("role_audit_logs")) {
         try {
-          const unsubAudit = onSnapshot3(collection2(db, "role_audit_logs"), (snapshot) => {
+          const unsubAudit = onSnapshot4(collection2(db, "role_audit_logs"), (snapshot) => {
             const logs = [];
             snapshot.forEach((docSnap) => {
               const data = docSnap.data();
@@ -15009,7 +18444,7 @@ var FirebaseTournamentService = class {
       }
       if (!this.authUnsubs.has("admins")) {
         try {
-          const unsubAdmins = onSnapshot3(collection2(db, "admins"), (snapshot) => {
+          const unsubAdmins = onSnapshot4(collection2(db, "admins"), (snapshot) => {
             const adminSet = /* @__PURE__ */ new Set([PRIMARY_PROJECT_ADMIN_EMAIL2]);
             snapshot.forEach((docSnap) => {
               const data = docSnap.data();
@@ -15042,7 +18477,7 @@ var FirebaseTournamentService = class {
       }
       if (!this.authUnsubs.has("reports")) {
         try {
-          const unsubReports = onSnapshot3(collection2(db, "reports"), (snapshot) => {
+          const unsubReports = onSnapshot4(collection2(db, "reports"), (snapshot) => {
             const list = [];
             snapshot.forEach((docSnap) => {
               list.push(docSnap.data());
@@ -15100,7 +18535,7 @@ var FirebaseTournamentService = class {
         const data = await res.json();
         if (data.success && auth.currentUser && auth.currentUser.uid === userId && email.toLowerCase() === PRIMARY_PROJECT_ADMIN_EMAIL2 && !isQuotaExhausted()) {
           try {
-            await setDoc3(doc4(db, "admins", userId), {
+            await setDoc4(doc5(db, "admins", userId), {
               id: userId,
               userId,
               email: email.toLowerCase(),
@@ -15141,7 +18576,7 @@ var FirebaseTournamentService = class {
         }
       }
       try {
-        const unsubDeleted = onSnapshot3(doc4(db, "system_config", "deleted_tournaments"), (docSnap) => {
+        const unsubDeleted = onSnapshot4(doc5(db, "system_config", "deleted_tournaments"), (docSnap) => {
           if (docSnap.exists()) {
             const data = docSnap.data();
             const ids = Array.isArray(data?.ids) ? data.ids : [];
@@ -15183,7 +18618,7 @@ var FirebaseTournamentService = class {
       } catch (err) {
         console.warn("Setup deleted tournaments listener note:", err);
       }
-      const unsubTournaments = onSnapshot3(collection2(db, "tournaments"), (snapshot) => {
+      const unsubTournaments = onSnapshot4(collection2(db, "tournaments"), (snapshot) => {
         const list = [];
         snapshot.forEach((docSnap) => {
           const t = docSnap.data();
@@ -15271,19 +18706,23 @@ var FirebaseTournamentService = class {
         if (testTourney && !list.some((t) => t.id === "purple-bean-auction-test")) {
           list.push(normalizeTournamentRecord(testTourney));
         }
+        const afterAuctionTourney = MOCK_TOURNAMENTS.find((t) => t.id === "after-auction-test");
+        if (afterAuctionTourney && !list.some((t) => t.id === "after-auction-test")) {
+          list.push(normalizeTournamentRecord(afterAuctionTourney));
+        }
         this.tournaments = list.length > 0 ? list : [...MOCK_TOURNAMENTS];
         this.notify();
       }, (error) => {
         console.warn("Firestore tournaments sync note:", error);
       });
       this.unsubs.push(unsubTournaments);
-      const unsubTeams = onSnapshot3(collection2(db, "teams"), (snapshot) => {
+      const unsubTeams = onSnapshot4(collection2(db, "teams"), (snapshot) => {
         const list = [];
         snapshot.forEach((docSnap) => {
           const raw = { ...docSnap.data(), id: docSnap.id };
           if (isTestTeam(raw)) {
             try {
-              deleteDoc2(doc4(db, "teams", docSnap.id)).catch(() => {
+              deleteDoc2(doc5(db, "teams", docSnap.id)).catch(() => {
               });
             } catch {
             }
@@ -15304,7 +18743,7 @@ var FirebaseTournamentService = class {
         console.warn("Firestore teams sync note:", error);
       });
       this.unsubs.push(unsubTeams);
-      const unsubMatches = onSnapshot3(collection2(db, "matches"), (snapshot) => {
+      const unsubMatches = onSnapshot4(collection2(db, "matches"), (snapshot) => {
         const list = [];
         snapshot.forEach((docSnap) => {
           list.push(docSnap.data());
@@ -15315,13 +18754,13 @@ var FirebaseTournamentService = class {
         console.warn("Firestore matches sync note:", error);
       });
       this.unsubs.push(unsubMatches);
-      const unsubPlayers = onSnapshot3(collection2(db, "publicPlayers"), (snapshot) => {
+      const unsubPlayers = onSnapshot4(collection2(db, "publicPlayers"), (snapshot) => {
         const list = [];
         snapshot.forEach((docSnap) => {
           const raw = { ...docSnap.data(), id: docSnap.id };
           if (isTestPlayer(raw)) {
             try {
-              deleteDoc2(doc4(db, "publicPlayers", docSnap.id)).catch(() => {
+              deleteDoc2(doc5(db, "publicPlayers", docSnap.id)).catch(() => {
               });
             } catch {
             }
@@ -15335,7 +18774,7 @@ var FirebaseTournamentService = class {
         console.warn("Firestore publicPlayers sync note:", error);
       });
       this.unsubs.push(unsubPlayers);
-      const unsubAuctions = onSnapshot3(collection2(db, "auctions"), (snapshot) => {
+      const unsubAuctions = onSnapshot4(collection2(db, "auctions"), (snapshot) => {
         snapshot.forEach((snap) => {
           const tourneyId = snap.id;
           const data = snap.data();
@@ -15357,7 +18796,7 @@ var FirebaseTournamentService = class {
         console.warn("Firestore auctions collection sync note:", error);
       });
       this.unsubs.push(unsubAuctions);
-      const unsubRegistrations = onSnapshot3(collection2(db, "registrations"), (snapshot) => {
+      const unsubRegistrations = onSnapshot4(collection2(db, "registrations"), (snapshot) => {
         snapshot.forEach((docSnap) => {
           const regData = docSnap.data();
           if (regData && regData.userId) {
@@ -15466,7 +18905,7 @@ var FirebaseTournamentService = class {
         console.warn("Firestore registrations sync note:", error);
       });
       this.unsubs.push(unsubRegistrations);
-      const unsubNotifications = onSnapshot3(collection2(db, "notifications"), (snapshot) => {
+      const unsubNotifications = onSnapshot4(collection2(db, "notifications"), (snapshot) => {
         snapshot.forEach((docSnap) => {
           const notifData = docSnap.data();
           if (notifData && notifData.userId) {
@@ -15600,24 +19039,24 @@ var FirebaseTournamentService = class {
       try {
         const docId = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, "_");
         try {
-          await deleteDoc2(doc4(db, "system_revocations", docId));
+          await deleteDoc2(doc5(db, "system_revocations", docId));
           if (docId !== cleanEmail) {
-            await deleteDoc2(doc4(db, "system_revocations", cleanEmail));
+            await deleteDoc2(doc5(db, "system_revocations", cleanEmail));
           }
         } catch {
         }
-        const roleDocRef = doc4(db, "user_roles", docId);
-        await setDoc3(roleDocRef, assignment, { merge: true });
+        const roleDocRef = doc5(db, "user_roles", docId);
+        await setDoc4(roleDocRef, assignment, { merge: true });
         if (role === "admin") {
-          const adminDocRef = doc4(db, "admins", docId);
-          await setDoc3(adminDocRef, {
+          const adminDocRef = doc5(db, "admins", docId);
+          await setDoc4(adminDocRef, {
             email: cleanEmail,
             addedBy: this.currentUser.email || "primary-admin",
             createdAt: now
           }, { merge: true });
         }
-        const logDocRef = doc4(db, "role_audit_logs", auditLog.id);
-        await setDoc3(logDocRef, auditLog);
+        const logDocRef = doc5(db, "role_audit_logs", auditLog.id);
+        await setDoc4(logDocRef, auditLog);
       } catch (e) {
         if (isQuotaError(e)) {
           setQuotaExhausted(true);
@@ -15675,25 +19114,25 @@ var FirebaseTournamentService = class {
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
       try {
         const docId = cleanEmail.replace(/[^a-zA-Z0-9_-]/g, "_");
-        await setDoc3(doc4(db, "system_revocations", docId), {
+        await setDoc4(doc5(db, "system_revocations", docId), {
           email: cleanEmail,
           revokedAt: now,
           revokedBy: this.currentUser.email || PRIMARY_PROJECT_ADMIN_EMAIL2,
           reason: reason || "Access Revoked"
         }, { merge: true });
-        const roleDocRef = doc4(db, "user_roles", docId);
+        const roleDocRef = doc5(db, "user_roles", docId);
         await deleteDoc2(roleDocRef);
-        const adminDocRef = doc4(db, "admins", docId);
+        const adminDocRef = doc5(db, "admins", docId);
         await deleteDoc2(adminDocRef);
         if (docId !== cleanEmail) {
           try {
-            await deleteDoc2(doc4(db, "user_roles", cleanEmail));
-            await deleteDoc2(doc4(db, "admins", cleanEmail));
+            await deleteDoc2(doc5(db, "user_roles", cleanEmail));
+            await deleteDoc2(doc5(db, "admins", cleanEmail));
           } catch {
           }
         }
-        const logDocRef = doc4(db, "role_audit_logs", auditLog.id);
-        await setDoc3(logDocRef, auditLog);
+        const logDocRef = doc5(db, "role_audit_logs", auditLog.id);
+        await setDoc4(logDocRef, auditLog);
       } catch (e) {
         console.warn("Firestore revokeUserRole note:", e);
       }
@@ -15841,10 +19280,10 @@ var FirebaseTournamentService = class {
     const isTest = typeof process !== "undefined" && (process.env?.NODE_ENV === "test" || Boolean(process.env?.VITEST));
     if (!isTest) {
       try {
-        const tDocRef = doc4(db, "tournaments", canonicalTournamentId);
-        const membershipRef = doc4(db, "tournaments", canonicalTournamentId, "memberships", authUid);
-        await setDoc3(tDocRef, sanitizedDoc);
-        await setDoc3(membershipRef, {
+        const tDocRef = doc5(db, "tournaments", canonicalTournamentId);
+        const membershipRef = doc5(db, "tournaments", canonicalTournamentId, "memberships", authUid);
+        await setDoc4(tDocRef, sanitizedDoc);
+        await setDoc4(membershipRef, {
           role: "organizer",
           userId: authUid,
           userEmail: auth.currentUser?.email || this.currentUser.email || "",
@@ -15947,7 +19386,7 @@ var FirebaseTournamentService = class {
     }
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
       try {
-        await setDoc3(doc4(db, "system_config", "deleted_tournaments"), {
+        await setDoc4(doc5(db, "system_config", "deleted_tournaments"), {
           ids: arrayUnion(...allVariants),
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
         }, { merge: true }).catch(() => {
@@ -15959,7 +19398,7 @@ var FirebaseTournamentService = class {
       try {
         const now = (/* @__PURE__ */ new Date()).toISOString();
         for (const vId of allVariants) {
-          await updateDoc(doc4(db, "tournaments", vId), {
+          await updateDoc2(doc5(db, "tournaments", vId), {
             deleted: true,
             status: "deleted",
             lifecycle: "DELETED",
@@ -16036,7 +19475,7 @@ var FirebaseTournamentService = class {
     }
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
       try {
-        await updateDoc(doc4(db, "tournaments", tournamentId), {
+        await updateDoc2(doc5(db, "tournaments", tournamentId), {
           status: label,
           lifecycle: nextStatus,
           statusReason: reason || null,
@@ -16394,8 +19833,8 @@ var FirebaseTournamentService = class {
       idempotencyKey
     });
     try {
-      const tDocRef = doc4(db, "tournaments", tournamentId);
-      await updateDoc(tDocRef, {
+      const tDocRef = doc5(db, "tournaments", tournamentId);
+      await updateDoc2(tDocRef, {
         status: nextStatus,
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
       });
@@ -16476,8 +19915,8 @@ var FirebaseTournamentService = class {
     }
     try {
       if (!isTestEnvironment && auth.currentUser) {
-        const auctionDocRef = doc4(db, "auctions", "purple-bean-india-masters-2026");
-        await runTransaction(db, async (transaction) => {
+        const auctionDocRef = doc5(db, "auctions", "purple-bean-india-masters-2026");
+        await runTransaction2(db, async (transaction) => {
           const snap = await transaction.get(auctionDocRef);
           let currentDbRev = 0;
           if (snap.exists()) {
@@ -16493,7 +19932,7 @@ var FirebaseTournamentService = class {
             secondsLeft: 25,
             updatedAt: (/* @__PURE__ */ new Date()).toISOString()
           }, { merge: true });
-          const bidDocRef = doc4(db, "auctions", "purple-bean-india-masters-2026", "bids", idempotencyKey);
+          const bidDocRef = doc5(db, "auctions", "purple-bean-india-masters-2026", "bids", idempotencyKey);
           transaction.set(bidDocRef, {
             id: idempotencyKey,
             tournamentId: "purple-bean-india-masters-2026",
@@ -16645,8 +20084,8 @@ var FirebaseTournamentService = class {
     const logId = event.idempotencyKey || `audit-${Date.now()}-${Math.random().toString(36).substring(7)}`;
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
       try {
-        const logRef = doc4(db, "auditLogs", logId);
-        await setDoc3(logRef, {
+        const logRef = doc5(db, "auditLogs", logId);
+        await setDoc4(logRef, {
           id: logId,
           action: event.action,
           actorId: this.currentUser.id,
@@ -16703,7 +20142,7 @@ var FirebaseTournamentService = class {
     this.players.unshift(newPlayer);
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
       try {
-        await setDoc3(doc4(db, "registrations", regId), {
+        await setDoc4(doc5(db, "registrations", regId), {
           id: regId,
           tournamentId,
           userId: this.currentUser.id,
@@ -16735,8 +20174,8 @@ var FirebaseTournamentService = class {
       player.status = status;
       if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
         try {
-          const playerRef = doc4(db, "players", playerId);
-          await setDoc3(playerRef, { status }, { merge: true });
+          const playerRef = doc5(db, "players", playerId);
+          await setDoc4(playerRef, { status }, { merge: true });
         } catch (e) {
           if (isQuotaError(e)) {
             setQuotaExhausted(true);
@@ -16763,7 +20202,7 @@ var FirebaseTournamentService = class {
     this.reports.unshift(newReport);
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
       try {
-        await setDoc3(doc4(db, "disputes", disputeId), {
+        await setDoc4(doc5(db, "disputes", disputeId), {
           id: disputeId,
           matchId,
           reportingTeamId,
@@ -16809,7 +20248,7 @@ var FirebaseTournamentService = class {
     this.reports.unshift(newReport);
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
       try {
-        await setDoc3(doc4(db, "reports", reportId), {
+        await setDoc4(doc5(db, "reports", reportId), {
           id: reportId,
           ticketCode,
           targetType: reportData.targetType,
@@ -16845,8 +20284,8 @@ var FirebaseTournamentService = class {
     }
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
       try {
-        const reportRef = doc4(db, "reports", reportId);
-        await setDoc3(reportRef, {
+        const reportRef = doc5(db, "reports", reportId);
+        await setDoc4(reportRef, {
           status,
           resolutionNote: resolutionNote || null,
           resolvedBy: this.currentUser.email || this.currentUser.id,
@@ -16923,6 +20362,12 @@ var FirebaseTournamentService = class {
       return tId === idExact || tIdLower === idLower || tSlugLower === idLower;
     });
     if (!found) {
+      const mockTourney = MOCK_TOURNAMENTS.find((t) => t.id === idExact || t.id?.toLowerCase() === idLower || t.slug?.toLowerCase() === idLower);
+      if (mockTourney) {
+        found = normalizeTournamentRecord(mockTourney);
+      }
+    }
+    if (!found) {
       const cfg = tournamentConfigRegistry.getConfig(idExact);
       if (cfg && !this.deletedTournamentIds.has(cfg.identity.tournamentId) && !this.deletedTournamentIds.has(String(cfg.identity.tournamentId).toLowerCase())) {
         found = normalizeTournamentRecord({
@@ -16952,7 +20397,7 @@ var FirebaseTournamentService = class {
     if (!found) return void 0;
     const foundId = (found.id || "").toLowerCase();
     const foundSlug = (found.slug || "").toLowerCase();
-    if (this.deletedTournamentIds.has(found.id) || this.deletedTournamentIds.has(foundId) || foundSlug && this.deletedTournamentIds.has(foundSlug) || isTestTournament(found)) {
+    if (this.deletedTournamentIds.has(found.id) || this.deletedTournamentIds.has(foundId) || foundSlug && this.deletedTournamentIds.has(foundSlug) || found.deleted === true || found.status === "DELETED" || found.status === "deleted" || LEGACY_MOCK_TOURNAMENT_IDS.has(foundId)) {
       return void 0;
     }
     return normalizeTournamentRecord(found);
@@ -17140,7 +20585,7 @@ var FirebaseTournamentService = class {
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
       try {
         const publicDoc = dotaPlayerRegistry.sanitizeForPublic(res.player);
-        await setDoc3(doc4(db, "publicPlayers", userId), publicDoc, { merge: true });
+        await setDoc4(doc5(db, "publicPlayers", userId), publicDoc, { merge: true });
       } catch (e) {
         if (isQuotaError(e)) {
           setQuotaExhausted(true);
@@ -17166,7 +20611,7 @@ var FirebaseTournamentService = class {
     if (res.success) {
       if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
         try {
-          await setDoc3(doc4(db, "privatePlayerAccounts", userId), {
+          await setDoc4(doc5(db, "privatePlayerAccounts", userId), {
             userId,
             steamId64: norm.steamId64,
             steamId32: norm.accountId,
@@ -17189,7 +20634,7 @@ var FirebaseTournamentService = class {
     if (res.success) {
       if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
         try {
-          await setDoc3(doc4(db, "privatePlayerAccounts", userId), {
+          await setDoc4(doc5(db, "privatePlayerAccounts", userId), {
             steamId64: null,
             steamId32: null,
             verificationStatus: "NOT_LINKED",
@@ -17270,7 +20715,7 @@ var FirebaseTournamentService = class {
     }
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
       try {
-        await setDoc3(doc4(db, "registrations", res.registration.id), {
+        await setDoc4(doc5(db, "registrations", res.registration.id), {
           id: res.registration.id,
           tournamentId: params.tournamentId,
           userId: params.userId,
@@ -17294,7 +20739,7 @@ var FirebaseTournamentService = class {
           registeredAt: res.registration.registeredAt,
           updatedAt: res.registration.updatedAt
         }, { merge: true });
-        await setDoc3(doc4(db, "tournaments", params.tournamentId, "registrations", params.userId), {
+        await setDoc4(doc5(db, "tournaments", params.tournamentId, "registrations", params.userId), {
           id: res.registration.id,
           tournamentId: params.tournamentId,
           userId: params.userId,
@@ -17318,7 +20763,7 @@ var FirebaseTournamentService = class {
           registeredAt: res.registration.registeredAt,
           updatedAt: res.registration.updatedAt
         }, { merge: true });
-        await setDoc3(doc4(db, "auditLogs", `log-${Date.now()}`), {
+        await setDoc4(doc5(db, "auditLogs", `log-${Date.now()}`), {
           id: `log-${Date.now()}`,
           action: "tournament_registration_submitted",
           actorId: params.userId,
@@ -17349,7 +20794,7 @@ var FirebaseTournamentService = class {
     const res = dotaPlayerRegistry.updateCaptainInterest(tournamentId, userId, interested, notes);
     if (res.success && res.registration) {
       try {
-        await updateDoc(doc4(db, "registrations", res.registration.id), {
+        await updateDoc2(doc5(db, "registrations", res.registration.id), {
           interestedInCaptaincy: interested,
           applyingAsCaptain: interested,
           captainInterestTimestamp: res.registration.captainInterestTimestamp || null,
@@ -17372,7 +20817,7 @@ var FirebaseTournamentService = class {
       return res;
     }
     try {
-      await updateDoc(doc4(db, "registrations", res.registration.id), {
+      await updateDoc2(doc5(db, "registrations", res.registration.id), {
         isCaptainApproved: true,
         captainApprovedAt: res.registration.captainApprovedAt,
         captainApprovedBy: this.currentUser.id
@@ -17431,7 +20876,7 @@ var FirebaseTournamentService = class {
     }
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
       try {
-        await updateDoc(doc4(db, "registrations", res.registration.id), {
+        await updateDoc2(doc5(db, "registrations", res.registration.id), {
           status: "WITHDRAWN",
           isCaptainApproved: false,
           teamId: null,
@@ -17440,7 +20885,7 @@ var FirebaseTournamentService = class {
           updatedAt: res.registration.updatedAt
         }).catch(() => {
         });
-        await deleteDoc2(doc4(db, "tournaments", tournamentId, "registrations", userId)).catch(() => {
+        await deleteDoc2(doc5(db, "tournaments", tournamentId, "registrations", userId)).catch(() => {
         });
       } catch (e) {
         if (isQuotaError(e)) {
@@ -17523,9 +20968,9 @@ var FirebaseTournamentService = class {
             registeredAt: reg.registeredAt,
             updatedAt: reg.updatedAt
           };
-          setDoc3(doc4(db, "tournaments", tournamentId, "registrations", userId), regDocData, { merge: true }).catch(() => {
+          setDoc4(doc5(db, "tournaments", tournamentId, "registrations", userId), regDocData, { merge: true }).catch(() => {
           });
-          setDoc3(doc4(db, "registrations", reg.id), regDocData, { merge: true }).catch(() => {
+          setDoc4(doc5(db, "registrations", reg.id), regDocData, { merge: true }).catch(() => {
           });
         }
       } catch (err) {
@@ -17678,10 +21123,10 @@ var FirebaseTournamentService = class {
     engine.removePlayer(userId);
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
       try {
-        await deleteDoc2(doc4(db, "tournaments", tournamentId, "registrations", userId)).catch(() => {
+        await deleteDoc2(doc5(db, "tournaments", tournamentId, "registrations", userId)).catch(() => {
         });
         if (reg) {
-          await deleteDoc2(doc4(db, "registrations", reg.id)).catch(() => {
+          await deleteDoc2(doc5(db, "registrations", reg.id)).catch(() => {
           });
         }
       } catch (err) {
@@ -17698,7 +21143,7 @@ var FirebaseTournamentService = class {
     const res = dotaPlayerRegistry.startReview(tournamentId, userId, this.currentUser.id);
     if (!res.success || !res.registration) return res;
     try {
-      await updateDoc(doc4(db, "registrations", res.registration.id), {
+      await updateDoc2(doc5(db, "registrations", res.registration.id), {
         status: "UNDER_REVIEW",
         updatedAt: res.registration.updatedAt
       });
@@ -17712,7 +21157,7 @@ var FirebaseTournamentService = class {
     const res = dotaPlayerRegistry.requestEvidence(tournamentId, userId, prompt, this.currentUser.id);
     if (!res.success || !res.registration) return res;
     try {
-      await updateDoc(doc4(db, "registrations", res.registration.id), {
+      await updateDoc2(doc5(db, "registrations", res.registration.id), {
         status: "EVIDENCE_REQUESTED",
         evidenceRequestPrompt: prompt,
         evidenceRequestedAt: res.registration.evidenceRequestedAt,
@@ -17728,7 +21173,7 @@ var FirebaseTournamentService = class {
     const res = dotaPlayerRegistry.submitEvidence(tournamentId, userId, evidenceData);
     if (!res.success || !res.registration) return res;
     try {
-      await updateDoc(doc4(db, "registrations", res.registration.id), {
+      await updateDoc2(doc5(db, "registrations", res.registration.id), {
         status: res.registration.status,
         evidence: res.registration.evidence,
         updatedAt: res.registration.updatedAt
@@ -17743,7 +21188,7 @@ var FirebaseTournamentService = class {
     const res = dotaPlayerRegistry.confirmDeclaredMmr(tournamentId, userId, this.currentUser.id);
     if (!res.success || !res.registration) return res;
     try {
-      await updateDoc(doc4(db, "registrations", res.registration.id), {
+      await updateDoc2(doc5(db, "registrations", res.registration.id), {
         tournamentMmr: res.registration.tournamentMmr,
         updatedAt: res.registration.updatedAt
       });
@@ -17763,7 +21208,7 @@ var FirebaseTournamentService = class {
     );
     if (!res.success || !res.registration) return res;
     try {
-      await updateDoc(doc4(db, "registrations", res.registration.id), {
+      await updateDoc2(doc5(db, "registrations", res.registration.id), {
         tournamentMmr: correctedMmr,
         historicalMmrChanges: res.registration.historicalMmrChanges,
         updatedAt: res.registration.updatedAt
@@ -17795,7 +21240,7 @@ var FirebaseTournamentService = class {
     } catch {
     }
     try {
-      await updateDoc(doc4(db, "registrations", res.registration.id), {
+      await updateDoc2(doc5(db, "registrations", res.registration.id), {
         status: "VERIFIED",
         tournamentMmr: res.registration.tournamentMmr,
         isMmrLocked: true,
@@ -17819,7 +21264,7 @@ var FirebaseTournamentService = class {
     );
     if (!res.success || !res.registration) return res;
     try {
-      await updateDoc(doc4(db, "registrations", res.registration.id), {
+      await updateDoc2(doc5(db, "registrations", res.registration.id), {
         tournamentMmr: newMmr,
         historicalMmrChanges: res.registration.historicalMmrChanges,
         updatedAt: res.registration.updatedAt
@@ -17834,7 +21279,7 @@ var FirebaseTournamentService = class {
     const res = dotaPlayerRegistry.rejectRegistration(tournamentId, userId, reason, this.currentUser.id);
     if (!res.success || !res.registration) return res;
     try {
-      await updateDoc(doc4(db, "registrations", res.registration.id), {
+      await updateDoc2(doc5(db, "registrations", res.registration.id), {
         status: "REJECTED",
         rejectionReason: reason,
         updatedAt: res.registration.updatedAt
@@ -17886,7 +21331,7 @@ var FirebaseTournamentService = class {
   markNotificationRead(notificationId) {
     dotaPlayerRegistry.markNotificationRead(notificationId);
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
-      updateDoc(doc4(db, "notifications", notificationId), {
+      updateDoc2(doc5(db, "notifications", notificationId), {
         read: true,
         unread: false
       }).catch((err) => {
@@ -17971,8 +21416,8 @@ var FirebaseTournamentService = class {
     if (typeof window !== "undefined" && db && !isQuotaExhausted()) {
       try {
         const batch = writeBatch(db);
-        batch.set(doc4(db, "teams", team.id), teamDocData, { merge: true });
-        batch.set(doc4(db, "tournaments", effectiveTourneyId, "teams", team.id), teamDocData, { merge: true });
+        batch.set(doc5(db, "teams", team.id), teamDocData, { merge: true });
+        batch.set(doc5(db, "tournaments", effectiveTourneyId, "teams", team.id), teamDocData, { merge: true });
         const captainsList = allAuctionTeams.map((t) => ({
           userId: t.captainId,
           ign: t.captainIgn,
@@ -17987,20 +21432,20 @@ var FirebaseTournamentService = class {
           rosterCount: t.primaryRoster.length,
           assignedAt: (/* @__PURE__ */ new Date()).toISOString()
         }));
-        batch.set(doc4(db, "tournaments", effectiveTourneyId), {
+        batch.set(doc5(db, "tournaments", effectiveTourneyId), {
           captainsConfirmed: allAuctionTeams.length,
           captains: captainsList,
           teams: allAuctionTeams,
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
         }, { merge: true });
         const auctionSnapshot = engine.exportSnapshot();
-        batch.set(doc4(db, "auctions", effectiveTourneyId), {
+        batch.set(doc5(db, "auctions", effectiveTourneyId), {
           ...auctionSnapshot,
           lastPersistedAt: (/* @__PURE__ */ new Date()).toISOString()
         }, { merge: true });
         const reg = dotaPlayerRegistry.getRegistration(effectiveTourneyId, captainUserId);
         const regId = reg?.id || `reg-${effectiveTourneyId}-${captainUserId}`;
-        batch.set(doc4(db, "registrations", regId), {
+        batch.set(doc5(db, "registrations", regId), {
           isCaptainApproved: true,
           captainApprovedAt: (/* @__PURE__ */ new Date()).toISOString(),
           captainApprovedBy: this.currentUser.id,
@@ -18009,7 +21454,7 @@ var FirebaseTournamentService = class {
           status: "VERIFIED",
           updatedAt: (/* @__PURE__ */ new Date()).toISOString()
         }, { merge: true });
-        batch.set(doc4(db, "tournaments", effectiveTourneyId, "memberships", captainUserId), {
+        batch.set(doc5(db, "tournaments", effectiveTourneyId, "memberships", captainUserId), {
           userId: captainUserId,
           tournamentId: effectiveTourneyId,
           role: "captain",
@@ -18031,7 +21476,7 @@ var FirebaseTournamentService = class {
           read: false,
           createdAt: (/* @__PURE__ */ new Date()).toISOString()
         };
-        batch.set(doc4(db, "notifications", notifId), notifDoc);
+        batch.set(doc5(db, "notifications", notifId), notifDoc);
         await batch.commit();
       } catch (err) {
         if (isQuotaError(err)) {
@@ -21596,6 +25041,183 @@ apiRouter.get("/tournaments/:tournamentId/test-tools/identities", async (req, re
       success: false,
       error: err.message
     });
+  }
+});
+apiRouter.get("/tournaments/:tournamentId/competition/structure", async (req, res) => {
+  try {
+    const tournamentId = req.params.tournamentId;
+    let structure = dotaCompetitionEngine.getStructure(tournamentId);
+    if (!structure) {
+      structure = await dotaCompetitionEngine.fetchStructureFromFirestore(tournamentId);
+    }
+    return res.json({
+      ok: true,
+      success: true,
+      structure: structure || null
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, success: false, error: err.message });
+  }
+});
+apiRouter.post("/tournaments/:tournamentId/competition/generate", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+    const tournamentId = req.params.tournamentId;
+    const teams = req.body?.teams || [];
+    const result = dotaCompetitionEngine.generateFullStructure(tournamentId, teams);
+    return res.json({
+      ok: true,
+      success: result.success,
+      structure: result.structure
+    });
+  } catch (err) {
+    const status = err.message?.includes("ORGANIZER_PERMISSION_REQUIRED") ? 403 : err.message?.includes("SIGN_IN_REQUIRED") ? 401 : 400;
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+apiRouter.post("/tournaments/:tournamentId/competition/publish", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+    const tournamentId = req.params.tournamentId;
+    const result = await dotaCompetitionEngine.publishStructureTransactional({
+      tournamentId,
+      callerRole: "organizer",
+      isAdmin: true
+    });
+    if (!result.success) {
+      return res.status(400).json({ ok: false, success: false, error: result.error });
+    }
+    return res.json({
+      ok: true,
+      success: true,
+      structure: result.structure
+    });
+  } catch (err) {
+    const status = err.message?.includes("ORGANIZER_PERMISSION_REQUIRED") ? 403 : err.message?.includes("SIGN_IN_REQUIRED") ? 401 : 400;
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+apiRouter.post("/tournaments/:tournamentId/competition/unlock", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+    const tournamentId = req.params.tournamentId;
+    const result = await dotaCompetitionEngine.editPublishedStructureTransactional({
+      tournamentId,
+      callerRole: "organizer",
+      isAdmin: true
+    });
+    return res.json({
+      ok: true,
+      success: result.success,
+      hasStartedMatches: result.hasStartedMatches,
+      structure: result.structure
+    });
+  } catch (err) {
+    const status = err.message?.includes("ORGANIZER_PERMISSION_REQUIRED") ? 403 : err.message?.includes("SIGN_IN_REQUIRED") ? 401 : 400;
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+apiRouter.post("/tournaments/:tournamentId/competition/matches/:matchId/result", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+    const { tournamentId, matchId } = req.params;
+    const { stageId, scoreA, scoreB, games, isForfeit, forfeitWinnerId, clientVersion } = req.body;
+    const result = await dotaCompetitionEngine.recordMatchResultTransactional({
+      tournamentId,
+      stageId,
+      matchId,
+      scoreA: Number(scoreA),
+      scoreB: Number(scoreB),
+      games,
+      confirmedBy: decoded.email || decoded.uid,
+      isForfeit: Boolean(isForfeit),
+      forfeitWinnerId,
+      clientVersion: typeof clientVersion === "number" ? clientVersion : void 0,
+      callerRole: "organizer",
+      isAdmin: true
+    });
+    if (!result.success) {
+      const status = result.error?.includes("STALE_SUBMISSION_CONFLICT") ? 409 : 400;
+      return res.status(status).json({ ok: false, success: false, error: result.error });
+    }
+    return res.json({
+      ok: true,
+      success: true,
+      match: result.match,
+      structure: result.structure
+    });
+  } catch (err) {
+    const status = err.message?.includes("ORGANIZER_PERMISSION_REQUIRED") ? 403 : err.message?.includes("SIGN_IN_REQUIRED") ? 401 : 400;
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+apiRouter.post("/tournaments/:tournamentId/competition/stages", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+    const tournamentId = req.params.tournamentId;
+    const { type, name, defaultSeriesFormat } = req.body;
+    const newStageRes = dotaCompetitionEngine.addStage(tournamentId, type || "DOUBLE_ELIMINATION");
+    if (newStageRes.stage && name) newStageRes.stage.name = name;
+    if (newStageRes.stage && defaultSeriesFormat) newStageRes.stage.defaultSeriesFormat = defaultSeriesFormat;
+    const structure = dotaCompetitionEngine.getStructure(tournamentId);
+    return res.json({ ok: true, success: newStageRes.success, stage: newStageRes.stage, structure });
+  } catch (err) {
+    const status = err.message?.includes("ORGANIZER_PERMISSION_REQUIRED") ? 403 : err.message?.includes("SIGN_IN_REQUIRED") ? 401 : 400;
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+apiRouter.delete("/tournaments/:tournamentId/competition/stages/:stageId", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+    const { tournamentId, stageId } = req.params;
+    const ok = dotaCompetitionEngine.deleteStage(tournamentId, stageId);
+    const structure = dotaCompetitionEngine.getStructure(tournamentId);
+    return res.json({ ok: true, success: ok, structure });
+  } catch (err) {
+    const status = err.message?.includes("ORGANIZER_PERMISSION_REQUIRED") ? 403 : err.message?.includes("SIGN_IN_REQUIRED") ? 401 : 400;
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+apiRouter.post("/tournaments/:tournamentId/competition/stages/:stageId/move", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+    const { tournamentId, stageId } = req.params;
+    const direction = req.body?.direction || "UP";
+    const ok = dotaCompetitionEngine.moveStage(tournamentId, stageId, direction);
+    const structure = dotaCompetitionEngine.getStructure(tournamentId);
+    return res.json({ ok: true, success: ok, structure });
+  } catch (err) {
+    const status = err.message?.includes("ORGANIZER_PERMISSION_REQUIRED") ? 403 : err.message?.includes("SIGN_IN_REQUIRED") ? 401 : 400;
+    return res.status(status).json({ ok: false, success: false, error: err.message });
+  }
+});
+apiRouter.put("/tournaments/:tournamentId/competition/stages/:stageId", async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const decoded = await verifyFirebaseBearerToken(authHeader);
+    checkOrganizerAuthorization(decoded);
+    const { tournamentId, stageId } = req.params;
+    const updates = req.body?.updates || req.body || {};
+    const ok = dotaCompetitionEngine.updateStageConfig(tournamentId, stageId, updates);
+    const structure = dotaCompetitionEngine.getStructure(tournamentId);
+    return res.json({ ok: true, success: ok, structure });
+  } catch (err) {
+    const status = err.message?.includes("ORGANIZER_PERMISSION_REQUIRED") ? 403 : err.message?.includes("SIGN_IN_REQUIRED") ? 401 : 400;
+    return res.status(status).json({ ok: false, success: false, error: err.message });
   }
 });
 

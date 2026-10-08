@@ -557,6 +557,10 @@ class FirebaseTournamentService {
     if (testTourney && !this.tournaments.some(t => t.id === 'purple-bean-auction-test')) {
       this.tournaments.push({ ...testTourney });
     }
+    const afterAuctionTourney = MOCK_TOURNAMENTS.find(t => t.id === 'after-auction-test');
+    if (afterAuctionTourney && !this.tournaments.some(t => t.id === 'after-auction-test')) {
+      this.tournaments.push({ ...afterAuctionTourney });
+    }
 
     pbgAccountRegistry.subscribe(() => {
       this.notify();
@@ -1105,6 +1109,10 @@ class FirebaseTournamentService {
         const testTourney = MOCK_TOURNAMENTS.find(t => t.id === 'purple-bean-auction-test');
         if (testTourney && !list.some(t => t.id === 'purple-bean-auction-test')) {
           list.push(normalizeTournamentRecord(testTourney));
+        }
+        const afterAuctionTourney = MOCK_TOURNAMENTS.find(t => t.id === 'after-auction-test');
+        if (afterAuctionTourney && !list.some(t => t.id === 'after-auction-test')) {
+          list.push(normalizeTournamentRecord(afterAuctionTourney));
         }
         this.tournaments = list.length > 0 ? list : [...MOCK_TOURNAMENTS];
         this.notify();
@@ -3106,6 +3114,13 @@ class FirebaseTournamentService {
     });
 
     if (!found) {
+      const mockTourney = MOCK_TOURNAMENTS.find(t => t.id === idExact || t.id?.toLowerCase() === idLower || (t as any).slug?.toLowerCase() === idLower);
+      if (mockTourney) {
+        found = normalizeTournamentRecord(mockTourney);
+      }
+    }
+
+    if (!found) {
       const cfg = tournamentConfigRegistry.getConfig(idExact);
       if (cfg && !this.deletedTournamentIds.has(cfg.identity.tournamentId) && !this.deletedTournamentIds.has(String(cfg.identity.tournamentId).toLowerCase())) {
         found = normalizeTournamentRecord({
@@ -3139,7 +3154,10 @@ class FirebaseTournamentService {
       this.deletedTournamentIds.has(found.id) ||
       this.deletedTournamentIds.has(foundId) ||
       (foundSlug && this.deletedTournamentIds.has(foundSlug)) ||
-      isTestTournament(found)
+      (found as any).deleted === true ||
+      (found.status as any) === 'DELETED' ||
+      (found.status as any) === 'deleted' ||
+      LEGACY_MOCK_TOURNAMENT_IDS.has(foundId)
     ) {
       return undefined;
     }

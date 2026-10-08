@@ -33,6 +33,10 @@ class TournamentConfigRegistry {
     this.teamProvider = provider;
   }
 
+  public getTeamProvider(tournamentId?: string): ((tournamentId: string) => any[]) | null {
+    return this.teamProvider;
+  }
+
   public clearConfigs() {
     this.configs.clear();
     this.deletedIds.clear();

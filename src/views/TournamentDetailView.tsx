@@ -36,9 +36,11 @@ import { DraftReplayViewer } from '../components/DraftReplayViewer';
 import { PremadeTeamManagement } from '../components/PremadeTeamManagement';
 import { CompetitionStructureManager } from '../components/CompetitionStructureManager';
 import { GroupStageView } from '../components/GroupStageView';
+import { SingleEliminationBracket } from '../components/SingleEliminationBracket';
+import { SwissStageView } from '../components/SwissStageView';
 import { AuctionDraft } from '../components/AuctionDraft';
 import { AuctionReport } from '../components/AuctionReport';
-import { dotaCompetitionEngine } from '../domain/dotaCompetitionEngine';
+import { dotaCompetitionEngine, MultiStageTournamentStructure } from '../domain/dotaCompetitionEngine';
 import { testCupEngine } from '../domain/testCupEngine';
 import { tournamentService } from '../services/firebaseService';
 import { dotaTournamentOperations } from '../domain/dotaTournamentOperationsEngine';
@@ -207,7 +209,19 @@ export function TournamentDetailView({
 
   const isPremade = tournament?.id === 'india-dota-open-2026';
 
-  const compStructure = tournament?.id ? dotaCompetitionEngine.getStructure(tournament.id) : undefined;
+  const [compStructureState, setCompStructureState] = useState<MultiStageTournamentStructure | undefined>(() => tournament?.id ? dotaCompetitionEngine.getStructure(tournament.id) : undefined);
+
+  useEffect(() => {
+    if (tournament?.id) {
+      setCompStructureState(dotaCompetitionEngine.getStructure(tournament.id));
+      const unsub = dotaCompetitionEngine.subscribe(tournament.id, (struct) => {
+        setCompStructureState({ ...struct });
+      });
+      return () => unsub();
+    }
+  }, [tournament?.id]);
+
+  const compStructure: MultiStageTournamentStructure | undefined = compStructureState || (tournament?.id ? dotaCompetitionEngine.getStructure(tournament.id) : undefined);
   const stageTabs = (compStructure?.stages || []).map(stg => ({
     id: `stage_${stg.id}`,
     label: `${stg.name}${stg.status === 'LIVE' ? ' · LIVE' : stg.status === 'FINISHED' ? ' · FINISHED' : ''}`
@@ -1719,10 +1733,22 @@ export function TournamentDetailView({
                 tournamentId={tournament.id} 
                 onSelectMatch={(mId) => onNavigate('match_detail', mId)} 
               />
-            ) : (currentStage.type === 'DOUBLE_ELIMINATION' || currentStage.type === 'SINGLE_ELIMINATION') ? (
+            ) : currentStage.type === 'DOUBLE_ELIMINATION' ? (
               <DoubleEliminationBracket 
                 tournamentId={tournament.id} 
                 stageConfig={currentStage} 
+                onSelectMatch={(mId) => onNavigate('match_detail', mId)} 
+              />
+            ) : currentStage.type === 'SINGLE_ELIMINATION' ? (
+              <SingleEliminationBracket 
+                tournamentId={tournament.id} 
+                stageConfig={currentStage} 
+                onSelectMatch={(mId) => onNavigate('match_detail', mId)} 
+              />
+            ) : currentStage.type === 'SWISS' ? (
+              <SwissStageView 
+                stage={currentStage} 
+                tournamentId={tournament.id} 
                 onSelectMatch={(mId) => onNavigate('match_detail', mId)} 
               />
             ) : (

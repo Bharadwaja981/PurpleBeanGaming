@@ -116,7 +116,7 @@ export interface Team {
   groupPoints: number;
   mapsRecord: { won: number; lost: number };
   form: ('W' | 'L')[];
-  description: string;
+  description?: string;
   earningsINR?: string;
   tournamentId?: string;
 }

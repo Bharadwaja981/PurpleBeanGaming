@@ -522,8 +522,67 @@ export const PURPLE_BEAN_AUCTION_TEST_CONFIG: TournamentConfig = {
   }
 };
 
+export const AFTER_AUCTION_TEST_CONFIG: TournamentConfig = {
+  identity: {
+    tournamentId: 'after-auction-test',
+    name: 'After auction test',
+    gameId: 'dota2',
+    gameName: 'Dota 2',
+    description: 'Post-auction tournament fixture with 8 formed teams ready for bracket or group stage play.',
+    region: 'Pan India',
+    locationType: 'ONLINE',
+    city: 'Bengaluru',
+    testMode: true,
+    environment: 'TEST TOURNAMENT',
+    visibility: 'PUBLIC',
+    bannerUrl: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?auto=format&fit=crop&w=1200&q=80'
+  },
+  registration: {
+    registrationMode: 'INDIVIDUAL',
+    openDate: '2026-09-01',
+    closeDate: '2026-09-30',
+    maxParticipants: 40,
+    eligibilityRules: {
+      minMmrOrRank: 3000,
+      regionLocked: false,
+      requireKyc: false
+    }
+  },
+  teamFormation: {
+    mode: 'AUCTION',
+    numberOfTeams: 8
+  },
+  roster: {
+    primaryRosterSize: 5,
+    captainCountsTowardRoster: true,
+    substituteSlots: 1,
+    substituteRequired: false
+  },
+  competition: {
+    format: 'DOUBLE_ELIMINATION',
+    defaultSeriesFormat: 'BO3',
+    roundOverrides: {
+      'Grand Final': 'BO5'
+    },
+    seedingMethod: 'RATING_BASED'
+  },
+  prizes: {
+    totalPrizePoolINR: 100000,
+    placementDistribution: [
+      { placement: '1st Place (Champion)', percentage: 50, amountINR: 50000 },
+      { placement: '2nd Place (Runner-up)', percentage: 30, amountINR: 30000 },
+      { placement: '3rd Place', percentage: 20, amountINR: 20000 }
+    ]
+  },
+  integrity: {
+    verificationRequired: true,
+    organizerApprovalRequired: true
+  }
+};
+
 export const INITIAL_SEED_TOURNAMENTS: TournamentConfig[] = [
   PURPLE_BEAN_AUCTION_TEST_CONFIG,
+  AFTER_AUCTION_TEST_CONFIG,
   INDIA_MASTERS_AUCTION_CONFIG,
   INDIA_DOTA_OPEN_CONFIG,
   PURPLE_BEAN_CHALLENGER_CONFIG

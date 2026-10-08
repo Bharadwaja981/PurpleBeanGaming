@@ -10,9 +10,7 @@ import {
   Sparkles,
   AlertTriangle,
   RefreshCw,
-  Crown,
-  CornerDownRight,
-  ArrowRight
+  Crown
 } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
 import { 
@@ -22,14 +20,14 @@ import {
 } from '../domain/dotaCompetitionEngine';
 import { competitionClientService, SubmissionStatus } from '../services/competitionClientService';
 
-interface DoubleEliminationBracketProps {
+interface SingleEliminationBracketProps {
   tournamentId: string;
   stageConfig?: TournamentStageConfig;
   onSelectMatch?: (matchId: string) => void;
   onStructureUpdated?: () => void;
 }
 
-export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> = ({
+export const SingleEliminationBracket: React.FC<SingleEliminationBracketProps> = ({
   tournamentId,
   stageConfig,
   onSelectMatch,
@@ -63,11 +61,10 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
     return () => unsub();
   }, [tournamentId]);
 
-  // Fetch or derive matches for this tournament/stage
   const stage = useMemo(() => {
     if (stageConfig) return stageConfig;
     const structure = dotaCompetitionEngine.getStructure(tournamentId);
-    return structure?.stages.find(s => s.type === 'DOUBLE_ELIMINATION') || structure?.stages[0];
+    return structure?.stages.find(s => s.type === 'SINGLE_ELIMINATION') || structure?.stages[0];
   }, [stageConfig, tournamentId]);
 
   const matches: CompetitionMatchNode[] = useMemo(() => {
@@ -77,70 +74,28 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
     return tournamentService.getMatches().filter(m => m.tournamentId === tournamentId) as unknown as CompetitionMatchNode[];
   }, [stage, tournamentId]);
 
-  // Upper Bracket matches grouped by round
-  const upperQuarterfinals = useMemo(() => {
+  // Group matches by round key / title
+  const quarterfinals = useMemo(() => {
     return matches.filter(m => 
-      m.roundKey === 'UB_QF' || 
-      m.roundKey === 'ub-r1' || 
-      m.roundKey?.includes('UB_QF') || 
+      m.roundKey === 'se-qf' || 
+      m.roundKey?.includes('qf') || 
       m.round?.toLowerCase().includes('quarterfinal')
     );
   }, [matches]);
 
-  const upperSemifinals = useMemo(() => {
+  const semifinals = useMemo(() => {
     return matches.filter(m => 
-      m.roundKey === 'ub-r2' || 
-      m.roundKey?.includes('UB_SF') || 
-      (m.round?.toLowerCase().includes('semifinal') && (m.bracketType === 'upper' || m.stage === 'upper'))
+      m.roundKey === 'se-sf' || 
+      m.roundKey === 'sf' || 
+      m.roundKey?.includes('sf') || 
+      m.round?.toLowerCase().includes('semifinal')
     );
   }, [matches]);
 
-  const upperFinal = useMemo(() => {
-    return matches.find(m => 
-      m.roundKey === 'UB_FINAL' || 
-      m.roundKey === 'ub-final' || 
-      (m.round?.toLowerCase().includes('upper final'))
-    );
-  }, [matches]);
-
-  // Lower Bracket matches grouped by round
-  const lowerRound1 = useMemo(() => {
-    return matches.filter(m => 
-      m.roundKey === 'lb-r1' || 
-      m.roundKey?.includes('LB_R1') || 
-      m.round?.toLowerCase().includes('lower round 1')
-    );
-  }, [matches]);
-
-  const lowerRound2 = useMemo(() => {
-    return matches.filter(m => 
-      m.roundKey === 'lb-r2' || 
-      m.roundKey?.includes('LB_R2') || 
-      m.round?.toLowerCase().includes('lower round 2')
-    );
-  }, [matches]);
-
-  const lowerSemifinal = useMemo(() => {
-    return matches.find(m => 
-      m.roundKey === 'lb-sf' || 
-      m.roundKey === 'LB_SF' || 
-      m.round?.toLowerCase().includes('lower semifinal')
-    );
-  }, [matches]);
-
-  const lowerFinal = useMemo(() => {
-    return matches.find(m => 
-      m.roundKey === 'lb-final' || 
-      m.roundKey === 'LB_FINAL' || 
-      m.round?.toLowerCase().includes('lower final')
-    );
-  }, [matches]);
-
-  // Grand Final
   const grandFinal = useMemo(() => {
     return matches.find(m => 
-      m.roundKey === 'GRAND_FINAL' || 
       m.roundKey === 'gf' || 
+      m.roundKey === 'GRAND_FINAL' || 
       m.round?.toLowerCase().includes('grand final') ||
       m.stage === 'grand_final'
     );
@@ -158,7 +113,6 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
     return null;
   }, [grandFinal]);
 
-  // Zoom controls
   const handleZoomIn = () => setZoomLevel(prev => Math.min(140, prev + 10));
   const handleZoomOut = () => setZoomLevel(prev => Math.max(70, prev - 10));
   const handleResetZoom = () => setZoomLevel(100);
@@ -203,8 +157,7 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
     }
   };
 
-  // Match Card Component
-  const renderMatchCard = (m: CompetitionMatchNode, roundTitle: string, isUpper = true, dropLabel?: string, sourceLabel?: string) => {
+  const renderMatchCard = (m: CompetitionMatchNode, roundTitle: string) => {
     if (!m) return null;
     const teamAName = m.teamA?.name || m.teamA?.teamName || m.teamA?.sourceLabel || 'TBD';
     const teamBName = m.teamB?.name || m.teamB?.teamName || m.teamB?.sourceLabel || 'TBD';
@@ -219,7 +172,7 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
       >
         <div className="flex items-center justify-between text-[10px] font-bold border-b border-black/10 pb-1">
           <div className="flex items-center gap-1.5">
-            <span className={`${isUpper ? 'text-[#7C3AED]' : 'text-amber-700'} uppercase font-black`}>{roundTitle}</span>
+            <span className="text-[#7C3AED] uppercase font-black">{roundTitle}</span>
             {m.seriesFormat && (
               <span className="bg-stone-200 border border-black/30 px-1 py-0.2 text-[9px] font-mono">
                 {m.seriesFormat}
@@ -234,13 +187,6 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
             {m.status || 'UPCOMING'}
           </span>
         </div>
-
-        {/* Source Badge if from previous round */}
-        {sourceLabel && (
-          <div className="text-[9px] text-stone-500 font-mono font-bold bg-stone-100 px-1 py-0.5 border border-stone-300">
-            {sourceLabel}
-          </div>
-        )}
 
         {/* Team A */}
         <div className={`flex items-center justify-between text-xs font-bold py-0.5 ${isWinnerA ? 'text-black font-black' : isWinnerB ? 'opacity-60' : ''}`}>
@@ -286,14 +232,6 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
           </span>
         </div>
 
-        {/* Loser Drop Indicator */}
-        {dropLabel && (
-          <div className="pt-1 border-t border-black/10 flex items-center gap-1 text-[9px] font-bold text-rose-700">
-            <CornerDownRight className="w-3 h-3 text-rose-600" />
-            <span>Drop: {dropLabel}</span>
-          </div>
-        )}
-
         {/* Action Controls */}
         <div className="pt-1 border-t border-black/10 flex items-center justify-between gap-2">
           <button
@@ -321,39 +259,31 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
   return (
     <div className="space-y-6 font-mono text-xs">
       {/* 1. BRACKET HEADER & VIEW CONTROLS */}
-      <div className="bg-white border-[3.5px] border-black p-5 shadow-[6px_6px_0px_0px_#000] flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+      <div className="bg-white border-[3.5px] border-black p-5 shadow-[6px_6px_0px_0px_#000] flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-purple-100 border-2 border-black shadow-[2px_2px_0px_0px_#000]">
             <Trophy className="w-6 h-6 text-[#7C3AED]" />
           </div>
           <div>
             <h3 className="font-sans font-black text-lg uppercase text-black">
-              DOUBLE ELIMINATION TOURNAMENT BRACKET
+              SINGLE ELIMINATION KNOCKOUT
             </h3>
             <p className="text-[11px] text-stone-600 font-bold">
-              {stage?.name || 'Tournament'} • Upper &amp; Lower Brackets • Best of {stage?.defaultSeriesFormat?.replace('BO', '') || '3'} (Grand Final {stage?.grandFinalSeriesFormat || 'BO5'})
+              {stage?.name || 'Playoffs'} • Knockout Bracket • Series {stage?.defaultSeriesFormat || 'BO3'} (Finals {stage?.grandFinalSeriesFormat || 'BO5'})
             </p>
           </div>
         </div>
 
-        {/* Legend & Zoom Controls */}
+        {/* Legend & Zoom */}
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-3 text-[10px] font-black uppercase text-stone-600 border-r-2 border-black pr-4">
             <span className="flex items-center gap-1 text-emerald-800">
               <span className="w-2.5 h-2.5 bg-emerald-500 inline-block border border-black" />
-              Winner Advances
+              Winner / Advances
             </span>
             <span className="flex items-center gap-1 text-rose-800">
               <span className="w-2.5 h-2.5 bg-rose-500 inline-block border border-black" />
-              Loser Drops to LB
-            </span>
-            <span className="flex items-center gap-1 text-[#7C3AED]">
-              <span className="w-3 h-0.5 bg-[#7C3AED] inline-block" />
-              Upper Path
-            </span>
-            <span className="flex items-center gap-1 text-amber-600">
-              <span className="w-3 h-0.5 border-t-2 border-dashed border-amber-600 inline-block" />
-              Lower Path
+              Eliminated
             </span>
           </div>
 
@@ -397,233 +327,95 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
             </div>
           </div>
           <span className="px-3 py-1 bg-black text-[#FFE600] font-black uppercase text-xs border border-black">
-            GRAND FINAL WINNER
+            VICTORIOUS
           </span>
         </div>
       )}
 
-      {/* 2. BRACKET CANVAS CONTAINER */}
+      {/* 2. BRACKET CANVAS WITH STEPPED CONNECTOR LINES */}
       <div 
-        className="bg-[#FAFAF9] border-[3.5px] border-black p-6 shadow-[6px_6px_0px_0px_#000] overflow-x-auto space-y-12"
+        className="bg-[#FAFAF9] border-[3.5px] border-black p-6 shadow-[6px_6px_0px_0px_#000] overflow-x-auto"
         style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'top left' }}
       >
-        {/* UPPER BRACKET SECTION */}
-        <div className="space-y-4">
-          <div className="flex items-center gap-2 border-b-2 border-black pb-2">
-            <span className="bg-[#7C3AED] text-white p-1 border border-black font-black text-[10px]">UB</span>
-            <h4 className="font-sans font-black text-base uppercase text-[#7C3AED]">
-              UPPER BRACKET (WINNERS)
-            </h4>
-          </div>
-
-          <div className="flex items-center gap-4 pt-2 min-w-max">
-            {/* Column 1: Upper Quarterfinals */}
-            {upperQuarterfinals.length > 0 && (
+        <div className="flex items-center gap-6 min-w-max py-4">
+          {/* Quarterfinals */}
+          {quarterfinals.length > 0 && (
+            <div className="space-y-6">
+              <span className="font-black uppercase text-[10px] text-stone-500 block border-b border-black pb-1">
+                Quarterfinals ({stage?.defaultSeriesFormat || 'BO3'})
+              </span>
               <div className="space-y-6">
-                <span className="font-black uppercase text-[10px] text-stone-500 block border-b border-black pb-1">
-                  Upper Quarterfinals (BO3)
-                </span>
-                <div className="space-y-6">
-                  {upperQuarterfinals.map((m, idx) => (
-                    <div key={m.id}>
-                      {renderMatchCard(m, `UB QF ${idx + 1}`, true, `LB R1 - Match ${Math.floor(idx / 2) + 1}`)}
-                    </div>
-                  ))}
-                </div>
+                {quarterfinals.map((m, idx) => (
+                  <div key={m.id}>
+                    {renderMatchCard(m, `Quarterfinal ${idx + 1}`)}
+                  </div>
+                ))}
               </div>
-            )}
+            </div>
+          )}
 
-            {/* SVG Stepped Connectors: UB QF -> UB SF */}
-            {upperQuarterfinals.length > 0 && upperSemifinals.length > 0 && (
-              <div className="flex flex-col justify-around h-full py-8 w-10">
-                <svg className="w-10 h-72" viewBox="0 0 40 288" fill="none">
-                  {/* Top pair QF 1 & 2 -> SF 1 */}
-                  <path d="M 0 36 H 20 V 72 H 40" stroke="#7C3AED" strokeWidth="2.5" />
-                  <path d="M 0 108 H 20 V 72 H 40" stroke="#7C3AED" strokeWidth="2.5" />
-                  {/* Bottom pair QF 3 & 4 -> SF 2 */}
-                  <path d="M 0 180 H 20 V 216 H 40" stroke="#7C3AED" strokeWidth="2.5" />
-                  <path d="M 0 252 H 20 V 216 H 40" stroke="#7C3AED" strokeWidth="2.5" />
-                </svg>
+          {/* SVG Connectors: Quarterfinals -> Semifinals */}
+          {quarterfinals.length > 0 && semifinals.length > 0 && (
+            <div className="flex flex-col justify-around h-full py-8 w-10">
+              <svg className="w-10 h-72" viewBox="0 0 40 288" fill="none">
+                {/* Upper pair connector */}
+                <path d="M 0 36 H 20 V 72 H 40" stroke="#000" strokeWidth="2.5" />
+                <path d="M 0 108 H 20 V 72 H 40" stroke="#000" strokeWidth="2.5" />
+                {/* Lower pair connector */}
+                <path d="M 0 180 H 20 V 216 H 40" stroke="#000" strokeWidth="2.5" />
+                <path d="M 0 252 H 20 V 216 H 40" stroke="#000" strokeWidth="2.5" />
+              </svg>
+            </div>
+          )}
+
+          {/* Semifinals */}
+          {semifinals.length > 0 && (
+            <div className="space-y-6">
+              <span className="font-black uppercase text-[10px] text-stone-500 block border-b border-black pb-1">
+                Semifinals ({stage?.defaultSeriesFormat || 'BO3'})
+              </span>
+              <div className="space-y-12 pt-4">
+                {semifinals.map((m, idx) => (
+                  <div key={m.id}>
+                    {renderMatchCard(m, `Semifinal ${idx + 1}`)}
+                  </div>
+                ))}
               </div>
-            )}
+            </div>
+          )}
 
-            {/* Column 2: Upper Semifinals */}
-            {upperSemifinals.length > 0 && (
-              <div className="space-y-6">
-                <span className="font-black uppercase text-[10px] text-stone-500 block border-b border-black pb-1">
-                  Upper Semifinals (BO3)
-                </span>
-                <div className="space-y-16 pt-4">
-                  {upperSemifinals.map((m, idx) => (
-                    <div key={m.id}>
-                      {renderMatchCard(m, `UB SF ${idx + 1}`, true, `LB R2 - Match ${idx + 1}`)}
-                    </div>
-                  ))}
-                </div>
+          {/* SVG Connector: Semifinals -> Grand Final */}
+          {semifinals.length > 0 && grandFinal && (
+            <div className="flex flex-col justify-center h-full w-10">
+              <svg className="w-10 h-64" viewBox="0 0 40 256" fill="none">
+                <path d="M 0 64 H 20 V 128 H 40" stroke="#000" strokeWidth="2.5" />
+                <path d="M 0 192 H 20 V 128 H 40" stroke="#000" strokeWidth="2.5" />
+              </svg>
+            </div>
+          )}
+
+          {/* Grand Final */}
+          {grandFinal && (
+            <div className="space-y-6 pl-2">
+              <span className="font-black uppercase text-[10px] text-amber-700 block border-b border-black pb-1">
+                Championship Grand Final ({stage?.grandFinalSeriesFormat || 'BO5'})
+              </span>
+              <div className="pt-8">
+                {renderMatchCard(grandFinal, 'GRAND FINAL')}
               </div>
-            )}
-
-            {/* SVG Stepped Connector: UB SF -> UB Final */}
-            {upperSemifinals.length > 0 && upperFinal && (
-              <div className="flex flex-col justify-center h-full w-10">
-                <svg className="w-10 h-64" viewBox="0 0 40 256" fill="none">
-                  <path d="M 0 64 H 20 V 128 H 40" stroke="#7C3AED" strokeWidth="2.5" />
-                  <path d="M 0 192 H 20 V 128 H 40" stroke="#7C3AED" strokeWidth="2.5" />
-                </svg>
-              </div>
-            )}
-
-            {/* Column 3: Upper Final */}
-            {upperFinal && (
-              <div className="space-y-6">
-                <span className="font-black uppercase text-[10px] text-stone-500 block border-b border-black pb-1">
-                  Upper Final (BO3)
-                </span>
-                <div className="pt-8">
-                  {renderMatchCard(upperFinal, 'UB FINAL', true, 'LB Final')}
-                </div>
-              </div>
-            )}
-
-            {/* SVG Connector: UB Final -> Grand Final */}
-            {upperFinal && grandFinal && (
-              <div className="flex flex-col justify-center h-full w-10">
-                <svg className="w-10 h-32" viewBox="0 0 40 128" fill="none">
-                  <path d="M 0 64 H 40" stroke="#000" strokeWidth="2.5" />
-                </svg>
-              </div>
-            )}
-
-            {/* Column 4: Championship Grand Final */}
-            {grandFinal && (
-              <div className="space-y-6 pl-2">
-                <span className="font-black uppercase text-[10px] text-amber-700 block border-b border-black pb-1">
-                  Championship Grand Final (BO5)
-                </span>
-                <div className="pt-8">
-                  {renderMatchCard(grandFinal, 'GRAND FINAL', true)}
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* LOWER BRACKET SECTION */}
-        <div className="space-y-4 pt-6 border-t-2 border-black">
-          <div className="flex items-center gap-2 border-b-2 border-black pb-2">
-            <span className="bg-amber-600 text-white p-1 border border-black font-black text-[10px]">LB</span>
-            <h4 className="font-sans font-black text-base uppercase text-amber-800">
-              LOWER BRACKET (ELIMINATION SURVIVAL)
-            </h4>
-          </div>
-
-          <div className="flex items-center gap-4 pt-2 min-w-max">
-            {/* Column 1: Lower Round 1 */}
-            {lowerRound1.length > 0 && (
-              <div className="space-y-6">
-                <span className="font-black uppercase text-[10px] text-stone-500 block border-b border-black pb-1">
-                  Lower Round 1 (BO3)
-                </span>
-                <div className="space-y-6">
-                  {lowerRound1.map((m, idx) => (
-                    <div key={m.id}>
-                      {renderMatchCard(m, `LB R1 - M${idx + 1}`, false, undefined, 'From: UB QF Drops')}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* SVG Stepped Connector: LB R1 -> LB R2 */}
-            {lowerRound1.length > 0 && lowerRound2.length > 0 && (
-              <div className="flex flex-col justify-around h-full w-10">
-                <svg className="w-10 h-64" viewBox="0 0 40 256" fill="none">
-                  <path d="M 0 64 H 40" stroke="#D97706" strokeWidth="2" strokeDasharray="4 2" />
-                  <path d="M 0 192 H 40" stroke="#D97706" strokeWidth="2" strokeDasharray="4 2" />
-                </svg>
-              </div>
-            )}
-
-            {/* Column 2: Lower Round 2 */}
-            {lowerRound2.length > 0 && (
-              <div className="space-y-6">
-                <span className="font-black uppercase text-[10px] text-stone-500 block border-b border-black pb-1">
-                  Lower Round 2 (BO3)
-                </span>
-                <div className="space-y-6">
-                  {lowerRound2.map((m, idx) => (
-                    <div key={m.id}>
-                      {renderMatchCard(m, `LB R2 - M${idx + 1}`, false, undefined, 'From: UB SF Drops')}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* SVG Stepped Connector: LB R2 -> LB Semifinal */}
-            {lowerRound2.length > 0 && lowerSemifinal && (
-              <div className="flex flex-col justify-center h-full w-10">
-                <svg className="w-10 h-64" viewBox="0 0 40 256" fill="none">
-                  <path d="M 0 64 H 20 V 128 H 40" stroke="#D97706" strokeWidth="2.5" />
-                  <path d="M 0 192 H 20 V 128 H 40" stroke="#D97706" strokeWidth="2.5" />
-                </svg>
-              </div>
-            )}
-
-            {/* Column 3: Lower Semifinal */}
-            {lowerSemifinal && (
-              <div className="space-y-6">
-                <span className="font-black uppercase text-[10px] text-stone-500 block border-b border-black pb-1">
-                  Lower Semifinal (BO3)
-                </span>
-                <div className="pt-6">
-                  {renderMatchCard(lowerSemifinal, 'LB SEMIFINAL', false)}
-                </div>
-              </div>
-            )}
-
-            {/* SVG Connector: LB Semifinal -> LB Final */}
-            {lowerSemifinal && lowerFinal && (
-              <div className="flex flex-col justify-center h-full w-10">
-                <svg className="w-10 h-32" viewBox="0 0 40 128" fill="none">
-                  <path d="M 0 64 H 40" stroke="#D97706" strokeWidth="2.5" />
-                </svg>
-              </div>
-            )}
-
-            {/* Column 4: Lower Final */}
-            {lowerFinal && (
-              <div className="space-y-6">
-                <span className="font-black uppercase text-[10px] text-stone-500 block border-b border-black pb-1">
-                  Lower Final (BO3)
-                </span>
-                <div className="pt-6">
-                  {renderMatchCard(lowerFinal, 'LB FINAL', false, undefined, 'From: UB Final Drop')}
-                </div>
-              </div>
-            )}
-
-            {/* Grand Final Qualifier Connector indicator */}
-            {lowerFinal && grandFinal && (
-              <div className="flex items-center gap-2 pl-4 border-l-2 border-dashed border-amber-600">
-                <div className="p-2 bg-amber-50 border border-amber-700 text-amber-900 font-bold text-[10px] flex items-center gap-1">
-                  <span>Advancing to Grand Final</span>
-                  <ArrowRight className="w-3.5 h-3.5 text-amber-800" />
-                </div>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* 3. AUTHORITATIVE MATCH SCORING MODAL */}
+      {/* 3. AUTHORITATIVE SCORING MODAL */}
       {scoringMatch && (
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
           <div className="bg-white border-4 border-black p-6 max-w-md w-full space-y-4 shadow-[8px_8px_0px_0px_#000] font-mono text-xs">
             <div className="flex items-center justify-between border-b-2 border-black pb-2">
               <div>
                 <h3 className="font-sans font-black text-base uppercase text-black">
-                  Record Bracket Score
+                  Record Match Score
                 </h3>
                 <span className="text-[10px] text-stone-500 font-bold uppercase">
                   {scoringMatch.round} · {scoringMatch.seriesFormat || 'BO3'}
