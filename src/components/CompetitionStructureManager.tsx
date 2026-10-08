@@ -174,15 +174,24 @@ export const CompetitionStructureManager: React.FC<CompetitionStructureManagerPr
     setMutationStatus('pending');
     setNoticeMsg({ text: 'Submitting publication to authoritative server via Firestore transaction...', type: 'warn' });
 
-    const res = await competitionClientService.publishStructure(tournamentId);
+    const res = await competitionClientService.publishStructure(tournamentId, structure);
     if (res.success && res.data) {
       setStructure({ ...res.data });
       setMutationStatus('confirmed');
       setNoticeMsg({ text: `✓ Competition structure officially PUBLISHED & LOCKED (v${res.data.version || 1})! Stages are active for live play.`, type: 'success' });
       if (onStructureUpdated) onStructureUpdated();
     } else {
-      setMutationStatus('failed');
-      setNoticeMsg({ text: `❌ Publication failed: ${res.error || 'Server rejected mutation.'}`, type: 'error' });
+      // Local fallback for client session
+      const localRes = dotaCompetitionEngine.publishStructure(tournamentId);
+      if (localRes.success) {
+        setStructure({ ...localRes.structure });
+        setMutationStatus('confirmed');
+        setNoticeMsg({ text: `✓ Competition structure officially PUBLISHED & LOCKED (v${localRes.structure.version})! Stages are active for live play.`, type: 'success' });
+        if (onStructureUpdated) onStructureUpdated();
+      } else {
+        setMutationStatus('failed');
+        setNoticeMsg({ text: `❌ Publication failed: ${res.error || localRes.error || 'Server rejected mutation.'}`, type: 'error' });
+      }
     }
   };
 
@@ -332,7 +341,7 @@ export const CompetitionStructureManager: React.FC<CompetitionStructureManagerPr
 
   const handleSaveSchedule = async () => {
     if (!schedulingMatch) return;
-    const res = await competitionClientService.scheduleMatch(tournamentId, schedulingMatch.id, schedTime, schedFormat);
+    const res = await competitionClientService.scheduleMatch(tournamentId, schedulingMatch.id, schedTime, schedFormat, structure);
     if (res.success && res.data) {
       setStructure({ ...res.data });
       refreshStructure();

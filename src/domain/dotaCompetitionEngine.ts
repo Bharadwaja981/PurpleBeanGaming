@@ -17,6 +17,16 @@ import { doc, setDoc, updateDoc, onSnapshot, getDoc, runTransaction, Unsubscribe
 import { db } from '../services/firebaseConfig';
 import { sanitizeFirestorePayload } from '../utils/sanitizeFirestore';
 
+let serverAdminDb: any = null;
+
+export function setCompetitionEngineAdminDb(adminDb: any) {
+  serverAdminDb = adminDb;
+}
+
+export function getCompetitionEngineAdminDb() {
+  return serverAdminDb;
+}
+
 export type TournamentStageType = 
   | 'GROUP_STAGE'
   | 'ROUND_ROBIN'
@@ -277,24 +287,33 @@ export class DotaCompetitionEngine {
       } catch {}
     }
 
+    const payload = sanitizeFirestorePayload(state);
+    const summary = {
+      status: state.status,
+      isLocked: state.isLocked,
+      version: state.version,
+      stageCount: state.stages.length,
+      matchCount: (state.matches || []).length,
+      completedMatchCount: (state.matches || []).filter(m => m.status === 'COMPLETED' || m.status === 'FORFEIT').length,
+      format: state.format,
+      updatedAt: state.updatedAt,
+      publishedAt: state.publishedAt || null
+    };
+
     // Persist to authoritative Firestore database
     try {
-      if (db && tournamentId) {
-        const payload = sanitizeFirestorePayload(state);
+      if (serverAdminDb && tournamentId) {
+        serverAdminDb.collection('tournaments').doc(tournamentId).collection('competition').doc('structure').set(payload, { merge: true }).catch(() => {});
+        serverAdminDb.collection('tournaments').doc(tournamentId).update({
+          competitionStructure: payload,
+          competitionStructureSummary: summary,
+          updatedAt: new Date().toISOString()
+        }).catch(() => {});
+      } else if (db && tournamentId) {
         setDoc(doc(db, 'tournaments', tournamentId, 'competition', 'structure'), payload, { merge: true }).catch(() => {});
         updateDoc(doc(db, 'tournaments', tournamentId), {
           competitionStructure: payload,
-          competitionStructureSummary: {
-            status: state.status,
-            isLocked: state.isLocked,
-            version: state.version,
-            stageCount: state.stages.length,
-            matchCount: (state.matches || []).length,
-            completedMatchCount: (state.matches || []).filter(m => m.status === 'COMPLETED' || m.status === 'FORFEIT').length,
-            format: state.format,
-            updatedAt: state.updatedAt,
-            publishedAt: state.publishedAt || null
-          },
+          competitionStructureSummary: summary,
           updatedAt: new Date().toISOString()
         }).catch(() => {});
       }
@@ -366,7 +385,69 @@ export class DotaCompetitionEngine {
   }
 
   public async fetchStructureFromFirestore(tournamentId: string): Promise<MultiStageTournamentStructure | undefined> {
-    if (!tournamentId || !db) return undefined;
+    if (!tournamentId) return undefined;
+
+    if (serverAdminDb) {
+      try {
+        const structRef = serverAdminDb.collection('tournaments').doc(tournamentId).collection('competition').doc('structure');
+        const snap = await structRef.get();
+        if (snap.exists) {
+          const remoteData = snap.data() as MultiStageTournamentStructure;
+          this.structures.set(tournamentId, remoteData);
+          const storage = getStorageBackend();
+          try { storage?.setItem(`pbg_competition_structure_${tournamentId}`, JSON.stringify(remoteData)); } catch {}
+
+          try {
+            const tourneyRef = serverAdminDb.collection('tournaments').doc(tournamentId);
+            const tSnap = await tourneyRef.get();
+            if (tSnap.exists) {
+              const tData = tSnap.data();
+              const summaryVer = tData?.competitionStructureSummary?.version;
+              if (summaryVer !== remoteData.version) {
+                const sanitized = sanitizeFirestorePayload(remoteData);
+                await tourneyRef.update({
+                  competitionStructure: sanitized,
+                  competitionStructureSummary: {
+                    status: remoteData.status,
+                    isLocked: remoteData.isLocked,
+                    version: remoteData.version,
+                    stageCount: remoteData.stages.length,
+                    matchCount: (remoteData.matches || []).length,
+                    completedMatchCount: (remoteData.matches || []).filter((m: any) => m.status === 'COMPLETED' || m.status === 'FORFEIT').length,
+                    format: remoteData.format,
+                    updatedAt: remoteData.updatedAt,
+                    publishedAt: remoteData.publishedAt || null
+                  },
+                  updatedAt: remoteData.updatedAt
+                });
+              }
+            }
+          } catch {}
+
+          return remoteData;
+        } else {
+          // Fallback: migrate from tournament document if subcollection doc has not yet been initialized
+          const tourneyRef = serverAdminDb.collection('tournaments').doc(tournamentId);
+          const tSnap = await tourneyRef.get();
+          if (tSnap.exists) {
+            const tData = tSnap.data();
+            if (tData?.competitionStructure) {
+              const structureData = tData.competitionStructure as MultiStageTournamentStructure;
+              this.structures.set(tournamentId, structureData);
+              try {
+                await structRef.set(sanitizeFirestorePayload(structureData), { merge: true });
+              } catch {}
+              return structureData;
+            }
+          }
+        }
+      } catch (err) {
+        console.warn(`[Competition Engine] Admin Firestore fetch failed for ${tournamentId}:`, err);
+      }
+      return undefined;
+    }
+
+    if (!db) return undefined;
     try {
       const structRef = doc(db, 'tournaments', tournamentId, 'competition', 'structure');
       const snap = await getDoc(structRef);
@@ -737,25 +818,61 @@ export class DotaCompetitionEngine {
     const structure = this.getStructure(tournamentId);
     if (!structure) return false;
 
-    let matchNode: CompetitionMatchNode | undefined;
+    let matchFound = false;
     for (const stage of structure.stages) {
       const found = stage.matches?.find(m => m.id === matchId);
       if (found) {
-        matchNode = found;
-        break;
+        if (scheduledTime) found.scheduledTime = scheduledTime;
+        if (seriesFormat) found.seriesFormat = seriesFormat;
+        matchFound = true;
       }
     }
-    if (!matchNode) {
-      matchNode = structure.matches?.find(m => m.id === matchId);
+    if (structure.matches) {
+      const structMatch = structure.matches.find(m => m.id === matchId);
+      if (structMatch) {
+        if (scheduledTime) structMatch.scheduledTime = scheduledTime;
+        if (seriesFormat) structMatch.seriesFormat = seriesFormat;
+        matchFound = true;
+      }
     }
-    if (!matchNode) return false;
-
-    if (scheduledTime) matchNode.scheduledTime = scheduledTime;
-    if (seriesFormat) matchNode.seriesFormat = seriesFormat;
+    if (!matchFound) return false;
 
     structure.updatedAt = new Date().toISOString();
     this.appendAudit(structure, 'UPDATE_MATCH_SCHEDULE', `Updated match ${matchId} schedule: ${scheduledTime}${seriesFormat ? ` (${seriesFormat})` : ''}`);
+    this.persistStructure(tournamentId, structure);
     return true;
+  }
+
+  /**
+   * Asynchronously updates match schedule, fetching from Firestore if needed
+   */
+  public async updateMatchScheduleAsync(params: {
+    tournamentId: string;
+    matchId: string;
+    scheduledTime: string;
+    seriesFormat?: SeriesFormat;
+    draftStructure?: MultiStageTournamentStructure;
+  }): Promise<{ success: boolean; structure?: MultiStageTournamentStructure; error?: string }> {
+    let structure = this.getStructure(params.tournamentId);
+    if (!structure) {
+      structure = await this.fetchStructureFromFirestore(params.tournamentId);
+    }
+    if (!structure && params.draftStructure) {
+      structure = params.draftStructure;
+      this.structures.set(params.tournamentId, structure);
+      this.persistStructure(params.tournamentId, structure);
+    }
+    if (!structure) {
+      return { success: false, error: 'Tournament competition structure not found.' };
+    }
+
+    const ok = this.updateMatchSchedule(params.tournamentId, params.matchId, params.scheduledTime, params.seriesFormat);
+    if (!ok) {
+      return { success: false, error: `Match ${params.matchId} not found in competition structure.` };
+    }
+
+    const updated = this.getStructure(params.tournamentId) || structure;
+    return { success: true, structure: updated };
   }
 
   /**
@@ -1565,14 +1682,26 @@ export class DotaCompetitionEngine {
       return { success: false, error: 'ORGANIZER_PERMISSION_REQUIRED: Only tournament organizers and admins can record match results.' };
     }
 
-    if (db && params.tournamentId) {
+    if ((serverAdminDb || db) && params.tournamentId) {
       try {
-        const result = await runTransaction(db, async (txn) => {
-          const structRef = doc(db, 'tournaments', params.tournamentId, 'competition', 'structure');
+        const runTxn = serverAdminDb 
+          ? (cb: any) => serverAdminDb.runTransaction(cb)
+          : (cb: any) => runTransaction(db, cb);
+
+        const structRef = serverAdminDb
+          ? serverAdminDb.collection('tournaments').doc(params.tournamentId).collection('competition').doc('structure')
+          : doc(db, 'tournaments', params.tournamentId, 'competition', 'structure');
+
+        const tourneyRef = serverAdminDb
+          ? serverAdminDb.collection('tournaments').doc(params.tournamentId)
+          : doc(db, 'tournaments', params.tournamentId);
+
+        const result = await runTxn(async (txn: any) => {
           const structSnap = await txn.get(structRef);
+          const structExists = typeof structSnap.exists === 'function' ? structSnap.exists() : Boolean(structSnap.exists);
 
           let structure: MultiStageTournamentStructure;
-          if (structSnap.exists()) {
+          if (structExists) {
             structure = structSnap.data() as MultiStageTournamentStructure;
           } else {
             const memory = this.getStructure(params.tournamentId);
@@ -1706,7 +1835,6 @@ export class DotaCompetitionEngine {
           const sanitizedStructure = sanitizeFirestorePayload(structure);
           txn.set(structRef, sanitizedStructure, { merge: true });
 
-          const tourneyRef = doc(db, 'tournaments', params.tournamentId);
           txn.set(tourneyRef, {
             competitionStructure: sanitizedStructure,
             competitionStructureSummary: {
@@ -2248,9 +2376,113 @@ export class DotaCompetitionEngine {
     tournamentId: string;
     callerRole?: string;
     isAdmin?: boolean;
+    draftStructure?: MultiStageTournamentStructure;
   }): Promise<{ success: boolean; structure?: MultiStageTournamentStructure; error?: string }> {
     if (params.callerRole && params.callerRole !== 'organizer' && params.callerRole !== 'admin' && !params.isAdmin) {
       return { success: false, error: 'ORGANIZER_PERMISSION_REQUIRED: Only tournament organizers and admins can publish competition structures.' };
+    }
+
+    if (serverAdminDb && params.tournamentId) {
+      try {
+        const result = await serverAdminDb.runTransaction(async (txn: any) => {
+          const structRef = serverAdminDb.collection('tournaments').doc(params.tournamentId).collection('competition').doc('structure');
+          const structSnap = await txn.get(structRef);
+
+          let structure: MultiStageTournamentStructure;
+          if (structSnap.exists) {
+            structure = structSnap.data() as MultiStageTournamentStructure;
+          } else if (params.draftStructure && params.draftStructure.stages && params.draftStructure.stages.length > 0) {
+            structure = JSON.parse(JSON.stringify(params.draftStructure));
+          } else {
+            const memory = this.getStructure(params.tournamentId);
+            if (!memory) throw new Error('Structure not found');
+            structure = JSON.parse(JSON.stringify(memory));
+          }
+
+          // If draftStructure was provided, merge any updated match schedules
+          if (params.draftStructure && structure) {
+            if (params.draftStructure.matches && params.draftStructure.matches.length > 0) {
+              const scheduleMap = new Map<string, { scheduledTime?: string; seriesFormat?: any }>();
+              params.draftStructure.matches.forEach(m => {
+                if (m.scheduledTime || m.seriesFormat) {
+                  scheduleMap.set(m.id, { scheduledTime: m.scheduledTime, seriesFormat: m.seriesFormat });
+                }
+              });
+              if (scheduleMap.size > 0) {
+                structure.matches?.forEach(m => {
+                  const s = scheduleMap.get(m.id);
+                  if (s) {
+                    if (s.scheduledTime) m.scheduledTime = s.scheduledTime;
+                    if (s.seriesFormat) m.seriesFormat = s.seriesFormat;
+                  }
+                });
+                structure.stages?.forEach(stage => {
+                  stage.matches?.forEach(m => {
+                    const s = scheduleMap.get(m.id);
+                    if (s) {
+                      if (s.scheduledTime) m.scheduledTime = s.scheduledTime;
+                      if (s.seriesFormat) m.seriesFormat = s.seriesFormat;
+                    }
+                  });
+                });
+              }
+            }
+          }
+
+          // Idempotency: if already PUBLISHED and locked, return current structure
+          if (structure.status === 'PUBLISHED' && structure.isLocked) {
+            return { success: true, structure };
+          }
+
+          if (!structure.stages || structure.stages.length === 0) {
+            throw new Error('Tournament must contain at least 1 stage.');
+          }
+
+          structure.status = 'PUBLISHED';
+          structure.isLocked = true;
+          structure.publishedAt = structure.publishedAt || new Date().toISOString();
+          structure.updatedAt = new Date().toISOString();
+          structure.version = (structure.version || 1) + 1;
+          this.appendAudit(structure, 'PUBLISH_STRUCTURE_TXN', `Transactionally published competition structure (v${structure.version}).`);
+
+          const sanitized = sanitizeFirestorePayload(structure);
+          txn.set(structRef, sanitized, { merge: true });
+
+          const tourneyRef = serverAdminDb.collection('tournaments').doc(params.tournamentId);
+          txn.set(tourneyRef, {
+            status: 'ACTIVE',
+            competitionStructure: sanitized,
+            competitionStructureSummary: {
+              status: structure.status,
+              isLocked: structure.isLocked,
+              version: structure.version,
+              stageCount: structure.stages.length,
+              matchCount: (structure.matches || []).length,
+              completedMatchCount: (structure.matches || []).filter(m => m.status === 'COMPLETED' || m.status === 'FORFEIT').length,
+              format: structure.format,
+              updatedAt: structure.updatedAt,
+              publishedAt: structure.publishedAt || null
+            },
+            updatedAt: structure.updatedAt
+          }, { merge: true });
+
+          return { success: true, structure };
+        });
+
+        if (result.success && result.structure) {
+          this.structures.set(params.tournamentId, result.structure);
+          const storage = getStorageBackend();
+          try { storage?.setItem(`pbg_competition_structure_${params.tournamentId}`, JSON.stringify(result.structure)); } catch {}
+          this.notifySubscribers(params.tournamentId, result.structure);
+        }
+
+        return result;
+      } catch (err: any) {
+        if (err?.message?.includes('ORGANIZER_PERMISSION_REQUIRED') || err?.message?.includes('Tournament must contain') || err?.message?.includes('Structure not found')) {
+          return { success: false, error: err.message };
+        }
+        return { success: false, error: err?.message || 'Failed to publish competition structure' };
+      }
     }
 
     if (db && params.tournamentId) {
@@ -2262,6 +2494,8 @@ export class DotaCompetitionEngine {
           let structure: MultiStageTournamentStructure;
           if (structSnap.exists()) {
             structure = structSnap.data() as MultiStageTournamentStructure;
+          } else if (params.draftStructure && params.draftStructure.stages && params.draftStructure.stages.length > 0) {
+            structure = JSON.parse(JSON.stringify(params.draftStructure));
           } else {
             const memory = this.getStructure(params.tournamentId);
             if (!memory) throw new Error('Structure not found');
@@ -2289,6 +2523,7 @@ export class DotaCompetitionEngine {
 
           const tourneyRef = doc(db, 'tournaments', params.tournamentId);
           txn.set(tourneyRef, {
+            status: 'ACTIVE',
             competitionStructure: sanitized,
             competitionStructureSummary: {
               status: structure.status,
@@ -2350,6 +2585,66 @@ export class DotaCompetitionEngine {
   }): Promise<{ success: boolean; hasStartedMatches: boolean; structure?: MultiStageTournamentStructure; error?: string }> {
     if (params.callerRole && params.callerRole !== 'organizer' && params.callerRole !== 'admin' && !params.isAdmin) {
       return { success: false, hasStartedMatches: false, error: 'ORGANIZER_PERMISSION_REQUIRED: Only tournament organizers and admins can edit competition structures.' };
+    }
+
+    if (serverAdminDb && params.tournamentId) {
+      try {
+        const result = await serverAdminDb.runTransaction(async (txn: any) => {
+          const structRef = serverAdminDb.collection('tournaments').doc(params.tournamentId).collection('competition').doc('structure');
+          const structSnap = await txn.get(structRef);
+
+          let structure: MultiStageTournamentStructure;
+          if (structSnap.exists) {
+            structure = structSnap.data() as MultiStageTournamentStructure;
+          } else {
+            const memory = this.getStructure(params.tournamentId);
+            if (!memory) throw new Error('Structure not found');
+            structure = JSON.parse(JSON.stringify(memory));
+          }
+
+          const hasStartedMatches = (structure.matches || []).some(m => m.status === 'LIVE' || m.status === 'COMPLETED');
+          structure.isLocked = false;
+          structure.updatedAt = new Date().toISOString();
+          structure.version = (structure.version || 1) + 1;
+          this.appendAudit(structure, 'UNLOCK_STRUCTURE_TXN', `Unlocked structure for editing via transaction. (Has started matches: ${hasStartedMatches})`);
+
+          const sanitized = sanitizeFirestorePayload(structure);
+          txn.set(structRef, sanitized, { merge: true });
+
+          const tourneyRef = serverAdminDb.collection('tournaments').doc(params.tournamentId);
+          txn.set(tourneyRef, {
+            competitionStructure: sanitized,
+            competitionStructureSummary: {
+              status: structure.status,
+              isLocked: structure.isLocked,
+              version: structure.version,
+              stageCount: structure.stages.length,
+              matchCount: (structure.matches || []).length,
+              completedMatchCount: (structure.matches || []).filter(m => m.status === 'COMPLETED' || m.status === 'FORFEIT').length,
+              format: structure.format,
+              updatedAt: structure.updatedAt,
+              publishedAt: structure.publishedAt || null
+            },
+            updatedAt: structure.updatedAt
+          }, { merge: true });
+
+          return { success: true, hasStartedMatches, structure };
+        });
+
+        if (result.success && result.structure) {
+          this.structures.set(params.tournamentId, result.structure);
+          const storage = getStorageBackend();
+          try { storage?.setItem(`pbg_competition_structure_${params.tournamentId}`, JSON.stringify(result.structure)); } catch {}
+          this.notifySubscribers(params.tournamentId, result.structure);
+        }
+
+        return result;
+      } catch (err: any) {
+        if (err?.message?.includes('ORGANIZER_PERMISSION_REQUIRED')) {
+          return { success: false, hasStartedMatches: false, error: err.message };
+        }
+        return { success: false, hasStartedMatches: false, error: err?.message || 'Failed to unlock structure.' };
+      }
     }
 
     if (db && params.tournamentId) {

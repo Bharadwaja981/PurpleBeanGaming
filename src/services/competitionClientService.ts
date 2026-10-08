@@ -33,7 +33,7 @@ export class CompetitionClientService {
   /**
    * Publishes competition structure through authoritative server / Cloud Function
    */
-  public async publishStructure(tournamentId: string): Promise<AuthoritativeMutationResult<MultiStageTournamentStructure>> {
+  public async publishStructure(tournamentId: string, currentDraft?: MultiStageTournamentStructure): Promise<AuthoritativeMutationResult<MultiStageTournamentStructure>> {
     try {
       const authHeader = await getBearerAuthHeader();
       const res = await fetch(`/api/tournaments/${encodeURIComponent(tournamentId)}/competition/publish`, {
@@ -41,7 +41,8 @@ export class CompetitionClientService {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': authHeader
-        }
+        },
+        body: JSON.stringify({ structure: currentDraft })
       });
 
       const json = await res.json();
@@ -257,7 +258,7 @@ export class CompetitionClientService {
   /**
    * Updates match schedule through authoritative server / Cloud Function
    */
-  public async scheduleMatch(tournamentId: string, matchId: string, scheduledTime: string, seriesFormat?: string): Promise<AuthoritativeMutationResult<MultiStageTournamentStructure>> {
+  public async scheduleMatch(tournamentId: string, matchId: string, scheduledTime: string, seriesFormat?: string, currentDraft?: MultiStageTournamentStructure): Promise<AuthoritativeMutationResult<MultiStageTournamentStructure>> {
     try {
       const authHeader = await getBearerAuthHeader();
       const res = await fetch(`/api/tournaments/${encodeURIComponent(tournamentId)}/competition/matches/${encodeURIComponent(matchId)}/schedule`, {
@@ -266,7 +267,7 @@ export class CompetitionClientService {
           'Content-Type': 'application/json',
           'Authorization': authHeader
         },
-        body: JSON.stringify({ scheduledTime, seriesFormat })
+        body: JSON.stringify({ scheduledTime, seriesFormat, structure: currentDraft })
       });
 
       const json = await res.json();
