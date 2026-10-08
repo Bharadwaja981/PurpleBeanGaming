@@ -317,7 +317,21 @@ export interface Match {
   currentGame?: number;
   totalGames?: number;
   streamUrl?: string;
+  streamType?: 'twitch' | 'youtube' | 'obs' | 'custom';
+  streamTitle?: string;
+  casterNames?: string;
+  obsStreamUrl?: string;
   mapName?: string;
+  telemetry?: {
+    gameDuration?: string;
+    gameNumber?: number;
+    teamAKills?: number;
+    teamBKills?: number;
+    goldLead?: number;
+    goldLeadTeam?: 'A' | 'B';
+    roshanStatus?: string;
+    currentMap?: string;
+  };
 }
 
 export interface PlayerGameScore {

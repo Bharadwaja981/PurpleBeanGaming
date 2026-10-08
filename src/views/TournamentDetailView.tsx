@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   Trophy, 
   Calendar, 
@@ -47,7 +47,7 @@ import { dotaTournamentOperations } from '../domain/dotaTournamentOperationsEngi
 import { tournamentConfigRegistry } from '../domain/tournamentConfigRegistry';
 import { getAuctionEngine } from '../domain/dotaAuctionEngine';
 import { DotaTournamentRegistration } from '../domain/dotaPlayerEngine';
-import { Team, ViewType } from '../types/tournament';
+import { Team, ViewType, Match } from '../types/tournament';
 import { ConfirmationModal } from '../components/ui/ConfirmationModal';
 import { AlertModal } from '../components/ui/AlertModal';
 import { PromptModal } from '../components/ui/PromptModal';
@@ -168,9 +168,64 @@ export function TournamentDetailView({
   }, [isTestCup]);
 
   const effectiveMatches = allMatches;
-  const tournamentMatches = isTestCup && testCupState.matches.length > 0 
-    ? testCupState.matches 
-    : effectiveMatches.filter((m) => m.tournamentId === tournament?.id);
+  const [compStructureState, setCompStructureState] = useState<MultiStageTournamentStructure | undefined>(() => tournament?.id ? dotaCompetitionEngine.getStructure(tournament.id) : undefined);
+
+  useEffect(() => {
+    if (tournament?.id) {
+      setCompStructureState(dotaCompetitionEngine.getStructure(tournament.id));
+      const unsub = dotaCompetitionEngine.subscribe(tournament.id, (struct) => {
+        setCompStructureState({ ...struct });
+      });
+      return () => unsub();
+    }
+  }, [tournament?.id]);
+
+  const compStructure: MultiStageTournamentStructure | undefined = compStructureState || (tournament?.id ? dotaCompetitionEngine.getStructure(tournament.id) : undefined);
+
+  const tournamentMatches: Match[] = useMemo(() => {
+    if (isTestCup && testCupState.matches.length > 0) return testCupState.matches;
+    const directMatches = effectiveMatches.filter((m) => m.tournamentId === tournament?.id);
+    if (directMatches.length > 0) return directMatches;
+
+    if (compStructure && compStructure.matches && compStructure.matches.length > 0) {
+      return compStructure.matches.map(node => {
+        const teamAObj = (node.teamA as any) || {};
+        const teamBObj = (node.teamB as any) || {};
+        return {
+          id: node.id,
+          tournamentId: node.tournamentId || tournament?.id || '',
+          tournamentName: tournament?.name || 'Tournament Championship',
+          game: (tournament?.game as any) || 'Dota 2',
+          round: node.roundTitle || node.round || 'Tournament Match',
+          teamA: {
+            id: teamAObj.teamId || teamAObj.id || 'team-a',
+            name: teamAObj.name || 'Team 1',
+            tag: teamAObj.tag || 'T1',
+            logo: teamAObj.logo || '🛡️',
+            score: node.scores?.teamA ?? 0,
+            city: teamAObj.city || '',
+            rating: teamAObj.rating || 1000
+          },
+          teamB: {
+            id: teamBObj.teamId || teamBObj.id || 'team-b',
+            name: teamBObj.name || 'Team 2',
+            tag: teamBObj.tag || 'T2',
+            logo: teamBObj.logo || '⚔️',
+            score: node.scores?.teamB ?? 0,
+            city: teamBObj.city || '',
+            rating: teamBObj.rating || 1000
+          },
+          seriesFormat: (node.seriesFormat as any) || 'BO3',
+          status: node.status === 'COMPLETED' || node.status === 'FORFEIT' ? 'COMPLETED' : (node.status === 'LIVE' ? 'LIVE' : 'UPCOMING'),
+          scheduledTime: node.scheduledTime || 'TBD',
+          winnerId: node.winnerId,
+          isLive: node.status === 'LIVE'
+        } as Match;
+      });
+    }
+
+    return [];
+  }, [isTestCup, testCupState.matches, effectiveMatches, tournament?.id, tournament?.name, tournament?.game, compStructure]);
 
   const auctionEngineTeams = tournament?.id ? getAuctionEngine(tournament.id).getTeams() : [];
   const mappedAuctionTeams: Team[] = auctionEngineTeams.map(at => ({
@@ -209,19 +264,6 @@ export function TournamentDetailView({
 
   const isPremade = tournament?.id === 'india-dota-open-2026';
 
-  const [compStructureState, setCompStructureState] = useState<MultiStageTournamentStructure | undefined>(() => tournament?.id ? dotaCompetitionEngine.getStructure(tournament.id) : undefined);
-
-  useEffect(() => {
-    if (tournament?.id) {
-      setCompStructureState(dotaCompetitionEngine.getStructure(tournament.id));
-      const unsub = dotaCompetitionEngine.subscribe(tournament.id, (struct) => {
-        setCompStructureState({ ...struct });
-      });
-      return () => unsub();
-    }
-  }, [tournament?.id]);
-
-  const compStructure: MultiStageTournamentStructure | undefined = compStructureState || (tournament?.id ? dotaCompetitionEngine.getStructure(tournament.id) : undefined);
   const stageTabs = (compStructure?.stages || []).map(stg => ({
     id: `stage_${stg.id}`,
     label: `${stg.name}${stg.status === 'LIVE' ? ' · LIVE' : stg.status === 'FINISHED' ? ' · FINISHED' : ''}`

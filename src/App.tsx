@@ -36,6 +36,7 @@ import { TournamentsView } from './views/TournamentsView';
 import { TournamentDetailView } from './views/TournamentDetailView';
 import { MatchesView } from './views/MatchesView';
 import { MatchDetailView } from './views/MatchDetailView';
+import { ObsOverlayWidget } from './components/broadcast/ObsOverlayWidget';
 import { DoubleEliminationBracket } from './components/DoubleEliminationBracket';
 import { SingleEliminationBracket } from './components/SingleEliminationBracket';
 import { SwissStageView } from './components/SwissStageView';
@@ -69,7 +70,7 @@ import { CommunityGuidelinesView } from './views/CommunityGuidelinesView';
 import { OrganisersView } from './views/OrganisersView';
 import { themeManager, ColorMode, ThemePalette, PBG_PALETTES } from './services/themeManager';
 
-import { Trophy, Shield, Swords, Users, Heart, ArrowUpRight, Flame, MapPin, Key, Loader2, Zap, Sun, Moon } from 'lucide-react';
+import { Trophy, Shield, Swords, Users, Heart, ArrowUpRight, Flame, MapPin, Key, Loader2, Zap, Sun, Moon, Layers } from 'lucide-react';
 
 const THEMES = [
   { name: 'Purple Bean', bg: 'bg-[#F3E8FF]', accent: 'bg-[#7C3AED]', card: 'bg-white', tag: 'bg-[#FFE600]' },
@@ -101,6 +102,7 @@ export default function App() {
   const [isViewLoading, setIsViewLoading] = useState(false);
   const [isLoadingShowcaseOpen, setIsLoadingShowcaseOpen] = useState(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState(false);
+  const [isObsOverlayMode, setIsObsOverlayMode] = useState(false);
 
   // Modals state
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -288,6 +290,15 @@ export default function App() {
 
     // Parse HTML5 pathname for tournament-scoped routes: e.g. /tournaments/:tournamentId/auction
     const pathname = window.location.pathname;
+    const overlayMatch = pathname.match(/^\/overlay\/match\/([^/]+)\/?$/);
+    const searchParams = new URLSearchParams(window.location.search);
+    if (overlayMatch || searchParams.get('overlay') === 'true') {
+      const matchId = overlayMatch ? overlayMatch[1] : (searchParams.get('matchId') || '');
+      setActiveEntityId(matchId);
+      setIsObsOverlayMode(true);
+      return;
+    }
+
     const auctionPathMatch = pathname.match(/^\/tournaments\/([^/]+)\/auction\/?$/);
     const tournamentPathMatch = pathname.match(/^\/tournaments\/([^/]+)\/?$/);
     const dotaPlayerMatch = pathname.match(/^\/game\/dota2\/players\/([^/]+)\/?$/);
@@ -650,6 +661,10 @@ export default function App() {
     tournamentService.markNotificationRead(id);
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, unread: false } : n)));
   };
+
+  if (isObsOverlayMode) {
+    return <ObsOverlayWidget matchId={activeEntityId} />;
+  }
 
   return (
     <div 
@@ -1298,6 +1313,15 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
+              <button
+                onClick={() => setIsLoadingShowcaseOpen(true)}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-[#F3E8FF] hover:bg-[#E9D5FF] text-[#7C3AED] border-2 border-black shadow-[2px_2px_0px_0px_#000] cursor-pointer active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all font-mono text-[10px] font-black uppercase"
+                title="View Purple Bean Loading Screens Design System"
+              >
+                <Layers className="w-3 h-3 text-[#7C3AED]" />
+                <span>Loading Screens UI</span>
+              </button>
+
               <button
                 onClick={handleToggleDarkMode}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-stone-100 hover:bg-[#FFE600] text-black border-2 border-black shadow-[2px_2px_0px_0px_#000] cursor-pointer active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all font-mono text-[10px] font-black uppercase"

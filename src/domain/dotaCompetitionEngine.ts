@@ -136,6 +136,12 @@ export interface CompetitionMatchNode {
   disputeReason?: string;
   confirmedAt?: string;
   confirmedBy?: string;
+  streamUrl?: string;
+  streamType?: 'twitch' | 'youtube' | 'obs' | 'custom';
+  streamTitle?: string;
+  casterNames?: string;
+  obsStreamUrl?: string;
+  telemetry?: any;
 }
 
 export interface GroupConfig {
@@ -873,6 +879,89 @@ export class DotaCompetitionEngine {
 
     const updated = this.getStructure(params.tournamentId) || structure;
     return { success: true, structure: updated };
+  }
+
+  /**
+   * Authoritatively locates a competitive match node across all active tournament structures
+   */
+  public findMatch(matchId: string): { match: CompetitionMatchNode; structure: MultiStageTournamentStructure; tournamentId: string } | undefined {
+    if (!matchId) return undefined;
+
+    // 1. Check all currently loaded structures in memory
+    for (const [tId, struct] of this.structures.entries()) {
+      const match = (struct.matches || []).find(m => m.id === matchId);
+      if (match) return { match, structure: struct, tournamentId: tId };
+
+      for (const stage of struct.stages || []) {
+        const stageMatch = (stage.matches || []).find(m => m.id === matchId);
+        if (stageMatch) return { match: stageMatch, structure: struct, tournamentId: tId };
+      }
+    }
+
+    // 2. Try finding via tournament ID prefix
+    for (const [tId] of this.structures.entries()) {
+      if (matchId.startsWith(tId)) {
+        const struct = this.getStructure(tId);
+        if (struct) {
+          const match = (struct.matches || []).find(m => m.id === matchId);
+          if (match) return { match, structure: struct, tournamentId: tId };
+        }
+      }
+    }
+
+    // 3. Check storage backend
+    const storage = getStorageBackend();
+    if (storage) {
+      try {
+        for (let i = 0; i < (storage.length || 0); i++) {
+          const key = storage.key(i);
+          if (key && key.startsWith('pbg_competition_structure_')) {
+            const raw = storage.getItem(key);
+            if (raw) {
+              const struct = JSON.parse(raw) as MultiStageTournamentStructure;
+              const match = (struct.matches || []).find(m => m.id === matchId);
+              if (match) {
+                this.structures.set(struct.tournamentId, struct);
+                return { match, structure: struct, tournamentId: struct.tournamentId };
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Asynchronously locates a match node, fetching from Firestore if not in local cache
+   */
+  public async findMatchAsync(matchId: string): Promise<{ match: CompetitionMatchNode; structure: MultiStageTournamentStructure; tournamentId: string } | undefined> {
+    const cached = this.findMatch(matchId);
+    if (cached) return cached;
+    if (!matchId) return undefined;
+
+    let candidateTourneyId = '';
+    if (matchId.includes('-ub-') || matchId.includes('-lb-') || matchId.includes('-gf') || matchId.includes('-m')) {
+      const idx = matchId.search(/-(ub|lb|gf|sf|r\d|stage|m\d)/);
+      if (idx > 0) {
+        candidateTourneyId = matchId.substring(0, idx);
+      }
+    }
+
+    if (candidateTourneyId) {
+      const struct = await this.fetchStructureFromFirestore(candidateTourneyId);
+      if (struct) {
+        const match = (struct.matches || []).find(m => m.id === matchId);
+        if (match) return { match, structure: struct, tournamentId: candidateTourneyId };
+        for (const stage of struct.stages || []) {
+          const stageMatch = (stage.matches || []).find(m => m.id === matchId);
+          if (stageMatch) return { match: stageMatch, structure: struct, tournamentId: candidateTourneyId };
+        }
+      }
+    }
+
+    return undefined;
   }
 
   /**
@@ -2351,7 +2440,20 @@ export class DotaCompetitionEngine {
    * Publishes the structure to make matches official
    */
   public publishStructure(tournamentId: string): { success: boolean; structure: MultiStageTournamentStructure; error?: string } {
-    const structure = this.getStructure(tournamentId);
+    let structure = this.getStructure(tournamentId);
+    if (!structure) {
+      const storage = getStorageBackend();
+      const raw = storage?.getItem(`pbg_competition_structure_${tournamentId}`);
+      if (raw) {
+        try {
+          structure = JSON.parse(raw);
+          if (structure) this.structures.set(tournamentId, structure);
+        } catch {}
+      }
+    }
+    if (!structure) {
+      structure = this.getOrCreateStructure(tournamentId);
+    }
     if (!structure) return { success: false, error: 'Structure not found' } as any;
 
     const validation = this.validateStructure(tournamentId);
@@ -2361,9 +2463,9 @@ export class DotaCompetitionEngine {
 
     structure.status = 'PUBLISHED';
     structure.isLocked = true;
-    structure.publishedAt = new Date().toISOString();
+    structure.publishedAt = structure.publishedAt || new Date().toISOString();
     structure.updatedAt = new Date().toISOString();
-    structure.version += 1;
+    structure.version = (structure.version || 1) + 1;
     this.appendAudit(structure, 'PUBLISH_STRUCTURE', `Published tournament competition structure (v${structure.version}).`);
     this.persistStructure(tournamentId, structure);
     return { success: true, structure };
@@ -2395,11 +2497,20 @@ export class DotaCompetitionEngine {
             structure = JSON.parse(JSON.stringify(params.draftStructure));
           } else {
             const memory = this.getStructure(params.tournamentId);
-            if (!memory) throw new Error('Structure not found');
-            structure = JSON.parse(JSON.stringify(memory));
+            if (memory && memory.stages && memory.stages.length > 0) {
+              structure = JSON.parse(JSON.stringify(memory));
+            } else {
+              const tourneyDoc = await txn.get(serverAdminDb.collection('tournaments').doc(params.tournamentId));
+              if (tourneyDoc.exists && tourneyDoc.data()?.competitionStructure) {
+                structure = tourneyDoc.data().competitionStructure;
+              } else {
+                structure = this.getOrCreateStructure(params.tournamentId, tourneyDoc.exists ? (tourneyDoc.data()?.teams || []) : []);
+              }
+            }
           }
 
           // If draftStructure was provided, merge any updated match schedules
+          let hasNewSchedules = false;
           if (params.draftStructure && structure) {
             if (params.draftStructure.matches && params.draftStructure.matches.length > 0) {
               const scheduleMap = new Map<string, { scheduledTime?: string; seriesFormat?: any }>();
@@ -2409,6 +2520,7 @@ export class DotaCompetitionEngine {
                 }
               });
               if (scheduleMap.size > 0) {
+                hasNewSchedules = true;
                 structure.matches?.forEach(m => {
                   const s = scheduleMap.get(m.id);
                   if (s) {
@@ -2429,8 +2541,8 @@ export class DotaCompetitionEngine {
             }
           }
 
-          // Idempotency: if already PUBLISHED and locked, return current structure
-          if (structure.status === 'PUBLISHED' && structure.isLocked) {
+          // Idempotency: if already PUBLISHED and locked, and no schedule changes were made, return
+          if (structure.status === 'PUBLISHED' && structure.isLocked && !hasNewSchedules) {
             return { success: true, structure };
           }
 
@@ -2498,12 +2610,50 @@ export class DotaCompetitionEngine {
             structure = JSON.parse(JSON.stringify(params.draftStructure));
           } else {
             const memory = this.getStructure(params.tournamentId);
-            if (!memory) throw new Error('Structure not found');
-            structure = JSON.parse(JSON.stringify(memory));
+            if (memory && memory.stages && memory.stages.length > 0) {
+              structure = JSON.parse(JSON.stringify(memory));
+            } else {
+              const tourneyDoc = await txn.get(doc(db, 'tournaments', params.tournamentId));
+              if (tourneyDoc.exists() && tourneyDoc.data()?.competitionStructure) {
+                structure = tourneyDoc.data().competitionStructure;
+              } else {
+                structure = this.getOrCreateStructure(params.tournamentId, tourneyDoc.exists() ? (tourneyDoc.data()?.teams || []) : []);
+              }
+            }
           }
 
-          // Idempotency: if already PUBLISHED and locked, return current structure
-          if (structure.status === 'PUBLISHED' && structure.isLocked) {
+          let hasNewSchedules = false;
+          if (params.draftStructure && structure) {
+            if (params.draftStructure.matches && params.draftStructure.matches.length > 0) {
+              const scheduleMap = new Map<string, { scheduledTime?: string; seriesFormat?: any }>();
+              params.draftStructure.matches.forEach(m => {
+                if (m.scheduledTime || m.seriesFormat) {
+                  scheduleMap.set(m.id, { scheduledTime: m.scheduledTime, seriesFormat: m.seriesFormat });
+                }
+              });
+              if (scheduleMap.size > 0) {
+                hasNewSchedules = true;
+                structure.matches?.forEach(m => {
+                  const s = scheduleMap.get(m.id);
+                  if (s) {
+                    if (s.scheduledTime) m.scheduledTime = s.scheduledTime;
+                    if (s.seriesFormat) m.seriesFormat = s.seriesFormat;
+                  }
+                });
+                structure.stages?.forEach(stage => {
+                  stage.matches?.forEach(m => {
+                    const s = scheduleMap.get(m.id);
+                    if (s) {
+                      if (s.scheduledTime) m.scheduledTime = s.scheduledTime;
+                      if (s.seriesFormat) m.seriesFormat = s.seriesFormat;
+                    }
+                  });
+                });
+              }
+            }
+          }
+
+          if (structure.status === 'PUBLISHED' && structure.isLocked && !hasNewSchedules) {
             return { success: true, structure };
           }
 

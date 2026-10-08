@@ -12,7 +12,8 @@ import {
   RefreshCw,
   Crown,
   CornerDownRight,
-  ArrowRight
+  ArrowRight,
+  Clock
 } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
 import { 
@@ -234,6 +235,14 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
             {m.status || 'UPCOMING'}
           </span>
         </div>
+
+        {/* Scheduled Date/Time if present */}
+        {m.scheduledTime && m.status !== 'COMPLETED' && (
+          <div className="text-[9px] text-stone-600 flex items-center gap-1 font-mono bg-stone-50 px-1 py-0.5 border border-stone-200">
+            <Clock className="w-2.5 h-2.5 text-stone-500" />
+            <span className="truncate">{m.scheduledTime}</span>
+          </div>
+        )}
 
         {/* Source Badge if from previous round */}
         {sourceLabel && (

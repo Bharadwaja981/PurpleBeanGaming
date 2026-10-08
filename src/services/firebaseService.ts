@@ -3180,7 +3180,109 @@ class FirebaseTournamentService {
   }
 
   public getMatchById(id: string): Match | undefined {
-    return this.matches.find(m => m.id === id);
+    const rootMatch = this.matches.find(m => m.id === id);
+    if (rootMatch) return rootMatch;
+
+    // Search across tournament competition structures
+    const compMatchInfo = dotaCompetitionEngine.findMatch(id);
+    if (compMatchInfo) {
+      const node = compMatchInfo.match;
+      const tourney = this.getTournamentById(compMatchInfo.tournamentId);
+      const teamAObj = (node.teamA as any) || {};
+      const teamBObj = (node.teamB as any) || {};
+      return {
+        id: node.id,
+        tournamentId: node.tournamentId || compMatchInfo.tournamentId,
+        tournamentName: tourney?.name || 'Official Tournament Match',
+        game: (tourney?.game as any) || 'Dota 2',
+        round: node.roundTitle || node.round || 'Tournament Match',
+        teamA: {
+          id: teamAObj.teamId || teamAObj.id || 'team-a',
+          name: teamAObj.name || 'Team 1',
+          tag: teamAObj.tag || 'T1',
+          logo: teamAObj.logo || '🛡️',
+          score: node.scores?.teamA ?? 0,
+          city: teamAObj.city || '',
+          rating: teamAObj.rating || 1000
+        },
+        teamB: {
+          id: teamBObj.teamId || teamBObj.id || 'team-b',
+          name: teamBObj.name || 'Team 2',
+          tag: teamBObj.tag || 'T2',
+          logo: teamBObj.logo || '⚔️',
+          score: node.scores?.teamB ?? 0,
+          city: teamBObj.city || '',
+          rating: teamBObj.rating || 1000
+        },
+        seriesFormat: (node.seriesFormat as any) || 'BO3',
+        status: node.status === 'COMPLETED' || node.status === 'FORFEIT' ? 'COMPLETED' : (node.status === 'LIVE' ? 'LIVE' : 'UPCOMING'),
+        scheduledTime: node.scheduledTime || 'TBD',
+        winnerId: node.winnerId,
+        isLive: node.status === 'LIVE',
+        streamUrl: node.streamUrl,
+        streamType: node.streamType,
+        streamTitle: node.streamTitle,
+        casterNames: node.casterNames,
+        obsStreamUrl: node.obsStreamUrl,
+        telemetry: node.telemetry
+      };
+    }
+
+    return undefined;
+  }
+
+  public updateMatchBroadcast(matchId: string, broadcastData: {
+    streamUrl?: string;
+    streamType?: 'twitch' | 'youtube' | 'obs' | 'custom';
+    streamTitle?: string;
+    casterNames?: string;
+    obsStreamUrl?: string;
+    isLive?: boolean;
+    scores?: { scoreA: number; scoreB: number };
+    telemetry?: any;
+  }): { success: boolean; message: string; match?: Match } {
+    const rootMatch = this.matches.find(m => m.id === matchId);
+    if (rootMatch) {
+      if (broadcastData.streamUrl !== undefined) rootMatch.streamUrl = broadcastData.streamUrl;
+      if (broadcastData.streamType) rootMatch.streamType = broadcastData.streamType;
+      if (broadcastData.streamTitle !== undefined) rootMatch.streamTitle = broadcastData.streamTitle;
+      if (broadcastData.casterNames !== undefined) rootMatch.casterNames = broadcastData.casterNames;
+      if (broadcastData.obsStreamUrl !== undefined) rootMatch.obsStreamUrl = broadcastData.obsStreamUrl;
+      if (broadcastData.isLive !== undefined) {
+        rootMatch.isLive = broadcastData.isLive;
+        rootMatch.status = broadcastData.isLive ? 'LIVE' : (rootMatch.winnerId ? 'COMPLETED' : 'UPCOMING');
+      }
+      if (broadcastData.scores) {
+        rootMatch.teamA.score = broadcastData.scores.scoreA;
+        rootMatch.teamB.score = broadcastData.scores.scoreB;
+      }
+      if (broadcastData.telemetry) rootMatch.telemetry = broadcastData.telemetry;
+      this.notify();
+      return { success: true, message: 'Broadcast updated.', match: rootMatch };
+    }
+
+    const compMatchInfo = dotaCompetitionEngine.findMatch(matchId);
+    if (compMatchInfo) {
+      const node = compMatchInfo.match;
+      if (broadcastData.streamUrl !== undefined) node.streamUrl = broadcastData.streamUrl;
+      if (broadcastData.streamType) node.streamType = broadcastData.streamType;
+      if (broadcastData.streamTitle !== undefined) node.streamTitle = broadcastData.streamTitle;
+      if (broadcastData.casterNames !== undefined) node.casterNames = broadcastData.casterNames;
+      if (broadcastData.obsStreamUrl !== undefined) node.obsStreamUrl = broadcastData.obsStreamUrl;
+      if (broadcastData.isLive !== undefined) {
+        node.status = broadcastData.isLive ? 'LIVE' : (node.winnerId ? 'COMPLETED' : 'UPCOMING');
+      }
+      if (broadcastData.scores) {
+        node.scores = { teamA: broadcastData.scores.scoreA, teamB: broadcastData.scores.scoreB };
+      }
+      if (broadcastData.telemetry) node.telemetry = broadcastData.telemetry;
+
+      const converted = this.getMatchById(matchId);
+      this.notify();
+      return { success: true, message: 'Competition match broadcast updated.', match: converted };
+    }
+
+    return { success: false, message: 'Match not found.' };
   }
 
   public getTeams(game?: CompetitiveGame): Team[] {
