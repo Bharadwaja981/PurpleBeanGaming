@@ -1,10 +1,11 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Trophy, 
   Swords, 
   ZoomIn, 
   ZoomOut, 
   RotateCcw, 
+  Maximize2,
   Shield, 
   CheckCircle, 
   Sparkles,
@@ -13,7 +14,9 @@ import {
   Crown,
   CornerDownRight,
   ArrowRight,
-  Clock
+  Clock,
+  Tv,
+  Radio
 } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
 import { 
@@ -22,6 +25,7 @@ import {
   TournamentStageConfig 
 } from '../domain/dotaCompetitionEngine';
 import { competitionClientService, SubmissionStatus } from '../services/competitionClientService';
+import { BracketConnectorLayer } from './bracket/BracketConnectorLayer';
 
 interface DoubleEliminationBracketProps {
   tournamentId: string;
@@ -46,7 +50,9 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
     currentUser.email?.toLowerCase().trim() === '11106cm009@gmail.com';
 
   const [zoomLevel, setZoomLevel] = useState(100);
+  const [highlightTeamId, setHighlightTeamId] = useState<string | null>(null);
   const [, setTick] = useState(0);
+  const bracketContainerRef = useRef<HTMLDivElement>(null);
 
   // Authoritative scoring modal
   const [scoringMatch, setScoringMatch] = useState<CompetitionMatchNode | null>(null);
@@ -159,10 +165,17 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
     return null;
   }, [grandFinal]);
 
-  // Zoom controls
+  // Zoom and pan controls
   const handleZoomIn = () => setZoomLevel(prev => Math.min(140, prev + 10));
-  const handleZoomOut = () => setZoomLevel(prev => Math.max(70, prev - 10));
+  const handleZoomOut = () => setZoomLevel(prev => Math.max(60, prev - 10));
   const handleResetZoom = () => setZoomLevel(100);
+  const handleFitToScreen = () => {
+    if (bracketContainerRef.current) {
+      const containerWidth = bracketContainerRef.current.clientWidth;
+      const targetScale = Math.max(50, Math.min(100, Math.floor((containerWidth / 1350) * 100)));
+      setZoomLevel(targetScale);
+    }
+  };
 
   const handleOpenScoreModal = (m: CompetitionMatchNode) => {
     setScoringMatch(m);
@@ -204,91 +217,112 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
     }
   };
 
-  // Match Card Component
+  // Match Card Component with exact measured data-match-id
   const renderMatchCard = (m: CompetitionMatchNode, roundTitle: string, isUpper = true, dropLabel?: string, sourceLabel?: string) => {
     if (!m) return null;
     const teamAName = m.teamA?.name || m.teamA?.teamName || m.teamA?.sourceLabel || 'TBD';
     const teamBName = m.teamB?.name || m.teamB?.teamName || m.teamB?.sourceLabel || 'TBD';
+    const teamAId = m.teamA?.teamId || m.teamA?.id;
+    const teamBId = m.teamB?.teamId || m.teamB?.id;
 
     const isWinnerA = m.status === 'COMPLETED' && (m.scores?.teamA ?? 0) > (m.scores?.teamB ?? 0);
     const isWinnerB = m.status === 'COMPLETED' && (m.scores?.teamB ?? 0) > (m.scores?.teamA ?? 0);
 
+    const isTeamAHighlighted = Boolean(highlightTeamId && teamAId === highlightTeamId);
+    const isTeamBHighlighted = Boolean(highlightTeamId && teamBId === highlightTeamId);
+    const isMatchCardHighlighted = isTeamAHighlighted || isTeamBHighlighted;
+
     return (
       <div
         key={m.id}
-        className="w-64 border-2 border-black p-3 bg-white hover:bg-stone-50 shadow-[3px_3px_0px_0px_#000] space-y-2 relative transition-all"
+        data-match-id={m.id}
+        className={`w-64 border-2 border-black p-3 bg-white shadow-[3px_3px_0px_0px_#000] space-y-2 relative transition-all duration-150 select-none ${
+          isMatchCardHighlighted ? 'ring-2 ring-[#7C3AED] bg-purple-50/40' : 'hover:bg-stone-50'
+        }`}
       >
-        <div className="flex items-center justify-between text-[10px] font-bold border-b border-black/10 pb-1">
-          <div className="flex items-center gap-1.5">
-            <span className={`${isUpper ? 'text-[#7C3AED]' : 'text-amber-700'} uppercase font-black`}>{roundTitle}</span>
-            {m.seriesFormat && (
-              <span className="bg-stone-200 border border-black/30 px-1 py-0.2 text-[9px] font-mono">
-                {m.seriesFormat}
+        {/* Card Header Bar */}
+        <div className="flex items-center justify-between text-[10px] text-stone-500 font-bold border-b border-black/10 pb-1">
+          <span className="truncate max-w-[120px]">{roundTitle}</span>
+          <div className="flex items-center gap-1">
+            {m.status === 'LIVE' ? (
+              <span className="bg-[#FF5757] text-white px-1.5 py-0.2 border border-black font-black uppercase text-[9px] animate-pulse flex items-center gap-1">
+                <Radio className="w-2.5 h-2.5" />
+                LIVE
+              </span>
+            ) : m.status === 'COMPLETED' ? (
+              <span className="bg-[#70FFAF] text-black px-1.5 py-0.2 border border-black font-black uppercase text-[9px]">
+                FINAL
+              </span>
+            ) : (
+              <span className="text-stone-400 font-mono text-[9px]">
+                {m.seriesFormat || 'BO3'}
               </span>
             )}
           </div>
-          <span className={`border border-black px-1.5 py-0.2 uppercase text-[9px] font-black ${
-            m.status === 'LIVE' ? 'bg-[#FF3366] text-white animate-pulse' :
-            m.status === 'COMPLETED' ? 'bg-[#70FFAF] text-black' :
-            'bg-stone-100 text-stone-700'
-          }`}>
-            {m.status || 'UPCOMING'}
-          </span>
         </div>
 
-        {/* Scheduled Date/Time if present */}
-        {m.scheduledTime && m.status !== 'COMPLETED' && (
-          <div className="text-[9px] text-stone-600 flex items-center gap-1 font-mono bg-stone-50 px-1 py-0.5 border border-stone-200">
-            <Clock className="w-2.5 h-2.5 text-stone-500" />
-            <span className="truncate">{m.scheduledTime}</span>
-          </div>
-        )}
-
-        {/* Source Badge if from previous round */}
         {sourceLabel && (
-          <div className="text-[9px] text-stone-500 font-mono font-bold bg-stone-100 px-1 py-0.5 border border-stone-300">
+          <div className="text-[9px] text-stone-400 font-mono truncate">
             {sourceLabel}
           </div>
         )}
 
-        {/* Team A */}
-        <div className={`flex items-center justify-between text-xs font-bold py-0.5 ${isWinnerA ? 'text-black font-black' : isWinnerB ? 'opacity-60' : ''}`}>
+        {/* Team A Slot */}
+        <div 
+          onClick={(e) => {
+            e.stopPropagation();
+            if (teamAId) setHighlightTeamId(prev => prev === teamAId ? null : teamAId);
+          }}
+          className={`flex items-center justify-between text-xs font-bold py-1 px-1 rounded-xs cursor-pointer transition-colors ${
+            isTeamAHighlighted ? 'bg-[#7C3AED]/15 text-black font-black' : isWinnerA ? 'text-black font-black' : isWinnerB ? 'opacity-60' : 'hover:bg-stone-100'
+          }`}
+          title="Click to highlight team path across bracket"
+        >
           <div className="flex items-center gap-1.5 truncate">
             {m.teamA?.seed ? (
-              <span className="bg-[#7C3AED] text-white text-[9px] px-1 py-0.2 border border-black font-black">
+              <span className="bg-[#7C3AED] text-white text-[9px] px-1 py-0.2 border border-black font-black shrink-0">
                 #{m.teamA.seed}
               </span>
             ) : m.teamA?.sourceLabel ? (
-              <span className="bg-stone-200 text-stone-800 text-[9px] px-1 py-0.2 border border-black font-mono">
+              <span className="bg-stone-200 text-stone-800 text-[9px] px-1 py-0.2 border border-black font-mono shrink-0">
                 {m.teamA.sourceLabel}
               </span>
             ) : null}
-            <span className="text-sm">{m.teamA?.logo || '🛡️'}</span>
+            <span className="text-sm shrink-0">{m.teamA?.logo || '🛡️'}</span>
             <span className="truncate">{teamAName}</span>
           </div>
-          <span className={`border border-black px-1.5 py-0.2 font-black text-xs min-w-[20px] text-center ${
+          <span className={`border border-black px-1.5 py-0.2 font-black text-xs min-w-[20px] text-center shrink-0 ${
             isWinnerA ? 'bg-[#70FFAF]' : 'bg-stone-100'
           }`}>
             {m.scores?.teamA ?? 0}
           </span>
         </div>
 
-        {/* Team B */}
-        <div className={`flex items-center justify-between text-xs font-bold py-0.5 ${isWinnerB ? 'text-black font-black' : isWinnerA ? 'opacity-60' : ''}`}>
+        {/* Team B Slot */}
+        <div 
+          onClick={(e) => {
+            e.stopPropagation();
+            if (teamBId) setHighlightTeamId(prev => prev === teamBId ? null : teamBId);
+          }}
+          className={`flex items-center justify-between text-xs font-bold py-1 px-1 rounded-xs cursor-pointer transition-colors ${
+            isTeamBHighlighted ? 'bg-[#7C3AED]/15 text-black font-black' : isWinnerB ? 'text-black font-black' : isWinnerA ? 'opacity-60' : 'hover:bg-stone-100'
+          }`}
+          title="Click to highlight team path across bracket"
+        >
           <div className="flex items-center gap-1.5 truncate">
             {m.teamB?.seed ? (
-              <span className="bg-[#7C3AED] text-white text-[9px] px-1 py-0.2 border border-black font-black">
+              <span className="bg-[#7C3AED] text-white text-[9px] px-1 py-0.2 border border-black font-black shrink-0">
                 #{m.teamB.seed}
               </span>
             ) : m.teamB?.sourceLabel ? (
-              <span className="bg-stone-200 text-stone-800 text-[9px] px-1 py-0.2 border border-black font-mono">
+              <span className="bg-stone-200 text-stone-800 text-[9px] px-1 py-0.2 border border-black font-mono shrink-0">
                 {m.teamB.sourceLabel}
               </span>
             ) : null}
-            <span className="text-sm">{m.teamB?.logo || '🛡️'}</span>
+            <span className="text-sm shrink-0">{m.teamB?.logo || '🛡️'}</span>
             <span className="truncate">{teamBName}</span>
           </div>
-          <span className={`border border-black px-1.5 py-0.2 font-black text-xs min-w-[20px] text-center ${
+          <span className={`border border-black px-1.5 py-0.2 font-black text-xs min-w-[20px] text-center shrink-0 ${
             isWinnerB ? 'bg-[#70FFAF]' : 'bg-stone-100'
           }`}>
             {m.scores?.teamB ?? 0}
@@ -298,18 +332,19 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
         {/* Loser Drop Indicator */}
         {dropLabel && (
           <div className="pt-1 border-t border-black/10 flex items-center gap-1 text-[9px] font-bold text-rose-700">
-            <CornerDownRight className="w-3 h-3 text-rose-600" />
-            <span>Drop: {dropLabel}</span>
+            <CornerDownRight className="w-3 h-3 text-rose-600 shrink-0" />
+            <span className="truncate">Drop: {dropLabel}</span>
           </div>
         )}
 
-        {/* Action Controls */}
+        {/* Action Controls & Navigation */}
         <div className="pt-1 border-t border-black/10 flex items-center justify-between gap-2">
           <button
             onClick={() => onSelectMatch?.(m.id)}
-            className="text-[10px] text-stone-600 hover:text-black font-bold uppercase underline cursor-pointer"
+            className="text-[10px] text-stone-600 hover:text-black font-bold uppercase underline cursor-pointer flex items-center gap-1"
           >
-            Match Details
+            <span>Match Center</span>
+            <ArrowRight className="w-2.5 h-2.5" />
           </button>
 
           {isOrganizer && (
@@ -319,7 +354,7 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
                 m.status === 'COMPLETED' ? 'bg-[#70FFAF] text-black hover:bg-[#58e094]' : 'bg-[#FFE600] text-black hover:bg-yellow-400'
               }`}
             >
-              {m.status === 'COMPLETED' ? 'Edit Score' : 'Record Score'}
+              {m.status === 'COMPLETED' ? 'Edit Score' : 'Score'}
             </button>
           )}
         </div>
@@ -345,31 +380,42 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
           </div>
         </div>
 
-        {/* Legend & Zoom Controls */}
+        {/* Legend & Zoom / Pan Controls */}
         <div className="flex flex-wrap items-center gap-4">
+          {/* Path Legend */}
           <div className="flex items-center gap-3 text-[10px] font-black uppercase text-stone-600 border-r-2 border-black pr-4">
-            <span className="flex items-center gap-1 text-emerald-800">
-              <span className="w-2.5 h-2.5 bg-emerald-500 inline-block border border-black" />
-              Winner Advances
-            </span>
-            <span className="flex items-center gap-1 text-rose-800">
-              <span className="w-2.5 h-2.5 bg-rose-500 inline-block border border-black" />
-              Loser Drops to LB
-            </span>
             <span className="flex items-center gap-1 text-[#7C3AED]">
-              <span className="w-3 h-0.5 bg-[#7C3AED] inline-block" />
-              Upper Path
+              <span className="w-3.5 h-1 bg-[#7C3AED] inline-block border border-black" />
+              Winner Advancement
             </span>
-            <span className="flex items-center gap-1 text-amber-600">
-              <span className="w-3 h-0.5 border-t-2 border-dashed border-amber-600 inline-block" />
-              Lower Path
+            <span className="flex items-center gap-1 text-[#F43F5E]">
+              <span className="w-3.5 h-1 border-t-2 border-dashed border-[#F43F5E] inline-block" />
+              Loser Drop to LB
             </span>
+            {highlightTeamId && (
+              <button
+                onClick={() => setHighlightTeamId(null)}
+                className="px-2 py-0.5 bg-[#FFE600] text-black border border-black text-[9px] font-black uppercase cursor-pointer hover:bg-yellow-300 ml-1"
+              >
+                Clear Highlight ✕
+              </button>
+            )}
           </div>
 
+          {/* Pan & Zoom Controls */}
           <div className="flex items-center gap-1">
+            <button
+              onClick={handleFitToScreen}
+              className="px-2 py-1 bg-stone-100 hover:bg-stone-200 border border-black font-black text-[10px] cursor-pointer flex items-center gap-1"
+              title="Fit Bracket to Screen"
+            >
+              <Maximize2 className="w-3 h-3" />
+              <span className="hidden sm:inline">Fit</span>
+            </button>
             <button
               onClick={handleResetZoom}
               className="px-2 py-1 bg-stone-100 hover:bg-stone-200 border border-black font-black text-[10px] cursor-pointer"
+              title="Reset Zoom to 100%"
             >
               {zoomLevel}%
             </button>
@@ -411,21 +457,30 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
         </div>
       )}
 
-      {/* 2. BRACKET CANVAS CONTAINER */}
+      {/* 2. BRACKET CANVAS CONTAINER WITH DYNAMIC SVG CONNECTOR LAYER */}
       <div 
-        className="bg-[#FAFAF9] border-[3.5px] border-black p-6 shadow-[6px_6px_0px_0px_#000] overflow-x-auto space-y-12"
+        ref={bracketContainerRef}
+        className="relative bg-[#FAFAF9] border-[3.5px] border-black p-6 sm:p-8 shadow-[6px_6px_0px_0px_#000] overflow-x-auto space-y-12 min-h-[600px]"
         style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'top left' }}
       >
+        {/* Dynamic Architectural SVG Connector Layer */}
+        <BracketConnectorLayer
+          containerRef={bracketContainerRef}
+          matches={matches}
+          highlightTeamId={highlightTeamId}
+          zoomLevel={zoomLevel}
+        />
+
         {/* UPPER BRACKET SECTION */}
-        <div className="space-y-4">
+        <div className="space-y-4 relative z-0">
           <div className="flex items-center gap-2 border-b-2 border-black pb-2">
             <span className="bg-[#7C3AED] text-white p-1 border border-black font-black text-[10px]">UB</span>
             <h4 className="font-sans font-black text-base uppercase text-[#7C3AED]">
-              UPPER BRACKET (WINNERS)
+              UPPER BRACKET (WINNERS ADVANCEMENT)
             </h4>
           </div>
 
-          <div className="flex items-center gap-4 pt-2 min-w-max">
+          <div className="flex items-start gap-16 pt-2 min-w-max">
             {/* Column 1: Upper Quarterfinals */}
             {upperQuarterfinals.length > 0 && (
               <div className="space-y-6">
@@ -435,24 +490,10 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
                 <div className="space-y-6">
                   {upperQuarterfinals.map((m, idx) => (
                     <div key={m.id}>
-                      {renderMatchCard(m, `UB QF ${idx + 1}`, true, `LB R1 - Match ${Math.floor(idx / 2) + 1}`)}
+                      {renderMatchCard(m, `UB QF ${idx + 1}`, true, `LB R1 - M${Math.floor(idx / 2) + 1}`)}
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
-
-            {/* SVG Stepped Connectors: UB QF -> UB SF */}
-            {upperQuarterfinals.length > 0 && upperSemifinals.length > 0 && (
-              <div className="flex flex-col justify-around h-full py-8 w-10">
-                <svg className="w-10 h-72" viewBox="0 0 40 288" fill="none">
-                  {/* Top pair QF 1 & 2 -> SF 1 */}
-                  <path d="M 0 36 H 20 V 72 H 40" stroke="#7C3AED" strokeWidth="2.5" />
-                  <path d="M 0 108 H 20 V 72 H 40" stroke="#7C3AED" strokeWidth="2.5" />
-                  {/* Bottom pair QF 3 & 4 -> SF 2 */}
-                  <path d="M 0 180 H 20 V 216 H 40" stroke="#7C3AED" strokeWidth="2.5" />
-                  <path d="M 0 252 H 20 V 216 H 40" stroke="#7C3AED" strokeWidth="2.5" />
-                </svg>
               </div>
             )}
 
@@ -462,23 +503,13 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
                 <span className="font-black uppercase text-[10px] text-stone-500 block border-b border-black pb-1">
                   Upper Semifinals (BO3)
                 </span>
-                <div className="space-y-16 pt-4">
+                <div className="space-y-24 pt-8">
                   {upperSemifinals.map((m, idx) => (
                     <div key={m.id}>
-                      {renderMatchCard(m, `UB SF ${idx + 1}`, true, `LB R2 - Match ${idx + 1}`)}
+                      {renderMatchCard(m, `UB SF ${idx + 1}`, true, `LB R2 - M${idx + 1}`)}
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
-
-            {/* SVG Stepped Connector: UB SF -> UB Final */}
-            {upperSemifinals.length > 0 && upperFinal && (
-              <div className="flex flex-col justify-center h-full w-10">
-                <svg className="w-10 h-64" viewBox="0 0 40 256" fill="none">
-                  <path d="M 0 64 H 20 V 128 H 40" stroke="#7C3AED" strokeWidth="2.5" />
-                  <path d="M 0 192 H 20 V 128 H 40" stroke="#7C3AED" strokeWidth="2.5" />
-                </svg>
               </div>
             )}
 
@@ -488,18 +519,9 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
                 <span className="font-black uppercase text-[10px] text-stone-500 block border-b border-black pb-1">
                   Upper Final (BO3)
                 </span>
-                <div className="pt-8">
+                <div className="pt-24">
                   {renderMatchCard(upperFinal, 'UB FINAL', true, 'LB Final')}
                 </div>
-              </div>
-            )}
-
-            {/* SVG Connector: UB Final -> Grand Final */}
-            {upperFinal && grandFinal && (
-              <div className="flex flex-col justify-center h-full w-10">
-                <svg className="w-10 h-32" viewBox="0 0 40 128" fill="none">
-                  <path d="M 0 64 H 40" stroke="#000" strokeWidth="2.5" />
-                </svg>
               </div>
             )}
 
@@ -509,7 +531,7 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
                 <span className="font-black uppercase text-[10px] text-amber-700 block border-b border-black pb-1">
                   Championship Grand Final (BO5)
                 </span>
-                <div className="pt-8">
+                <div className="pt-24">
                   {renderMatchCard(grandFinal, 'GRAND FINAL', true)}
                 </div>
               </div>
@@ -518,7 +540,7 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
         </div>
 
         {/* LOWER BRACKET SECTION */}
-        <div className="space-y-4 pt-6 border-t-2 border-black">
+        <div className="space-y-4 pt-8 border-t-2 border-black relative z-0">
           <div className="flex items-center gap-2 border-b-2 border-black pb-2">
             <span className="bg-amber-600 text-white p-1 border border-black font-black text-[10px]">LB</span>
             <h4 className="font-sans font-black text-base uppercase text-amber-800">
@@ -526,7 +548,7 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
             </h4>
           </div>
 
-          <div className="flex items-center gap-4 pt-2 min-w-max">
+          <div className="flex items-start gap-16 pt-2 min-w-max">
             {/* Column 1: Lower Round 1 */}
             {lowerRound1.length > 0 && (
               <div className="space-y-6">
@@ -543,23 +565,13 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
               </div>
             )}
 
-            {/* SVG Stepped Connector: LB R1 -> LB R2 */}
-            {lowerRound1.length > 0 && lowerRound2.length > 0 && (
-              <div className="flex flex-col justify-around h-full w-10">
-                <svg className="w-10 h-64" viewBox="0 0 40 256" fill="none">
-                  <path d="M 0 64 H 40" stroke="#D97706" strokeWidth="2" strokeDasharray="4 2" />
-                  <path d="M 0 192 H 40" stroke="#D97706" strokeWidth="2" strokeDasharray="4 2" />
-                </svg>
-              </div>
-            )}
-
             {/* Column 2: Lower Round 2 */}
             {lowerRound2.length > 0 && (
               <div className="space-y-6">
                 <span className="font-black uppercase text-[10px] text-stone-500 block border-b border-black pb-1">
                   Lower Round 2 (BO3)
                 </span>
-                <div className="space-y-6">
+                <div className="space-y-8 pt-4">
                   {lowerRound2.map((m, idx) => (
                     <div key={m.id}>
                       {renderMatchCard(m, `LB R2 - M${idx + 1}`, false, undefined, 'From: UB SF Drops')}
@@ -569,34 +581,15 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
               </div>
             )}
 
-            {/* SVG Stepped Connector: LB R2 -> LB Semifinal */}
-            {lowerRound2.length > 0 && lowerSemifinal && (
-              <div className="flex flex-col justify-center h-full w-10">
-                <svg className="w-10 h-64" viewBox="0 0 40 256" fill="none">
-                  <path d="M 0 64 H 20 V 128 H 40" stroke="#D97706" strokeWidth="2.5" />
-                  <path d="M 0 192 H 20 V 128 H 40" stroke="#D97706" strokeWidth="2.5" />
-                </svg>
-              </div>
-            )}
-
             {/* Column 3: Lower Semifinal */}
             {lowerSemifinal && (
               <div className="space-y-6">
                 <span className="font-black uppercase text-[10px] text-stone-500 block border-b border-black pb-1">
                   Lower Semifinal (BO3)
                 </span>
-                <div className="pt-6">
+                <div className="pt-12">
                   {renderMatchCard(lowerSemifinal, 'LB SEMIFINAL', false)}
                 </div>
-              </div>
-            )}
-
-            {/* SVG Connector: LB Semifinal -> LB Final */}
-            {lowerSemifinal && lowerFinal && (
-              <div className="flex flex-col justify-center h-full w-10">
-                <svg className="w-10 h-32" viewBox="0 0 40 128" fill="none">
-                  <path d="M 0 64 H 40" stroke="#D97706" strokeWidth="2.5" />
-                </svg>
               </div>
             )}
 
@@ -606,18 +599,18 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
                 <span className="font-black uppercase text-[10px] text-stone-500 block border-b border-black pb-1">
                   Lower Final (BO3)
                 </span>
-                <div className="pt-6">
+                <div className="pt-12">
                   {renderMatchCard(lowerFinal, 'LB FINAL', false, undefined, 'From: UB Final Drop')}
                 </div>
               </div>
             )}
 
-            {/* Grand Final Qualifier Connector indicator */}
+            {/* Grand Final Qualifier Banner indicator */}
             {lowerFinal && grandFinal && (
-              <div className="flex items-center gap-2 pl-4 border-l-2 border-dashed border-amber-600">
-                <div className="p-2 bg-amber-50 border border-amber-700 text-amber-900 font-bold text-[10px] flex items-center gap-1">
-                  <span>Advancing to Grand Final</span>
-                  <ArrowRight className="w-3.5 h-3.5 text-amber-800" />
+              <div className="flex items-center gap-2 pl-4 pt-16 border-l-2 border-dashed border-amber-600">
+                <div className="p-3 bg-amber-50 border border-amber-700 text-amber-900 font-bold text-[10px] flex items-center gap-1 shadow-[2px_2px_0px_0px_#000]">
+                  <span>Winner Advances to Grand Final</span>
+                  <ArrowRight className="w-4 h-4 text-amber-800" />
                 </div>
               </div>
             )}
@@ -648,81 +641,63 @@ export const DoubleEliminationBracket: React.FC<DoubleEliminationBracketProps> =
                     {scoringMatch.teamA?.name || 'Team A'}
                   </span>
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-bold text-stone-500">Wins:</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="4"
-                      value={scoreA}
-                      onChange={e => setScoreA(Number(e.target.value))}
-                      className="w-16 border-2 border-black p-1 text-center font-black text-sm bg-white"
-                    />
+                    <button
+                      onClick={() => setScoreA(Math.max(0, scoreA - 1))}
+                      className="w-7 h-7 bg-white border border-black font-black text-sm cursor-pointer"
+                    >
+                      -
+                    </button>
+                    <span className="font-black text-base w-6 text-center">{scoreA}</span>
+                    <button
+                      onClick={() => setScoreA(scoreA + 1)}
+                      className="w-7 h-7 bg-white border border-black font-black text-sm cursor-pointer"
+                    >
+                      +
+                    </button>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between border-t border-stone-200 pt-2">
+                <div className="flex items-center justify-between border-t border-black/10 pt-2">
                   <span className="font-black text-black text-sm truncate max-w-[180px]">
                     {scoringMatch.teamB?.name || 'Team B'}
                   </span>
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-bold text-stone-500">Wins:</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="4"
-                      value={scoreB}
-                      onChange={e => setScoreB(Number(e.target.value))}
-                      className="w-16 border-2 border-black p-1 text-center font-black text-sm bg-white"
-                    />
+                    <button
+                      onClick={() => setScoreB(Math.max(0, scoreB - 1))}
+                      className="w-7 h-7 bg-white border border-black font-black text-sm cursor-pointer"
+                    >
+                      -
+                    </button>
+                    <span className="font-black text-base w-6 text-center">{scoreB}</span>
+                    <button
+                      onClick={() => setScoreB(scoreB + 1)}
+                      className="w-7 h-7 bg-white border border-black font-black text-sm cursor-pointer"
+                    >
+                      +
+                    </button>
                   </div>
                 </div>
               </div>
 
-              {mutationStatus === 'pending' && (
-                <div className="p-2 bg-[#FFFBEB] border-2 border-amber-900 text-amber-900 font-bold flex items-center gap-2">
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Submitting score to authoritative server...</span>
+              {mutationError && (
+                <div className="p-2.5 bg-rose-100 border border-rose-600 text-rose-900 text-[11px] font-bold">
+                  {mutationError}
                 </div>
               )}
 
-              {mutationStatus === 'confirmed' && (
-                <div className="p-2 bg-[#E6FFFA] border-2 border-emerald-900 text-emerald-900 font-bold flex items-center gap-2">
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  <span>✓ Score confirmed &amp; bracket advanced!</span>
-                </div>
-              )}
-
-              {mutationStatus === 'failed' && (
-                <div className="p-2 bg-rose-50 border-2 border-rose-900 text-rose-900 font-bold space-y-1">
-                  <div className="flex items-center gap-1.5 font-black text-[11px]">
-                    <AlertTriangle className="w-3.5 h-3.5 text-rose-700" />
-                    <span>Submission Rejected</span>
-                  </div>
-                  <div className="text-[10px] leading-tight">
-                    {mutationError || 'Server rejected match result confirmation.'}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="pt-3 border-t-2 border-black flex items-center justify-between gap-2">
-              <span className="text-[9px] text-stone-500 uppercase">
-                Authoritative Submission
-              </span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-black/10">
                 <button
-                  disabled={mutationStatus === 'pending'}
                   onClick={() => setScoringMatch(null)}
-                  className="px-3 py-1.5 border border-black font-bold uppercase cursor-pointer"
+                  className="px-4 py-2 bg-stone-100 border border-black font-bold uppercase cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
-                  disabled={mutationStatus === 'pending'}
                   onClick={handleSubmitScore}
-                  className="px-4 py-1.5 bg-[#FFE600] hover:bg-yellow-400 disabled:opacity-50 border-2 border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                  disabled={mutationStatus === 'pending'}
+                  className="px-5 py-2 bg-[#70FFAF] hover:bg-emerald-300 text-black border border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
                 >
-                  Confirm Official Result
+                  {mutationStatus === 'pending' ? 'Saving...' : mutationStatus === 'confirmed' ? 'Saved ✓' : 'Confirm & Advance'}
                 </button>
               </div>
             </div>

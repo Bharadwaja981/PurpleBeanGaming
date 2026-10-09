@@ -1162,6 +1162,19 @@ class FirebaseTournamentService {
         firestoreMatches.forEach(m => {
           const existing = matchMap.get(m.id);
           matchMap.set(m.id, existing ? { ...existing, ...m } : m);
+          const compMatchInfo = dotaCompetitionEngine.findMatch(m.id);
+          if (compMatchInfo) {
+            const node = compMatchInfo.match;
+            if (m.streamUrl !== undefined) node.streamUrl = m.streamUrl;
+            if (m.streamType) node.streamType = m.streamType;
+            if (m.streamTitle !== undefined) node.streamTitle = m.streamTitle;
+            if (m.casterNames !== undefined) node.casterNames = m.casterNames;
+            if (m.obsStreamUrl !== undefined) node.obsStreamUrl = m.obsStreamUrl;
+            if (m.isLive !== undefined) {
+              node.status = m.isLive ? 'LIVE' : (node.winnerId ? 'COMPLETED' : 'UPCOMING');
+            }
+            if ((m as any).games) node.games = (m as any).games;
+          }
         });
         this.matches = Array.from(matchMap.values());
         this.notify();
@@ -3255,6 +3268,21 @@ class FirebaseTournamentService {
         } else {
           this.matches.push(remoteMatch);
         }
+
+        const compMatchInfo = dotaCompetitionEngine.findMatch(matchId);
+        if (compMatchInfo) {
+          const node = compMatchInfo.match;
+          if (remoteMatch.streamUrl !== undefined) node.streamUrl = remoteMatch.streamUrl;
+          if (remoteMatch.streamType) node.streamType = remoteMatch.streamType;
+          if (remoteMatch.streamTitle !== undefined) node.streamTitle = remoteMatch.streamTitle;
+          if (remoteMatch.casterNames !== undefined) node.casterNames = remoteMatch.casterNames;
+          if (remoteMatch.obsStreamUrl !== undefined) node.obsStreamUrl = remoteMatch.obsStreamUrl;
+          if (remoteMatch.isLive !== undefined) {
+            node.status = remoteMatch.isLive ? 'LIVE' : (node.winnerId ? 'COMPLETED' : 'UPCOMING');
+          }
+          if ((remoteMatch as any).games) node.games = (remoteMatch as any).games;
+        }
+
         this.notify();
         return this.getMatchById(matchId) || remoteMatch;
       }
@@ -3274,6 +3302,10 @@ class FirebaseTournamentService {
     scores?: { scoreA: number; scoreB: number };
     telemetry?: any;
     tournamentId?: string;
+    games?: any[];
+    valveMatchId?: string;
+    replayAvailable?: boolean;
+    replayFileUrl?: string;
   }): Promise<{ success: boolean; message: string; match?: Match }> {
     let targetMatch = this.matches.find(m => m.id === matchId);
     if (!targetMatch) {
@@ -3295,6 +3327,10 @@ class FirebaseTournamentService {
         targetMatch.teamB = { ...targetMatch.teamB, score: broadcastData.scores.scoreB };
       }
       if (broadcastData.telemetry) targetMatch.telemetry = broadcastData.telemetry;
+      if (broadcastData.games) (targetMatch as any).games = broadcastData.games;
+      if (broadcastData.valveMatchId !== undefined) (targetMatch as any).valveMatchId = broadcastData.valveMatchId;
+      if (broadcastData.replayAvailable !== undefined) (targetMatch as any).replayAvailable = broadcastData.replayAvailable;
+      if (broadcastData.replayFileUrl !== undefined) (targetMatch as any).replayFileUrl = broadcastData.replayFileUrl;
 
       const idx = this.matches.findIndex(m => m.id === matchId);
       if (idx >= 0) {
@@ -3319,6 +3355,7 @@ class FirebaseTournamentService {
         node.scores = { teamA: broadcastData.scores.scoreA, teamB: broadcastData.scores.scoreB };
       }
       if (broadcastData.telemetry) node.telemetry = broadcastData.telemetry;
+      if (broadcastData.games) node.games = broadcastData.games;
       if (!targetMatch) {
         targetMatch = this.getMatchById(matchId);
       }

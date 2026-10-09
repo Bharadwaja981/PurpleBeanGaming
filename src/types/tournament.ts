@@ -301,6 +301,30 @@ export interface MatchScoreTeam {
   rating?: number;
 }
 
+export interface SeriesGameRecord {
+  gameNumber: number;
+  status: 'COMPLETED' | 'LIVE' | 'UPCOMING';
+  valveMatchId?: string;
+  radiantTeamId?: string;
+  direTeamId?: string;
+  winnerTeamId?: string;
+  durationSeconds?: number;
+  durationFormatted?: string;
+  streamUrl?: string;
+  streamType?: 'twitch' | 'youtube' | 'obs' | 'custom';
+  vodUrl?: string;
+  replayAvailable?: boolean;
+  replayFileUrl?: string;
+  parseStatus?: 'PARSED' | 'PENDING' | 'FAILED' | 'UNPARSED';
+  timestampedEvents?: Array<{
+    time: string;
+    timestampSeconds: number;
+    title: string;
+    description?: string;
+    type?: 'firstblood' | 'roshan' | 'tower' | 'teamfight';
+  }>;
+}
+
 export interface Match {
   id: string;
   tournamentId: string;
@@ -309,7 +333,7 @@ export interface Match {
   round: string;
   teamA: MatchScoreTeam;
   teamB: MatchScoreTeam;
-  seriesFormat: 'BO1' | 'BO3' | 'BO5' | 'Best of 1' | 'Best of 3' | 'Best of 5';
+  seriesFormat: 'BO1' | 'BO2' | 'BO3' | 'BO5' | 'BO7' | 'Best of 1' | 'Best of 3' | 'Best of 5';
   status: 'LIVE' | 'COMPLETED' | 'UPCOMING';
   scheduledTime: string;
   winnerId?: string;
@@ -322,6 +346,10 @@ export interface Match {
   casterNames?: string;
   obsStreamUrl?: string;
   mapName?: string;
+  valveMatchId?: string;
+  replayAvailable?: boolean;
+  replayFileUrl?: string;
+  games?: SeriesGameRecord[];
   telemetry?: {
     gameDuration?: string;
     gameNumber?: number;

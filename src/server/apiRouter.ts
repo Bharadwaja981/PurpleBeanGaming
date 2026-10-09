@@ -3452,7 +3452,20 @@ async function handleBroadcastUpdate(req: Request, res: Response, tournamentIdPa
     checkOrganizerAuthorization(decoded, tournamentId);
 
     const matchId = req.params.matchId;
-    const { streamUrl, streamType, streamTitle, casterNames, obsStreamUrl, isLive, scores, telemetry } = req.body;
+    const { 
+      streamUrl, 
+      streamType, 
+      streamTitle, 
+      casterNames, 
+      obsStreamUrl, 
+      isLive, 
+      scores, 
+      telemetry,
+      games,
+      valveMatchId,
+      replayAvailable,
+      replayFileUrl
+    } = req.body;
 
     const adminDb = getAdminDb();
     let compMatchInfo = dotaCompetitionEngine.findMatch(matchId);
@@ -3463,11 +3476,24 @@ async function handleBroadcastUpdate(req: Request, res: Response, tournamentIdPa
       compMatchInfo = dotaCompetitionEngine.findMatch(matchId);
     }
 
-    // Build the match object
+    // Try fetching existing document in Firestore to prevent overwriting team rosters
+    let existingDocData: any = null;
+    if (adminDb) {
+      try {
+        const snap = await adminDb.collection('matches').doc(matchId).get();
+        if (snap.exists) {
+          existingDocData = snap.data();
+        }
+      } catch {}
+    }
+
+    // Build the match object preserving any existing team information
     const matchDoc: any = {
       id: matchId,
+      ...(existingDocData || {}),
       updatedAt: new Date().toISOString()
     };
+
     if (tournamentId) matchDoc.tournamentId = tournamentId;
     if (streamUrl !== undefined) matchDoc.streamUrl = streamUrl;
     if (streamType) matchDoc.streamType = streamType;
@@ -3476,15 +3502,28 @@ async function handleBroadcastUpdate(req: Request, res: Response, tournamentIdPa
     if (obsStreamUrl !== undefined) matchDoc.obsStreamUrl = obsStreamUrl;
     if (isLive !== undefined) {
       matchDoc.isLive = Boolean(isLive);
-      matchDoc.status = isLive ? 'LIVE' : 'UPCOMING';
+      matchDoc.status = isLive ? 'LIVE' : (matchDoc.winnerId ? 'COMPLETED' : 'UPCOMING');
     }
+    if (games && Array.isArray(games)) {
+      matchDoc.games = games;
+    }
+    if (valveMatchId !== undefined) matchDoc.valveMatchId = valveMatchId;
+    if (replayAvailable !== undefined) matchDoc.replayAvailable = Boolean(replayAvailable);
+    if (replayFileUrl !== undefined) matchDoc.replayFileUrl = replayFileUrl;
+
     if (scores) {
       matchDoc.scores = {
         teamA: Number(scores.scoreA) || 0,
         teamB: Number(scores.scoreB) || 0
       };
-      matchDoc.teamA = { score: Number(scores.scoreA) || 0 };
-      matchDoc.teamB = { score: Number(scores.scoreB) || 0 };
+      matchDoc.teamA = {
+        ...(matchDoc.teamA || {}),
+        score: Number(scores.scoreA) || 0
+      };
+      matchDoc.teamB = {
+        ...(matchDoc.teamB || {}),
+        score: Number(scores.scoreB) || 0
+      };
     }
     if (telemetry) matchDoc.telemetry = telemetry;
 
@@ -3502,24 +3541,27 @@ async function handleBroadcastUpdate(req: Request, res: Response, tournamentIdPa
         node.scores = { teamA: Number(scores.scoreA) || 0, teamB: Number(scores.scoreB) || 0 };
       }
       if (telemetry) node.telemetry = telemetry;
+      if (games && Array.isArray(games)) {
+        node.games = games;
+      }
 
       const teamAObj = (node.teamA as any) || {};
       const teamBObj = (node.teamB as any) || {};
       matchDoc.teamA = {
-        id: teamAObj.id || teamAObj.teamId || 'team-a',
-        name: teamAObj.name || 'Team 1',
-        tag: teamAObj.tag || 'T1',
-        logo: teamAObj.logo || '🛡️',
-        score: node.scores?.teamA ?? 0
+        id: teamAObj.id || teamAObj.teamId || matchDoc.teamA?.id || 'team-a',
+        name: teamAObj.name || matchDoc.teamA?.name || 'Team 1',
+        tag: teamAObj.tag || matchDoc.teamA?.tag || 'T1',
+        logo: teamAObj.logo || matchDoc.teamA?.logo || '🛡️',
+        score: node.scores?.teamA ?? matchDoc.teamA?.score ?? 0
       };
       matchDoc.teamB = {
-        id: teamBObj.id || teamBObj.teamId || 'team-b',
-        name: teamBObj.name || 'Team 2',
-        tag: teamBObj.tag || 'T2',
-        logo: teamBObj.logo || '⚔️',
-        score: node.scores?.teamB ?? 0
+        id: teamBObj.id || teamBObj.teamId || matchDoc.teamB?.id || 'team-b',
+        name: teamBObj.name || matchDoc.teamB?.name || 'Team 2',
+        tag: teamBObj.tag || matchDoc.teamB?.tag || 'T2',
+        logo: teamBObj.logo || matchDoc.teamB?.logo || '⚔️',
+        score: node.scores?.teamB ?? matchDoc.teamB?.score ?? 0
       };
-      matchDoc.round = node.roundTitle || node.round || 'Tournament Match';
+      matchDoc.round = node.roundTitle || node.round || matchDoc.round || 'Tournament Match';
       matchDoc.status = node.status;
       matchDoc.isLive = node.status === 'LIVE';
 
@@ -3568,6 +3610,20 @@ apiRouter.post('/tournaments/:tournamentId/competition/matches/:matchId/broadcas
 
 apiRouter.post('/matches/:matchId/broadcast', async (req: Request, res: Response) => {
   return handleBroadcastUpdate(req, res);
+});
+
+// Request OpenDota Match Parse
+apiRouter.post('/opendota/matches/:matchId/request-parse', async (req: Request, res: Response) => {
+  const matchId = req.params.matchId;
+  try {
+    const apiKey = process.env.OPENDOTA_API_KEY;
+    const url = `https://api.opendota.com/api/request/${encodeURIComponent(matchId)}${apiKey ? `?api_key=${apiKey}` : ''}`;
+    const response = await fetch(url, { method: 'POST' });
+    const data = await response.json();
+    return res.json({ ok: true, success: true, data });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, success: false, error: err.message });
+  }
 });
 
 

@@ -1,16 +1,19 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Trophy, 
   Swords, 
   ZoomIn, 
   ZoomOut, 
   RotateCcw, 
+  Maximize2,
   Shield, 
   CheckCircle, 
   Sparkles,
   AlertTriangle,
   RefreshCw,
-  Crown
+  Crown,
+  ArrowRight,
+  Radio
 } from 'lucide-react';
 import { tournamentService } from '../services/firebaseService';
 import { 
@@ -19,6 +22,7 @@ import {
   TournamentStageConfig 
 } from '../domain/dotaCompetitionEngine';
 import { competitionClientService, SubmissionStatus } from '../services/competitionClientService';
+import { BracketConnectorLayer } from './bracket/BracketConnectorLayer';
 
 interface SingleEliminationBracketProps {
   tournamentId: string;
@@ -43,7 +47,9 @@ export const SingleEliminationBracket: React.FC<SingleEliminationBracketProps> =
     currentUser.email?.toLowerCase().trim() === '11106cm009@gmail.com';
 
   const [zoomLevel, setZoomLevel] = useState(100);
+  const [highlightTeamId, setHighlightTeamId] = useState<string | null>(null);
   const [, setTick] = useState(0);
+  const bracketContainerRef = useRef<HTMLDivElement>(null);
 
   // Authoritative scoring modal
   const [scoringMatch, setScoringMatch] = useState<CompetitionMatchNode | null>(null);
@@ -113,9 +119,17 @@ export const SingleEliminationBracket: React.FC<SingleEliminationBracketProps> =
     return null;
   }, [grandFinal]);
 
+  // Zoom controls
   const handleZoomIn = () => setZoomLevel(prev => Math.min(140, prev + 10));
-  const handleZoomOut = () => setZoomLevel(prev => Math.max(70, prev - 10));
+  const handleZoomOut = () => setZoomLevel(prev => Math.max(60, prev - 10));
   const handleResetZoom = () => setZoomLevel(100);
+  const handleFitToScreen = () => {
+    if (bracketContainerRef.current) {
+      const containerWidth = bracketContainerRef.current.clientWidth;
+      const targetScale = Math.max(50, Math.min(100, Math.floor((containerWidth / 1100) * 100)));
+      setZoomLevel(targetScale);
+    }
+  };
 
   const handleOpenScoreModal = (m: CompetitionMatchNode) => {
     setScoringMatch(m);
@@ -161,49 +175,64 @@ export const SingleEliminationBracket: React.FC<SingleEliminationBracketProps> =
     if (!m) return null;
     const teamAName = m.teamA?.name || m.teamA?.teamName || m.teamA?.sourceLabel || 'TBD';
     const teamBName = m.teamB?.name || m.teamB?.teamName || m.teamB?.sourceLabel || 'TBD';
+    const teamAId = m.teamA?.teamId || m.teamA?.id;
+    const teamBId = m.teamB?.teamId || m.teamB?.id;
 
     const isWinnerA = m.status === 'COMPLETED' && (m.scores?.teamA ?? 0) > (m.scores?.teamB ?? 0);
     const isWinnerB = m.status === 'COMPLETED' && (m.scores?.teamB ?? 0) > (m.scores?.teamA ?? 0);
 
+    const isTeamAHighlighted = Boolean(highlightTeamId && teamAId === highlightTeamId);
+    const isTeamBHighlighted = Boolean(highlightTeamId && teamBId === highlightTeamId);
+    const isMatchCardHighlighted = isTeamAHighlighted || isTeamBHighlighted;
+
     return (
       <div
         key={m.id}
-        className="w-64 border-2 border-black p-3 bg-white hover:bg-stone-50 shadow-[3px_3px_0px_0px_#000] space-y-2 relative transition-all"
+        data-match-id={m.id}
+        className={`w-64 border-2 border-black p-3 bg-white shadow-[3px_3px_0px_0px_#000] space-y-2 relative transition-all duration-150 select-none ${
+          isMatchCardHighlighted ? 'ring-2 ring-[#7C3AED] bg-purple-50/40' : 'hover:bg-stone-50'
+        }`}
       >
-        <div className="flex items-center justify-between text-[10px] font-bold border-b border-black/10 pb-1">
-          <div className="flex items-center gap-1.5">
-            <span className="text-[#7C3AED] uppercase font-black">{roundTitle}</span>
-            {m.seriesFormat && (
-              <span className="bg-stone-200 border border-black/30 px-1 py-0.2 text-[9px] font-mono">
-                {m.seriesFormat}
+        <div className="flex items-center justify-between text-[10px] text-stone-500 font-bold border-b border-black/10 pb-1">
+          <span className="truncate max-w-[120px]">{roundTitle}</span>
+          <div className="flex items-center gap-1">
+            {m.status === 'LIVE' ? (
+              <span className="bg-[#FF5757] text-white px-1.5 py-0.2 border border-black font-black uppercase text-[9px] animate-pulse flex items-center gap-1">
+                <Radio className="w-2.5 h-2.5" />
+                LIVE
+              </span>
+            ) : m.status === 'COMPLETED' ? (
+              <span className="bg-[#70FFAF] text-black px-1.5 py-0.2 border border-black font-black uppercase text-[9px]">
+                FINAL
+              </span>
+            ) : (
+              <span className="text-stone-400 font-mono text-[9px]">
+                {m.seriesFormat || 'BO3'}
               </span>
             )}
           </div>
-          <span className={`border border-black px-1.5 py-0.2 uppercase text-[9px] font-black ${
-            m.status === 'LIVE' ? 'bg-[#FF3366] text-white animate-pulse' :
-            m.status === 'COMPLETED' ? 'bg-[#70FFAF] text-black' :
-            'bg-stone-100 text-stone-700'
-          }`}>
-            {m.status || 'UPCOMING'}
-          </span>
         </div>
 
         {/* Team A */}
-        <div className={`flex items-center justify-between text-xs font-bold py-0.5 ${isWinnerA ? 'text-black font-black' : isWinnerB ? 'opacity-60' : ''}`}>
+        <div 
+          onClick={(e) => {
+            e.stopPropagation();
+            if (teamAId) setHighlightTeamId(prev => prev === teamAId ? null : teamAId);
+          }}
+          className={`flex items-center justify-between text-xs font-bold py-1 px-1 rounded-xs cursor-pointer transition-colors ${
+            isTeamAHighlighted ? 'bg-[#7C3AED]/15 text-black font-black' : isWinnerA ? 'text-black font-black' : isWinnerB ? 'opacity-60' : 'hover:bg-stone-100'
+          }`}
+        >
           <div className="flex items-center gap-1.5 truncate">
             {m.teamA?.seed ? (
-              <span className="bg-[#7C3AED] text-white text-[9px] px-1 py-0.2 border border-black font-black">
+              <span className="bg-[#7C3AED] text-white text-[9px] px-1 py-0.2 border border-black font-black shrink-0">
                 #{m.teamA.seed}
               </span>
-            ) : m.teamA?.sourceLabel ? (
-              <span className="bg-stone-200 text-stone-800 text-[9px] px-1 py-0.2 border border-black font-mono">
-                {m.teamA.sourceLabel}
-              </span>
             ) : null}
-            <span className="text-sm">{m.teamA?.logo || '🛡️'}</span>
+            <span className="text-sm shrink-0">{m.teamA?.logo || '🛡️'}</span>
             <span className="truncate">{teamAName}</span>
           </div>
-          <span className={`border border-black px-1.5 py-0.2 font-black text-xs min-w-[20px] text-center ${
+          <span className={`border border-black px-1.5 py-0.2 font-black text-xs min-w-[20px] text-center shrink-0 ${
             isWinnerA ? 'bg-[#70FFAF]' : 'bg-stone-100'
           }`}>
             {m.scores?.teamA ?? 0}
@@ -211,34 +240,38 @@ export const SingleEliminationBracket: React.FC<SingleEliminationBracketProps> =
         </div>
 
         {/* Team B */}
-        <div className={`flex items-center justify-between text-xs font-bold py-0.5 ${isWinnerB ? 'text-black font-black' : isWinnerA ? 'opacity-60' : ''}`}>
+        <div 
+          onClick={(e) => {
+            e.stopPropagation();
+            if (teamBId) setHighlightTeamId(prev => prev === teamBId ? null : teamBId);
+          }}
+          className={`flex items-center justify-between text-xs font-bold py-1 px-1 rounded-xs cursor-pointer transition-colors ${
+            isTeamBHighlighted ? 'bg-[#7C3AED]/15 text-black font-black' : isWinnerB ? 'text-black font-black' : isWinnerA ? 'opacity-60' : 'hover:bg-stone-100'
+          }`}
+        >
           <div className="flex items-center gap-1.5 truncate">
             {m.teamB?.seed ? (
-              <span className="bg-[#7C3AED] text-white text-[9px] px-1 py-0.2 border border-black font-black">
+              <span className="bg-[#7C3AED] text-white text-[9px] px-1 py-0.2 border border-black font-black shrink-0">
                 #{m.teamB.seed}
               </span>
-            ) : m.teamB?.sourceLabel ? (
-              <span className="bg-stone-200 text-stone-800 text-[9px] px-1 py-0.2 border border-black font-mono">
-                {m.teamB.sourceLabel}
-              </span>
             ) : null}
-            <span className="text-sm">{m.teamB?.logo || '🛡️'}</span>
+            <span className="text-sm shrink-0">{m.teamB?.logo || '🛡️'}</span>
             <span className="truncate">{teamBName}</span>
           </div>
-          <span className={`border border-black px-1.5 py-0.2 font-black text-xs min-w-[20px] text-center ${
+          <span className={`border border-black px-1.5 py-0.2 font-black text-xs min-w-[20px] text-center shrink-0 ${
             isWinnerB ? 'bg-[#70FFAF]' : 'bg-stone-100'
           }`}>
             {m.scores?.teamB ?? 0}
           </span>
         </div>
 
-        {/* Action Controls */}
         <div className="pt-1 border-t border-black/10 flex items-center justify-between gap-2">
           <button
             onClick={() => onSelectMatch?.(m.id)}
-            className="text-[10px] text-stone-600 hover:text-black font-bold uppercase underline cursor-pointer"
+            className="text-[10px] text-stone-600 hover:text-black font-bold uppercase underline cursor-pointer flex items-center gap-1"
           >
-            Match Details
+            <span>Match Center</span>
+            <ArrowRight className="w-2.5 h-2.5" />
           </button>
 
           {isOrganizer && (
@@ -248,7 +281,7 @@ export const SingleEliminationBracket: React.FC<SingleEliminationBracketProps> =
                 m.status === 'COMPLETED' ? 'bg-[#70FFAF] text-black hover:bg-[#58e094]' : 'bg-[#FFE600] text-black hover:bg-yellow-400'
               }`}
             >
-              {m.status === 'COMPLETED' ? 'Edit Score' : 'Record Score'}
+              {m.status === 'COMPLETED' ? 'Edit Score' : 'Score'}
             </button>
           )}
         </div>
@@ -259,35 +292,31 @@ export const SingleEliminationBracket: React.FC<SingleEliminationBracketProps> =
   return (
     <div className="space-y-6 font-mono text-xs">
       {/* 1. BRACKET HEADER & VIEW CONTROLS */}
-      <div className="bg-white border-[3.5px] border-black p-5 shadow-[6px_6px_0px_0px_#000] flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-white border-[3.5px] border-black p-5 shadow-[6px_6px_0px_0px_#000] flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="p-3 bg-purple-100 border-2 border-black shadow-[2px_2px_0px_0px_#000]">
             <Trophy className="w-6 h-6 text-[#7C3AED]" />
           </div>
           <div>
             <h3 className="font-sans font-black text-lg uppercase text-black">
-              SINGLE ELIMINATION KNOCKOUT
+              SINGLE ELIMINATION KNOCKOUT BRACKET
             </h3>
             <p className="text-[11px] text-stone-600 font-bold">
-              {stage?.name || 'Playoffs'} • Knockout Bracket • Series {stage?.defaultSeriesFormat || 'BO3'} (Finals {stage?.grandFinalSeriesFormat || 'BO5'})
+              {stage?.name || 'Knockout Stage'} • Pure Knockout Progression • Final ({stage?.grandFinalSeriesFormat || 'BO5'})
             </p>
           </div>
         </div>
 
-        {/* Legend & Zoom */}
         <div className="flex flex-wrap items-center gap-4">
-          <div className="flex items-center gap-3 text-[10px] font-black uppercase text-stone-600 border-r-2 border-black pr-4">
-            <span className="flex items-center gap-1 text-emerald-800">
-              <span className="w-2.5 h-2.5 bg-emerald-500 inline-block border border-black" />
-              Winner / Advances
-            </span>
-            <span className="flex items-center gap-1 text-rose-800">
-              <span className="w-2.5 h-2.5 bg-rose-500 inline-block border border-black" />
-              Eliminated
-            </span>
-          </div>
-
           <div className="flex items-center gap-1">
+            <button
+              onClick={handleFitToScreen}
+              className="px-2 py-1 bg-stone-100 hover:bg-stone-200 border border-black font-black text-[10px] cursor-pointer flex items-center gap-1"
+              title="Fit to Screen"
+            >
+              <Maximize2 className="w-3 h-3" />
+              <span>Fit</span>
+            </button>
             <button
               onClick={handleResetZoom}
               className="px-2 py-1 bg-stone-100 hover:bg-stone-200 border border-black font-black text-[10px] cursor-pointer"
@@ -312,7 +341,6 @@ export const SingleEliminationBracket: React.FC<SingleEliminationBracketProps> =
         </div>
       </div>
 
-      {/* Champion Banner if finalized */}
       {championTeam && (
         <div className="bg-[#FFE600] border-[3.5px] border-black p-5 shadow-[6px_6px_0px_0px_#000] flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -332,12 +360,20 @@ export const SingleEliminationBracket: React.FC<SingleEliminationBracketProps> =
         </div>
       )}
 
-      {/* 2. BRACKET CANVAS WITH STEPPED CONNECTOR LINES */}
+      {/* 2. BRACKET CANVAS CONTAINER */}
       <div 
-        className="bg-[#FAFAF9] border-[3.5px] border-black p-6 shadow-[6px_6px_0px_0px_#000] overflow-x-auto"
+        ref={bracketContainerRef}
+        className="relative bg-[#FAFAF9] border-[3.5px] border-black p-6 sm:p-8 shadow-[6px_6px_0px_0px_#000] overflow-x-auto min-h-[500px]"
         style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'top left' }}
       >
-        <div className="flex items-center gap-6 min-w-max py-4">
+        <BracketConnectorLayer
+          containerRef={bracketContainerRef}
+          matches={matches}
+          highlightTeamId={highlightTeamId}
+          zoomLevel={zoomLevel}
+        />
+
+        <div className="flex items-start gap-16 min-w-max py-4 relative z-0">
           {/* Quarterfinals */}
           {quarterfinals.length > 0 && (
             <div className="space-y-6">
@@ -354,27 +390,13 @@ export const SingleEliminationBracket: React.FC<SingleEliminationBracketProps> =
             </div>
           )}
 
-          {/* SVG Connectors: Quarterfinals -> Semifinals */}
-          {quarterfinals.length > 0 && semifinals.length > 0 && (
-            <div className="flex flex-col justify-around h-full py-8 w-10">
-              <svg className="w-10 h-72" viewBox="0 0 40 288" fill="none">
-                {/* Upper pair connector */}
-                <path d="M 0 36 H 20 V 72 H 40" stroke="#000" strokeWidth="2.5" />
-                <path d="M 0 108 H 20 V 72 H 40" stroke="#000" strokeWidth="2.5" />
-                {/* Lower pair connector */}
-                <path d="M 0 180 H 20 V 216 H 40" stroke="#000" strokeWidth="2.5" />
-                <path d="M 0 252 H 20 V 216 H 40" stroke="#000" strokeWidth="2.5" />
-              </svg>
-            </div>
-          )}
-
           {/* Semifinals */}
           {semifinals.length > 0 && (
             <div className="space-y-6">
               <span className="font-black uppercase text-[10px] text-stone-500 block border-b border-black pb-1">
                 Semifinals ({stage?.defaultSeriesFormat || 'BO3'})
               </span>
-              <div className="space-y-12 pt-4">
+              <div className="space-y-20 pt-8">
                 {semifinals.map((m, idx) => (
                   <div key={m.id}>
                     {renderMatchCard(m, `Semifinal ${idx + 1}`)}
@@ -384,23 +406,13 @@ export const SingleEliminationBracket: React.FC<SingleEliminationBracketProps> =
             </div>
           )}
 
-          {/* SVG Connector: Semifinals -> Grand Final */}
-          {semifinals.length > 0 && grandFinal && (
-            <div className="flex flex-col justify-center h-full w-10">
-              <svg className="w-10 h-64" viewBox="0 0 40 256" fill="none">
-                <path d="M 0 64 H 20 V 128 H 40" stroke="#000" strokeWidth="2.5" />
-                <path d="M 0 192 H 20 V 128 H 40" stroke="#000" strokeWidth="2.5" />
-              </svg>
-            </div>
-          )}
-
           {/* Grand Final */}
           {grandFinal && (
             <div className="space-y-6 pl-2">
               <span className="font-black uppercase text-[10px] text-amber-700 block border-b border-black pb-1">
                 Championship Grand Final ({stage?.grandFinalSeriesFormat || 'BO5'})
               </span>
-              <div className="pt-8">
+              <div className="pt-20">
                 {renderMatchCard(grandFinal, 'GRAND FINAL')}
               </div>
             </div>
@@ -431,81 +443,63 @@ export const SingleEliminationBracket: React.FC<SingleEliminationBracketProps> =
                     {scoringMatch.teamA?.name || 'Team A'}
                   </span>
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-bold text-stone-500">Wins:</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="4"
-                      value={scoreA}
-                      onChange={e => setScoreA(Number(e.target.value))}
-                      className="w-16 border-2 border-black p-1 text-center font-black text-sm bg-white"
-                    />
+                    <button
+                      onClick={() => setScoreA(Math.max(0, scoreA - 1))}
+                      className="w-7 h-7 bg-white border border-black font-black text-sm cursor-pointer"
+                    >
+                      -
+                    </button>
+                    <span className="font-black text-base w-6 text-center">{scoreA}</span>
+                    <button
+                      onClick={() => setScoreA(scoreA + 1)}
+                      className="w-7 h-7 bg-white border border-black font-black text-sm cursor-pointer"
+                    >
+                      +
+                    </button>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between border-t border-stone-200 pt-2">
+                <div className="flex items-center justify-between border-t border-black/10 pt-2">
                   <span className="font-black text-black text-sm truncate max-w-[180px]">
                     {scoringMatch.teamB?.name || 'Team B'}
                   </span>
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-bold text-stone-500">Wins:</span>
-                    <input
-                      type="number"
-                      min="0"
-                      max="4"
-                      value={scoreB}
-                      onChange={e => setScoreB(Number(e.target.value))}
-                      className="w-16 border-2 border-black p-1 text-center font-black text-sm bg-white"
-                    />
+                    <button
+                      onClick={() => setScoreB(Math.max(0, scoreB - 1))}
+                      className="w-7 h-7 bg-white border border-black font-black text-sm cursor-pointer"
+                    >
+                      -
+                    </button>
+                    <span className="font-black text-base w-6 text-center">{scoreB}</span>
+                    <button
+                      onClick={() => setScoreB(scoreB + 1)}
+                      className="w-7 h-7 bg-white border border-black font-black text-sm cursor-pointer"
+                    >
+                      +
+                    </button>
                   </div>
                 </div>
               </div>
 
-              {mutationStatus === 'pending' && (
-                <div className="p-2 bg-[#FFFBEB] border-2 border-amber-900 text-amber-900 font-bold flex items-center gap-2">
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Submitting score to authoritative server...</span>
+              {mutationError && (
+                <div className="p-2.5 bg-rose-100 border border-rose-600 text-rose-900 text-[11px] font-bold">
+                  {mutationError}
                 </div>
               )}
 
-              {mutationStatus === 'confirmed' && (
-                <div className="p-2 bg-[#E6FFFA] border-2 border-emerald-900 text-emerald-900 font-bold flex items-center gap-2">
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  <span>✓ Score confirmed &amp; bracket advanced!</span>
-                </div>
-              )}
-
-              {mutationStatus === 'failed' && (
-                <div className="p-2 bg-rose-50 border-2 border-rose-900 text-rose-900 font-bold space-y-1">
-                  <div className="flex items-center gap-1.5 font-black text-[11px]">
-                    <AlertTriangle className="w-3.5 h-3.5 text-rose-700" />
-                    <span>Submission Rejected</span>
-                  </div>
-                  <div className="text-[10px] leading-tight">
-                    {mutationError || 'Server rejected match result confirmation.'}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="pt-3 border-t-2 border-black flex items-center justify-between gap-2">
-              <span className="text-[9px] text-stone-500 uppercase">
-                Authoritative Submission
-              </span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-black/10">
                 <button
-                  disabled={mutationStatus === 'pending'}
                   onClick={() => setScoringMatch(null)}
-                  className="px-3 py-1.5 border border-black font-bold uppercase cursor-pointer"
+                  className="px-4 py-2 bg-stone-100 border border-black font-bold uppercase cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
-                  disabled={mutationStatus === 'pending'}
                   onClick={handleSubmitScore}
-                  className="px-4 py-1.5 bg-[#FFE600] hover:bg-yellow-400 disabled:opacity-50 border-2 border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
+                  disabled={mutationStatus === 'pending'}
+                  className="px-5 py-2 bg-[#70FFAF] hover:bg-emerald-300 text-black border border-black font-black uppercase shadow-[2px_2px_0px_0px_#000] cursor-pointer"
                 >
-                  Confirm Official Result
+                  {mutationStatus === 'pending' ? 'Saving...' : mutationStatus === 'confirmed' ? 'Saved ✓' : 'Confirm Result'}
                 </button>
               </div>
             </div>

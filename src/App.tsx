@@ -303,10 +303,15 @@ export default function App() {
     const tournamentPathMatch = pathname.match(/^\/tournaments\/([^/]+)\/?$/);
     const dotaPlayerMatch = pathname.match(/^\/game\/dota2\/players\/([^/]+)\/?$/);
     const dotaMatchMatch = pathname.match(/^\/game\/dota2\/matches\/([^/]+)\/?$/);
+    const matchDetailMatch = pathname.match(/^\/matches\/([^/]+)\/?$/);
     const playerMatch = pathname.match(/^\/players\/([^/]+)\/?$/);
     const teamMatch = pathname.match(/^\/teams\/([^/]+)\/?$/);
 
-    if (dotaMatchMatch) {
+    if (matchDetailMatch) {
+      const matchId = matchDetailMatch[1];
+      setActiveEntityId(matchId);
+      setCurrentView('match_detail');
+    } else if (dotaMatchMatch) {
       const matchId = dotaMatchMatch[1];
       setActiveEntityId(matchId);
       setCurrentView('dota_match_detail');
@@ -474,13 +479,17 @@ export default function App() {
     const handlePopState = () => {
       const p = window.location.pathname;
       const dotaMatch = p.match(/^\/game\/dota2\/matches\/([^/]+)\/?$/);
+      const matchDetail = p.match(/^\/matches\/([^/]+)\/?$/);
       const dotaPlayer = p.match(/^\/game\/dota2\/players\/([^/]+)\/?$/);
       const tourneyMatch = p.match(/^\/tournaments\/([^/]+)\/?$/);
       const auctionMatch = p.match(/^\/tournaments\/([^/]+)\/auction\/?$/);
       const playerMatch = p.match(/^\/players\/([^/]+)\/?$/);
       const teamMatch = p.match(/^\/teams\/([^/]+)\/?$/);
 
-      if (dotaMatch) {
+      if (matchDetail) {
+        setActiveEntityId(matchDetail[1]);
+        setCurrentView('match_detail');
+      } else if (dotaMatch) {
         setActiveEntityId(dotaMatch[1]);
         setCurrentView('dota_match_detail');
       } else if (dotaPlayer) {
@@ -566,6 +575,10 @@ export default function App() {
           window.history.pushState({ view }, '', '/admin');
         } else if (view === 'organiser_dashboard') {
           window.history.pushState({ view, entityId }, '', entityId ? `/tournaments/${entityId}?manage=true` : '/tournaments?manage=true');
+        } else if (view === 'match_detail' && entityId) {
+          window.history.pushState({ view, entityId }, '', `/matches/${entityId}`);
+        } else if (view === 'matches') {
+          window.history.pushState({ view }, '', '/matches');
         } else if (view === 'dota_match_detail' && entityId) {
           window.history.pushState({ view, entityId }, '', `/game/dota2/matches/${entityId}`);
         } else if (view === 'dota_game_profile' && entityId) {
